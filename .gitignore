@@ -1,0 +1,27 @@
+﻿# STM32CubeIDE - служебные папки
+.metadata/
+Debug/
+Release/
+*.launch
+
+# Сборка и объектные файлы
+*.o
+*.d
+*.lst
+*.map
+*.elf
+*.hex
+*.bin
+*.exe
+
+# Временные файлы
+*.swp
+*.swo
+*~
+
+# Личные настройки IDE (не .project/.cproject!)
+.settings/
+
+# OS
+Thumbs.db
+.DS_Store
