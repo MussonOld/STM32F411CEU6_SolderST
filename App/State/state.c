@@ -8,13 +8,14 @@
 /**
  * @brief Состояние одного канала. Поля volatile — читаются/пишутся
  *        из разных контекстов (основной цикл, прерывание таймера PID).
+ *        Температура — fixed_t (Q16.16): атомарный 32-битный read/write.
  */
 typedef struct {
-    volatile float current_temp;
-    volatile float setpoint_temp;
-    volatile bool  heater_active;
-    volatile bool  in_stand;
-    volatile bool  enabled;
+    volatile fixed_t current_temp;
+    volatile fixed_t setpoint_temp;
+    volatile bool     heater_active;
+    volatile bool     in_stand;
+    volatile bool     enabled;
 } channel_state_t;
 
 static channel_state_t s_channels[CHANNEL_COUNT];
@@ -27,35 +28,35 @@ static inline bool channel_valid(channel_id_t ch)
 void State_Init(void)
 {
     for (int i = 0; i < CHANNEL_COUNT; i++) {
-        s_channels[i].current_temp  = 0.0f;
-        s_channels[i].setpoint_temp = 0.0f;
+        s_channels[i].current_temp  = 0;
+        s_channels[i].setpoint_temp = 0;
         s_channels[i].heater_active = false;
-        s_channels[i].in_stand      = true;  /* По умолчанию считаем жало в подставке */
+        s_channels[i].in_stand      = true;
         s_channels[i].enabled       = false;
     }
 }
 
-void State_SetCurrentTemp(channel_id_t ch, float temp_c)
+void State_SetCurrentTemp(channel_id_t ch, fixed_t temp)
 {
     if (!channel_valid(ch)) return;
-    s_channels[ch].current_temp = temp_c;
+    s_channels[ch].current_temp = temp;
 }
 
-float State_GetCurrentTemp(channel_id_t ch)
+fixed_t State_GetCurrentTemp(channel_id_t ch)
 {
-    if (!channel_valid(ch)) return 0.0f;
+    if (!channel_valid(ch)) return 0;
     return s_channels[ch].current_temp;
 }
 
-void State_SetSetpointTemp(channel_id_t ch, float temp_c)
+void State_SetSetpointTemp(channel_id_t ch, fixed_t temp)
 {
     if (!channel_valid(ch)) return;
-    s_channels[ch].setpoint_temp = temp_c;
+    s_channels[ch].setpoint_temp = temp;
 }
 
-float State_GetSetpointTemp(channel_id_t ch)
+fixed_t State_GetSetpointTemp(channel_id_t ch)
 {
-    if (!channel_valid(ch)) return 0.0f;
+    if (!channel_valid(ch)) return 0;
     return s_channels[ch].setpoint_temp;
 }
 
