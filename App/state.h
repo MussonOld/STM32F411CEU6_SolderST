@@ -21,6 +21,7 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "fixed_point.h"
 
 /**
  * @brief Идентификатор канала станции
@@ -39,12 +40,13 @@ void State_Init(void);
 /* ---- Температура ---- */
 
 /** @brief Текущая температура канала, °C. Пишет Control. */
-void  State_SetCurrentTemp(channel_id_t ch, float temp_c);
-float State_GetCurrentTemp(channel_id_t ch);
+void   State_SetCurrentTemp(channel_id_t ch, fixed_t temp);
+fixed_t State_GetCurrentTemp(channel_id_t ch);
+
 
 /** @brief Уставка канала, °C. Пишет ввод (кнопки). */
-void  State_SetSetpointTemp(channel_id_t ch, float temp_c);
-float State_GetSetpointTemp(channel_id_t ch);
+void   State_SetSetpointTemp(channel_id_t ch, fixed_t temp);
+fixed_t State_GetSetpointTemp(channel_id_t ch);
 
 /* ---- Нагреватель ---- */
 
