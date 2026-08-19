@@ -96,7 +96,7 @@ Display_Status_t Display_Init(void)
     Display_SetRotation(DISPLAY_ROTATION_0);
 
     write_command(ST7789_CMD_INVON); /* Большинство модулей ST7789 требуют инверсию для верных цветов */
-    write_command(ST7789_CMD_NORON == 0 ? 0x13 : 0x13); /* Normal display mode (0x13) */
+    write_command(ST7789_CMD_NORON); /* Normal display mode */
     write_command(ST7789_CMD_DISPON);
 
     s_busy = false;

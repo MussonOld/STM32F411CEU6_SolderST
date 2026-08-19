@@ -23,6 +23,7 @@
 #define ST7789_CMD_CASET    0x2A
 #define ST7789_CMD_RASET    0x2B
 #define ST7789_CMD_RAMWR    0x2C
+#define ST7789_CMD_NORON    0x13
 #define ST7789_CMD_MADCTL   0x36
 #define ST7789_CMD_COLMOD   0x3A
 
