@@ -29,7 +29,7 @@
 #include "display.h"
 #include "gfx.h"
 #include "fonts.h"
-#include "dbg.h"
+#include "text_field.h"
 #include <stdio.h>
 /* USER CODE END Includes */
 
@@ -110,14 +110,14 @@ int main(void)
   Display_FillColorDMA(DISPLAY_RGB565(0, 0, 0), 320 * 240);
   while (Display_IsBusy()) { } /* Однократное ожидание при старте, до входа в главный цикл */
 
-  Dbg_Init();
-  Dbg_ConfigureLine(0, 10, 10, &AntiquaB_18_uni,
+  TextField_Init();
+  TextField_ConfigureLine(0, 10, 10, &AntiquaB_18_uni,
                      DISPLAY_RGB565(255, 255, 255), DISPLAY_RGB565(0, 0, 0));
-  Dbg_ConfigureLine(1, 10, 60, &Comic_60_dig,
+  TextField_ConfigureLine(1, 10, 60, &Comic_60_dig,
                      DISPLAY_RGB565(0, 255, 0), DISPLAY_RGB565(0, 0, 0));
 
-  Dbg_Printf(0, "STM32F411CEU6_SolderST");
-  Dbg_Process(); /* стартовать задание сразу */
+  TextField_Printf(0, "STM32F411CEU6_SolderST");
+  TextField_Process(); /* стартовать задание сразу */
   while (Gfx_Process() == GFX_JOB_BUSY) { } /* однократно, до входа в главный цикл */
 
   s_last_tick = HAL_GetTick();
@@ -136,11 +136,11 @@ int main(void)
         s_last_tick += 500;
         s_counter++;
         snprintf(s_counter_text, sizeof(s_counter_text), "%04lu", (unsigned long)s_counter);
-        Dbg_Printf(1, "%s", s_counter_text);
+        TextField_Printf(1, "%s", s_counter_text);
     }
 
     /* Рендер — сам по себе, догоняет данные по мере готовности DMA. */
-    Dbg_Process();
+    TextField_Process();
   }
   /* USER CODE END 3 */
 }

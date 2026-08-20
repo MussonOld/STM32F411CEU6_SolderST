@@ -1,4 +1,4 @@
-#include "dbg.h"
+#include "text_field.h"
 #include "gfx.h"
 
 #include <stdio.h>
@@ -9,22 +9,22 @@ typedef struct {
     uint16_t x, y;
     const font_t *font;
     display_color_t fg, bg;
-    char text[DBG_LINE_TEXT_MAX];
+    char text[TEXTFIELD_LINE_TEXT_MAX];
     bool used;
     bool dirty;
-} Dbg_Line_t;
+} TextField_Line_t;
 
-static Dbg_Line_t s_lines[DBG_MAX_LINES];
+static TextField_Line_t s_lines[TEXTFIELD_MAX_LINES];
 
-void Dbg_Init(void)
+void TextField_Init(void)
 {
     memset(s_lines, 0, sizeof(s_lines));
 }
 
-void Dbg_ConfigureLine(uint8_t line, uint16_t x, uint16_t y,
+void TextField_ConfigureLine(uint8_t line, uint16_t x, uint16_t y,
                         const font_t *font, display_color_t fg, display_color_t bg)
 {
-    if (line >= DBG_MAX_LINES) {
+    if (line >= TEXTFIELD_MAX_LINES) {
         return;
     }
     s_lines[line].x = x;
@@ -37,26 +37,26 @@ void Dbg_ConfigureLine(uint8_t line, uint16_t x, uint16_t y,
     s_lines[line].dirty = false; /* пустая строка и так пуста на экране */
 }
 
-void Dbg_Printf(uint8_t line, const char *fmt, ...)
+void TextField_Printf(uint8_t line, const char *fmt, ...)
 {
-    if (line >= DBG_MAX_LINES || !s_lines[line].used) {
+    if (line >= TEXTFIELD_MAX_LINES || !s_lines[line].used) {
         return;
     }
 
-    char buf[DBG_LINE_TEXT_MAX];
+    char buf[TEXTFIELD_LINE_TEXT_MAX];
     va_list args;
     va_start(args, fmt);
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
 
-    if (strncmp(buf, s_lines[line].text, DBG_LINE_TEXT_MAX) != 0) {
-        strncpy(s_lines[line].text, buf, DBG_LINE_TEXT_MAX - 1);
-        s_lines[line].text[DBG_LINE_TEXT_MAX - 1] = '\0';
+    if (strncmp(buf, s_lines[line].text, TEXTFIELD_LINE_TEXT_MAX) != 0) {
+        strncpy(s_lines[line].text, buf, TEXTFIELD_LINE_TEXT_MAX - 1);
+        s_lines[line].text[TEXTFIELD_LINE_TEXT_MAX - 1] = '\0';
         s_lines[line].dirty = true;
     }
 }
 
-void Dbg_Process(void)
+void TextField_Process(void)
 {
     /* Продвигаем текущее задание gfx (если есть) вне зависимости от того,
      * найдём ли ниже новую грязную строку — так символы дорисовываются
@@ -65,7 +65,7 @@ void Dbg_Process(void)
         return; /* gfx ещё занят предыдущим заданием — новое не начинаем */
     }
 
-    for (uint8_t i = 0; i < DBG_MAX_LINES; i++) {
+    for (uint8_t i = 0; i < TEXTFIELD_MAX_LINES; i++) {
         if (s_lines[i].used && s_lines[i].dirty) {
             Gfx_JobState_t st = Gfx_DrawTextStart(s_lines[i].x, s_lines[i].y,
                                                    s_lines[i].text, s_lines[i].font,
