@@ -98,23 +98,40 @@ static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx
         return advance;
     }
 
-    uint32_t pixel_count = (uint32_t)width * font->height;
+    /* Ячейка перерисовки = объединение bbox символа (xoff..xoff+width) и
+     * шага курсора (0..advance). Пиксели предыдущего символа на этой позиции
+     * могли выходить за bbox нового (например широкая "0", затем узкая "1"
+     * с другим xoff) — если стирать только bbox нового символа, часть
+     * старых пикселей остаётся ("призрак"). Стирая всю ячейку целиком,
+     * гарантируем перекрытие независимо от формы предыдущего символа. */
+    int16_t  cell_left  = (xoff < 0) ? xoff : 0;
+    int16_t  cell_right = ((int16_t)xoff + width > advance) ? ((int16_t)xoff + width) : advance;
+    uint16_t cell_width = (uint16_t)(cell_right - cell_left);
+
+    uint32_t pixel_count = (uint32_t)cell_width * font->height;
     if (pixel_count > GFX_GLYPH_BUFFER_PIXELS) {
         return advance; /* Символ не влезает в буфер — пропускаем отрисовку, но сдвигаем курсор */
     }
 
+    for (uint32_t i = 0; i < pixel_count; i++) {
+        s_glyph_buffer[i] = bg; /* фон по всей ячейке — стираем всё, что было раньше */
+    }
+
+    uint16_t glyph_col0 = (uint16_t)(xoff - cell_left);
     for (uint16_t r = 0; r < font->height; r++) {
         for (uint16_t c = 0; c < width; c++) {
             const uint8_t *col_ptr = &font->bitmap[offset + (uint32_t)c * bytes_per_col];
             bool bit_set = (col_ptr[r / 8] & (0x80 >> (r % 8))) != 0;
-            s_glyph_buffer[r * width + c] = bit_set ? fg : bg;
+            if (bit_set) {
+                s_glyph_buffer[r * cell_width + glyph_col0 + c] = fg;
+            }
         }
     }
 
-    uint16_t draw_x = x + xoff;
+    uint16_t draw_x = x + cell_left;
     uint16_t draw_y = y + yoff;
 
-    if (Display_SetWindow(draw_x, draw_y, draw_x + width - 1, draw_y + font->height - 1) != DISPLAY_OK) {
+    if (Display_SetWindow(draw_x, draw_y, draw_x + cell_width - 1, draw_y + font->height - 1) != DISPLAY_OK) {
         return advance;
     }
     Display_WritePixelsDMA(s_glyph_buffer, pixel_count); /* асинхронно, не ждём */
