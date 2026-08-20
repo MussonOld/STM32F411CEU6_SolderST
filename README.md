@@ -1,1 +1,1 @@
-Coming soon.
+используй git clone через bash_tool

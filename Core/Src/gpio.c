@@ -57,10 +57,10 @@ void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOA, Disp_DC_Pin|Disp_RST_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, Pump_On_Pin|BEEP_Pin|Solder_On_Pin|Desolder_On_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, Pump_On_Pin|BEEP_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, ADS1220_Solder_CS_Pin|ADS1220_Desolder_CS_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOB, Solder_On_Pin|Desolder_On_Pin|ADS1220_Solder_CS_Pin|ADS1220_Desolder_CS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin : nPS_ON_Pin */
   GPIO_InitStruct.Pin = nPS_ON_Pin;
