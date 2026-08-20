@@ -57,8 +57,8 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define PWR_ON_Pin GPIO_PIN_13
-#define PWR_ON_GPIO_Port GPIOC
+#define nPS_ON_Pin GPIO_PIN_13
+#define nPS_ON_GPIO_Port GPIOC
 #define DRDY_Solder_Pin GPIO_PIN_2
 #define DRDY_Solder_GPIO_Port GPIOA
 #define Disp_DC_Pin GPIO_PIN_3
