@@ -26,7 +26,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "display.h"
+#include "gfx.h"
+#include "fonts.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -99,7 +101,13 @@ int main(void)
   MX_SPI2_Init();
   MX_TIM10_Init();
   /* USER CODE BEGIN 2 */
+  Display_Init();
+  Display_SetWindow(0, 0, 319, 239);
+  Display_FillColorDMA(DISPLAY_RGB565(0, 0, 0), 320 * 240);
+  while (Display_IsBusy()) { } /* Однократное ожидание при старте, до входа в главный цикл */
 
+  Gfx_DrawTextStart(10, 10, "STM32F411CEU6_SolderST", &AntiquaB_18_uni,
+                     DISPLAY_RGB565(255, 255, 255), DISPLAY_RGB565(0, 0, 0));
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -109,6 +117,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    Gfx_Process();
   }
   /* USER CODE END 3 */
 }
