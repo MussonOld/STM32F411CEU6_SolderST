@@ -79,7 +79,23 @@ static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx
     uint8_t  bytes_per_col = (font->height + 7) / 8;
 
     if (width == 0) {
-        return advance; /* Пробел и подобные — только сдвиг курсора */
+        /* Пробел и подобные не имеют своего битмапа, но должны стереть
+         * то, что было на этом месте раньше (иначе при сокращении числа
+         * цифр остаётся "призрак" старого символа) — заливаем ячейку bg. */
+        if (advance == 0) {
+            return advance;
+        }
+        uint32_t px_count = (uint32_t)advance * font->height;
+        if (px_count > GFX_GLYPH_BUFFER_PIXELS) {
+            return advance;
+        }
+        for (uint32_t i = 0; i < px_count; i++) {
+            s_glyph_buffer[i] = bg;
+        }
+        if (Display_SetWindow(x, y, x + advance - 1, y + font->height - 1) == DISPLAY_OK) {
+            Display_WritePixelsDMA(s_glyph_buffer, px_count);
+        }
+        return advance;
     }
 
     uint32_t pixel_count = (uint32_t)width * font->height;
