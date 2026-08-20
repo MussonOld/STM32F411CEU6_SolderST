@@ -14,42 +14,6 @@
 #define GFX_GLYPH_BUFFER_PIXELS (32 * 64)
 static display_color_t s_glyph_buffer[GFX_GLYPH_BUFFER_PIXELS];
 
-typedef struct {
-    const char       *cursor;   /* текущая позиция в UTF-8 строке */
-    const font_t      *font;
-    display_color_t    fg, bg;
-    uint16_t            x, y;    /* текущий курсор отрисовки */
-    Gfx_JobState_t      state;
-} gfx_job_t;
-
-static gfx_job_t s_job = { .state = GFX_JOB_IDLE };
-
-/* ---- UTF-8 декодирование ---- */
-
-static uint32_t utf8_next(const char **str)
-{
-    const uint8_t *s = (const uint8_t *)*str;
-    if (*s == 0) return 0;
-
-    uint32_t cp;
-    int extra;
-
-    if ((*s & 0x80) == 0x00)      { cp = *s;        extra = 0; }
-    else if ((*s & 0xE0) == 0xC0) { cp = *s & 0x1F;  extra = 1; }
-    else if ((*s & 0xF0) == 0xE0) { cp = *s & 0x0F;  extra = 2; }
-    else if ((*s & 0xF8) == 0xF0) { cp = *s & 0x07;  extra = 3; }
-    else { *str = (const char *)(s + 1); return 0xFFFD; /* невалидный байт */ }
-
-    s++;
-    for (int i = 0; i < extra; i++) {
-        if ((*s & 0xC0) != 0x80) { *str = (const char *)s; return 0xFFFD; }
-        cp = (cp << 6) | (*s & 0x3F);
-        s++;
-    }
-
-    *str = (const char *)s;
-    return cp;
-}
 
 /* ---- Поиск глифа в шрифте (бинарный поиск по font->lut) ---- */
 
