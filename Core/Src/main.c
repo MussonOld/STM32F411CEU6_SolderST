@@ -113,7 +113,7 @@ int main(void)
   TextField_Init();
   TextField_ConfigureLine(0, 10, 10, &AntiquaB_18_uni,
                      DISPLAY_RGB565(255, 255, 255), DISPLAY_RGB565(0, 0, 0));
-  TextField_ConfigureLine(1, 10, 60, &Comic_60_dig,
+  TextField_ConfigureLine(1, 10, 60, &Comic_40_dig,
                      DISPLAY_RGB565(255, 255, 0), DISPLAY_RGB565(0, 0, 0));
 
   TextField_Printf(0, "STM32F411CEU6_SolderST");

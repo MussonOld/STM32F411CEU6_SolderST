@@ -22,15 +22,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "fixed_point.h"
-
-/**
- * @brief Идентификатор канала станции
- */
-typedef enum {
-    CHANNEL_SOLDER = 0,
-    CHANNEL_DESOLDER,
-    CHANNEL_COUNT
-} channel_id_t;
+#include "channel.h" /* channel_id_t — общий тип, см. App/Common/channel.h */
 
 /**
  * @brief Инициализировать состояние всех каналов (обнулить)
