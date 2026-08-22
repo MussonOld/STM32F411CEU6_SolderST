@@ -4,6 +4,14 @@
  *
  * Пины (активный уровень низкий, GPIO_PULLUP в CubeMX):
  * SET1=PA8, SET2=PA9, SET3=PA10, DN=PA11, UP=PA12, TOOLS=PA15.
+ *
+ * ВСЕ 6 кнопок намеренно разведены на порту A — это сделано для атомарного
+ * чтения: одно обращение к GPIOA->IDR даёт снимок состояния всех кнопок
+ * ровно в один и тот же момент. Опрос по отдельности через 6× HAL_GPIO_ReadPin()
+ * этого не гарантирует (между первым и последним чтением проходит несколько
+ * тактов CPU) — поэтому update_debounce() читает IDR один раз за весь опрос,
+ * а не по кнопке. Если распиновка когда-либо изменится и появится кнопка на
+ * другом порту — эту оптимизацию нужно будет пересмотреть.
  */
 
 #include "buttons.h"
@@ -12,19 +20,14 @@
 
 #define BUTTONS_EVENT_QUEUE_SIZE  8U
 
-/* ---- Таблица пинов, индекс == button_id_t ---- */
-typedef struct {
-    GPIO_TypeDef *port;
-    uint16_t      pin;
-} button_pin_t;
-
-static const button_pin_t s_pins[BUTTON_COUNT] = {
-    [BUTTON_SET1]  = { SET1_GPIO_Port,  SET1_Pin  },
-    [BUTTON_SET2]  = { SET2_GPIO_Port,  SET2_Pin  },
-    [BUTTON_SET3]  = { SET3_GPIO_Port,  SET3_Pin  },
-    [BUTTON_DN]    = { DN_GPIO_Port,    DN_Pin    },
-    [BUTTON_UP]    = { UP_GPIO_Port,    UP_Pin    },
-    [BUTTON_TOOLS] = { TOOLS_GPIO_Port, TOOLS_Pin },
+/* ---- Битовые маски пинов на GPIOA, индекс == button_id_t ---- */
+static const uint16_t s_pin_masks[BUTTON_COUNT] = {
+    [BUTTON_SET1]  = SET1_Pin,
+    [BUTTON_SET2]  = SET2_Pin,
+    [BUTTON_SET3]  = SET3_Pin,
+    [BUTTON_DN]    = DN_Pin,
+    [BUTTON_UP]    = UP_Pin,
+    [BUTTON_TOOLS] = TOOLS_Pin,
 };
 
 /* ---- Антидребезг, по кнопке ---- */
@@ -85,13 +88,16 @@ static void raise_violation(uint8_t mask_snapshot)
 
 /**
  * @brief Обновить антидребезг всех кнопок, вернуть подтверждённую маску
+ *
+ * Один атомарный снимок GPIOA->IDR на весь опрос — см. докстринг файла.
  */
 static uint8_t update_debounce(void)
 {
     uint8_t mask = 0;
+    uint16_t port_a = (uint16_t)GPIOA->IDR; /* один снимок всех 6 кнопок разом */
 
     for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
-        bool raw = (HAL_GPIO_ReadPin(s_pins[i].port, s_pins[i].pin) == GPIO_PIN_RESET); /* активный низкий */
+        bool raw = ((port_a & s_pin_masks[i]) == 0); /* активный низкий */
 
         if (raw == s_candidate[i]) {
             if (s_stable_count[i] < BUTTONS_DEBOUNCE_TICKS) {
@@ -263,8 +269,10 @@ static void step_episode(uint8_t down_mask, uint32_t now)
 
 void Buttons_Init(void)
 {
+    uint16_t port_a = (uint16_t)GPIOA->IDR; /* тот же атомарный снимок, что и в update_debounce() */
+
     for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
-        bool raw = (HAL_GPIO_ReadPin(s_pins[i].port, s_pins[i].pin) == GPIO_PIN_RESET);
+        bool raw = ((port_a & s_pin_masks[i]) == 0);
         s_candidate[i]    = raw;
         s_stable_count[i] = BUTTONS_DEBOUNCE_TICKS; /* сразу считаем стартовое состояние подтверждённым */
         s_confirmed[i]    = raw;
