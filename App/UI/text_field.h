@@ -34,7 +34,7 @@ extern "C" {
 #include "fonts.h"
 
 #ifndef TEXTFIELD_MAX_LINES
-#define TEXTFIELD_MAX_LINES 6
+#define TEXTFIELD_MAX_LINES 10
 #endif
 
 #ifndef TEXTFIELD_LINE_TEXT_MAX
@@ -61,6 +61,17 @@ void TextField_ConfigureLine(uint8_t line, uint16_t x, uint16_t y,
  * грязной (лишней перерисовки не будет). Текст обрезается по TEXTFIELD_LINE_TEXT_MAX-1.
  */
 void TextField_Printf(uint8_t line, const char *fmt, ...);
+
+/**
+ * @brief Сменить цвета строки на лету (например, притушить неактивный канал)
+ *
+ * В отличие от TextField_ConfigureLine() — НЕ трогает текст и НЕ проверяет,
+ * менялось ли что-то: всегда принудительно помечает строку грязной, чтобы
+ * существующий текст переотрисовался уже новыми цветами. Использовать
+ * TextField_ConfigureLine() для начальной настройки геометрии/шрифта,
+ * а эту функцию — для последующих изменений цвета без потери содержимого.
+ */
+void TextField_SetColors(uint8_t line, display_color_t fg, display_color_t bg);
 
 /**
  * @brief Продвинуть рендер. Звать из главного цикла каждую итерацию.

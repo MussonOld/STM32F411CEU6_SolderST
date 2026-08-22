@@ -56,6 +56,19 @@ void TextField_Printf(uint8_t line, const char *fmt, ...)
     }
 }
 
+void TextField_SetColors(uint8_t line, display_color_t fg, display_color_t bg)
+{
+    if (line >= TEXTFIELD_MAX_LINES || !s_lines[line].used) {
+        return;
+    }
+    if (s_lines[line].fg == fg && s_lines[line].bg == bg) {
+        return; /* цвета не изменились — перерисовка не нужна */
+    }
+    s_lines[line].fg = fg;
+    s_lines[line].bg = bg;
+    s_lines[line].dirty = true; /* принудительно, независимо от текста */
+}
+
 void TextField_Process(void)
 {
     /* Продвигаем текущее задание gfx (если есть) вне зависимости от того,

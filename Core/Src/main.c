@@ -30,7 +30,11 @@
 #include "gfx.h"
 #include "fonts.h"
 #include "text_field.h"
-#include <stdio.h>
+#include "screen.h"
+#include "buttons.h"
+#include "fsm.h"
+#include "settings.h"
+#include "state.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -51,9 +55,6 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-static uint32_t s_counter = 0;
-static uint32_t s_last_tick = 0;
-static char s_counter_text[12];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -111,16 +112,18 @@ int main(void)
   while (Display_IsBusy()) { } /* Однократное ожидание при старте, до входа в главный цикл */
 
   TextField_Init();
-  TextField_ConfigureLine(0, 10, 10, &AntiquaB_18_uni,
-                     DISPLAY_RGB565(255, 255, 255), DISPLAY_RGB565(0, 0, 0));
-  TextField_ConfigureLine(1, 10, 60, &Comic_40_dig,
-                     DISPLAY_RGB565(255, 255, 0), DISPLAY_RGB565(0, 0, 0));
 
-  TextField_Printf(0, "STM32F411CEU6_SolderST");
-  TextField_Process(); /* стартовать задание сразу */
-  while (Gfx_Process() == GFX_JOB_BUSY) { } /* однократно, до входа в главный цикл */
+  State_Init();
+  Settings_Init();   /* дефолты в RAM на случай сбоя чтения ниже */
+  Settings_Load();   /* поверх дефолтов — то, что реально сохранено в EEPROM (или ошибка/стёртый чип, см. settings.c) */
 
-  s_last_tick = HAL_GetTick();
+  Buttons_Init();
+  InputFSM_Init();
+
+  Screen_Init();     /* статика (разделитель) + геометрия строк, после TextField_Init() */
+  Screen_Update();   /* первое наполнение содержимым (только помечает строки грязными —
+                       * реальная отрисовка стартует в первых итерациях главного цикла,
+                       * через TextField_Process()) */
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -130,17 +133,12 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    /* Сэмплирование значения — строго по расписанию, НЕ зависит от того,
-     * успел ли предыдущий кадр отрисоваться (устраняет "рваный" тик). */
-    if (HAL_GetTick() - s_last_tick >= 500) {
-        s_last_tick += 500;
-        s_counter++;
-        snprintf(s_counter_text, sizeof(s_counter_text), "%04lu", (unsigned long)s_counter);
-        TextField_Printf(1, "%s", s_counter_text);
-    }
+    Buttons_Poll();
+    InputFSM_Poll();
+    Settings_Poll();  /* отложенная запись в EEPROM — сама решает, когда физически писать */
 
-    /* Рендер — сам по себе, догоняет данные по мере готовности DMA. */
-    TextField_Process();
+    Screen_Update();  /* обновить содержимое строк из State/Settings/InputFSM */
+    TextField_Process(); /* рендер — сам по себе, догоняет данные по мере готовности DMA */
   }
   /* USER CODE END 3 */
 }
