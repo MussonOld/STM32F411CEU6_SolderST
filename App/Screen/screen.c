@@ -5,12 +5,17 @@
  * Разметка 320x240 (см. обсуждение):
  *  - y=0..29   : общая инфозона (сейчас пустая — содержимое не определено,
  *                таймеры сна появятся здесь позже)
- *  - x=159..160: вертикальный разделитель на всю высоту ниже инфозоны
+ *  - x=159..160: вертикальный разделитель — НЕ доходит до строки пресетов
+ *                (та зона общая, как и инфозона — разделитель между ними,
+ *                не через них)
  *  - каждая половина (0..158 / 161..319):
+ *      - заголовок канала ("Паяльник"/"Отсос"), шрифт AntiquaB_18_uni
  *      - текущая температура, шрифт Comic_40_dig (крупный, только цифры)
  *      - целевая температура, шрифт AntiquaB_18_uni (ВРЕМЕННО — по ТЗ
  *        будет убрана позже, сейчас нужна для отладки)
- *      - строка пресетов, шрифт AntiquaB_24_uni, внизу
+ *  - общая строка пресетов внизу, шрифт AntiquaB_24_uni — визуально не
+ *    разделена вертикальной линией, хотя технически это два отдельных поля
+ *    (значения разные по каналам, разделитель просто до неё не доходит)
  *
  * Координаты — первый приближённый вариант (не откалиброван визуально на
  * реальном дисплее из этой сессии) — при необходимости подвинуть на
@@ -32,9 +37,11 @@
 /* ---- Индексы строк TextField ---- */
 enum {
     LINE_INFO = 0,
+    LINE_SOLDER_TITLE,
     LINE_SOLDER_CURRENT,
     LINE_SOLDER_TARGET,
     LINE_SOLDER_PRESETS,
+    LINE_DESOLDER_TITLE,
     LINE_DESOLDER_CURRENT,
     LINE_DESOLDER_TARGET,
     LINE_DESOLDER_PRESETS,
@@ -46,9 +53,16 @@ enum {
 #define SCREEN_INFO_HEIGHT  (30U)
 #define SCREEN_DIVIDER_X0   (159U)
 #define SCREEN_DIVIDER_X1   (160U) /* разделитель 2px шириной: X0..X1 включительно */
+/* Разделитель НЕ доходит до строки пресетов — та зона общая (см. докстринг),
+ * как и инфозона сверху. Останавливаем линию с небольшим отступом сверху
+ * от SCREEN_PRESETS_Y. */
+#define SCREEN_DIVIDER_Y1   (SCREEN_PRESETS_Y - 6U)
 
+#define SCREEN_TITLE_Y   (36U)
 #define SCREEN_LEFT_X    (30U)
 #define SCREEN_RIGHT_X   (190U)
+#define SCREEN_TITLE_LEFT_X   (40U)
+#define SCREEN_TITLE_RIGHT_X  (205U)
 #define SCREEN_CURRENT_Y (70U)
 #define SCREEN_TARGET_Y  (130U)
 #define SCREEN_PRESETS_Y (210U)
@@ -65,29 +79,34 @@ enum {
 #define COLOR_INACTIVE_TARGET  DISPLAY_RGB565(60, 60, 60)
 #define COLOR_ACTIVE_PRESETS   DISPLAY_RGB565(255, 210, 0)
 #define COLOR_INACTIVE_PRESETS DISPLAY_RGB565(90, 75, 0)
+#define COLOR_ACTIVE_TITLE     DISPLAY_RGB565(255, 255, 255)
+#define COLOR_INACTIVE_TITLE   DISPLAY_RGB565(90, 90, 90)
 #define COLOR_DIVIDER          DISPLAY_RGB565(100, 100, 100)
 #define COLOR_INFO             DISPLAY_RGB565(255, 255, 255)
 
 static channel_id_t s_last_active_channel;
 
 /**
- * @brief Применить цвета трёх строк канала (current/target/presets) под
+ * @brief Применить цвета строк канала (title/current/target/presets) под
  *        активное или неактивное состояние
  */
 static void apply_channel_colors(channel_id_t ch, bool active)
 {
-    uint8_t line_current, line_target, line_presets;
+    uint8_t line_title, line_current, line_target, line_presets;
 
     if (ch == CHANNEL_SOLDER) {
+        line_title   = LINE_SOLDER_TITLE;
         line_current = LINE_SOLDER_CURRENT;
         line_target  = LINE_SOLDER_TARGET;
         line_presets = LINE_SOLDER_PRESETS;
     } else {
+        line_title   = LINE_DESOLDER_TITLE;
         line_current = LINE_DESOLDER_CURRENT;
         line_target  = LINE_DESOLDER_TARGET;
         line_presets = LINE_DESOLDER_PRESETS;
     }
 
+    TextField_SetColors(line_title,   active ? COLOR_ACTIVE_TITLE   : COLOR_INACTIVE_TITLE,   COLOR_BG);
     TextField_SetColors(line_current, active ? COLOR_ACTIVE_CURRENT : COLOR_INACTIVE_CURRENT, COLOR_BG);
     TextField_SetColors(line_target,  active ? COLOR_ACTIVE_TARGET  : COLOR_INACTIVE_TARGET,  COLOR_BG);
     TextField_SetColors(line_presets, active ? COLOR_ACTIVE_PRESETS : COLOR_INACTIVE_PRESETS, COLOR_BG);
@@ -99,10 +118,10 @@ static void apply_channel_colors(channel_id_t ch, bool active)
 static void draw_divider(void)
 {
     uint16_t width = (uint16_t)(SCREEN_DIVIDER_X1 - SCREEN_DIVIDER_X0 + 1);
-    uint16_t height = (uint16_t)(SCREEN_HEIGHT - SCREEN_INFO_HEIGHT);
+    uint16_t height = (uint16_t)(SCREEN_DIVIDER_Y1 - SCREEN_INFO_HEIGHT + 1);
 
     if (Display_SetWindow(SCREEN_DIVIDER_X0, SCREEN_INFO_HEIGHT,
-                           SCREEN_DIVIDER_X1, SCREEN_HEIGHT - 1) == DISPLAY_OK) {
+                           SCREEN_DIVIDER_X1, SCREEN_DIVIDER_Y1) == DISPLAY_OK) {
         Display_FillColorDMA(COLOR_DIVIDER, (uint32_t)width * height);
         while (Display_IsBusy()) { } /* однократно, при старте, до входа в главный цикл */
     }
@@ -117,6 +136,8 @@ void Screen_Init(void)
     /* Содержимое инфозоны не определено — оставляем пустой, TODO позже
      * (таймеры сна и т.п.), геометрия уже готова. */
 
+    TextField_ConfigureLine(LINE_SOLDER_TITLE, SCREEN_TITLE_LEFT_X, SCREEN_TITLE_Y,
+                             &AntiquaB_18_uni, COLOR_ACTIVE_TITLE, COLOR_BG);
     TextField_ConfigureLine(LINE_SOLDER_CURRENT, SCREEN_LEFT_X, SCREEN_CURRENT_Y,
                              &Comic_40_dig, COLOR_ACTIVE_CURRENT, COLOR_BG);
     TextField_ConfigureLine(LINE_SOLDER_TARGET, SCREEN_LEFT_X, SCREEN_TARGET_Y,
@@ -124,12 +145,18 @@ void Screen_Init(void)
     TextField_ConfigureLine(LINE_SOLDER_PRESETS, SCREEN_PRESETS_LEFT_X, SCREEN_PRESETS_Y,
                              &AntiquaB_24_uni, COLOR_ACTIVE_PRESETS, COLOR_BG);
 
+    TextField_ConfigureLine(LINE_DESOLDER_TITLE, SCREEN_TITLE_RIGHT_X, SCREEN_TITLE_Y,
+                             &AntiquaB_18_uni, COLOR_INACTIVE_TITLE, COLOR_BG);
     TextField_ConfigureLine(LINE_DESOLDER_CURRENT, SCREEN_RIGHT_X, SCREEN_CURRENT_Y,
                              &Comic_40_dig, COLOR_INACTIVE_CURRENT, COLOR_BG);
     TextField_ConfigureLine(LINE_DESOLDER_TARGET, SCREEN_RIGHT_X, SCREEN_TARGET_Y,
                              &AntiquaB_18_uni, COLOR_INACTIVE_TARGET, COLOR_BG);
     TextField_ConfigureLine(LINE_DESOLDER_PRESETS, SCREEN_PRESETS_RIGHT_X, SCREEN_PRESETS_Y,
                              &AntiquaB_24_uni, COLOR_INACTIVE_PRESETS, COLOR_BG);
+
+    /* Подписи каналов — статичный текст, меняется только цвет (активный/неактивный) */
+    TextField_Printf(LINE_SOLDER_TITLE, "Паяльник");
+    TextField_Printf(LINE_DESOLDER_TITLE, "Отсос");
 
     /* Solder активен по умолчанию при старте (см. InputFSM_Init()) —
      * начальные цвета выше уже расставлены соответственно. */
