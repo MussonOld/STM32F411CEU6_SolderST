@@ -10,8 +10,23 @@
 
 #include "gfx.h"
 #include <string.h>
+#include <assert.h>
 
-#define GFX_GLYPH_BUFFER_PIXELS (32 * 64)
+/* Размер буфера под один глиф/ячейку перерисовки в пикселях.
+ * Должен покрывать (cell_width * height) самой требовательной комбинации
+ * среди ВСЕХ используемых шрифтов — см. submit_glyph(): cell_width
+ * объединяет bbox символа (xoff..xoff+width) и шаг курсора (advance),
+ * поэтому считать нужно именно по этой формуле, а не по одной ширине
+ * width. На момент правки максимум даёт Comic_60_dig (height=67,
+ * cell_width=37 у большинства цифр из-за advance=37 -> 2479 пикселей).
+ * Это УЖЕ ВТОРОЙ раз, когда эта константа отстаёт от реальных требований
+ * шрифтов (см. историю: сначала ловили это на '4'/'7'/'9', затем формула
+ * cell_width расширилась и лимит стал слишком мал почти для всех цифр).
+ * Если меняешь шрифты/формулу ячейки — пересчитай через
+ * App/Fonts/.c (widths, xoffset, dwidth, height) и подними константу,
+ * иначе часть символов будет молча пропадать (см. assert() ниже —
+ * он поймает это хотя бы в debug-сборке, а не только на экране). */
+#define GFX_GLYPH_BUFFER_PIXELS (40 * 70)
 static display_color_t s_glyph_buffer[GFX_GLYPH_BUFFER_PIXELS];
 
 typedef struct {
@@ -113,6 +128,15 @@ static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx
 
     uint32_t pixel_count = (uint32_t)cell_width * font->height;
     if (pixel_count > GFX_GLYPH_BUFFER_PIXELS) {
+        /* В release это по-прежнему тихий пропуск (курсор сдвигается,
+         * но глиф/ячейка не рисуется) — так проект собирается и без
+         * правки буфера, просто визуально теряет самые требовательные
+         * символы. В debug (DEBUG определён CubeIDE по умолчанию) роняем
+         * сборку сразу здесь — иначе баг обнаруживается только на экране,
+         * произвольно поздно, как это уже дважды случалось с cell_width
+         * у Comic_60_dig. */
+        assert(pixel_count <= GFX_GLYPH_BUFFER_PIXELS &&
+               "Glyph cell exceeds GFX_GLYPH_BUFFER_PIXELS - increase the buffer");
         return advance; /* Символ не влезает в буфер — пропускаем отрисовку, но сдвигаем курсор */
     }
 
