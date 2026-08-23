@@ -71,8 +71,15 @@ def parse_bdf(path):
     return gl, ascent, descent
 
 def build_custom_arrays(gl, selected_codes, ascent, descent):
-    max_glyph_height = max((g.h + g.yoff for g in gl.values()), default=ascent + descent)
-    height = max(ascent + descent, max_glyph_height)
+    # top/height считаются ТОЛЬКО по глифам, реально попадающим в экспорт
+    # (selected_codes), а не по всему исходному BDF-файлу и не по глобальным
+    # FONT_ASCENT/FONT_DESCENT — иначе, например, digit-only шрифт наследует
+    # ascent/descent всей гарнитуры (буквы вроде p/g/y с descenders) и
+    # резервирует под них место, которого в выбранном наборе нет.
+    selected_glyphs = [gl[cp] for cp in selected_codes if cp in gl]
+    top    = max((g.yoff + g.h for g in selected_glyphs), default=ascent)
+    bottom = min((g.yoff for g in selected_glyphs), default=-descent)
+    height = top - min(bottom, 0)
     bytes_per_col = (height + 7) // 8
     widths, xoff, yoff, dwx, off, g_h, lut = [], [], [], [], [], [], []
     bitmap = bytearray()
@@ -80,7 +87,7 @@ def build_custom_arrays(gl, selected_codes, ascent, descent):
         g = gl.get(cp)
         if not g: continue
         lut.append(cp); off.append(len(bitmap)); widths.append(g.w); xoff.append(g.xoff)
-        yoff.append(ascent - (g.yoff + g.h)); dwx.append(g.dwx)
+        yoff.append(top - (g.yoff + g.h)); dwx.append(g.dwx)
         r_top, r_bot = 0, -1
         for r in range(g.h):
             row_bits = any(bdf_row_bit(g, r, c) for c in range(g.w))

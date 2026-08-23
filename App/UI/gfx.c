@@ -144,11 +144,23 @@ static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx
         s_glyph_buffer[i] = bg; /* фон по всей ячейке — стираем всё, что было раньше */
     }
 
+    /* Окно отрисовки/стирания по Y ФИКСИРОВАНО на y..y+height-1 для ЛЮБОГО
+     * символа шрифта — не должно зависеть от yoffset конкретного глифа.
+     * yoff — это позиция битмапа символа ВНУТРИ этого фиксированного окна
+     * (строка буфера = r, битмап-строка = r - yoff), а не сдвиг самого окна.
+     * Если окно сдвигать вместе с yoff (как было раньше), то при смене
+     * символа с меньшим yoff (у "4" среди цифр он на 1 меньше, чем у
+     * остальных) на символ с большим yoff верхние строки старого глифа
+     * остаются вне нового окна стирания — "призрак" сверху. */
     uint16_t glyph_col0 = (uint16_t)(xoff - cell_left);
     for (uint16_t r = 0; r < font->height; r++) {
+        int16_t bmp_row = (int16_t)r - yoff;
+        if (bmp_row < 0 || bmp_row >= font->height) {
+            continue; /* вне битмапа символа — остаётся фон, уже залит выше */
+        }
         for (uint16_t c = 0; c < width; c++) {
             const uint8_t *col_ptr = &font->bitmap[offset + (uint32_t)c * bytes_per_col];
-            bool bit_set = (col_ptr[r / 8] & (0x80 >> (r % 8))) != 0;
+            bool bit_set = (col_ptr[bmp_row / 8] & (0x80 >> (bmp_row % 8))) != 0;
             if (bit_set) {
                 s_glyph_buffer[r * cell_width + glyph_col0 + c] = fg;
             }
@@ -156,7 +168,7 @@ static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx
     }
 
     uint16_t draw_x = x + cell_left;
-    uint16_t draw_y = y + yoff;
+    uint16_t draw_y = y;
 
     if (Display_SetWindow(draw_x, draw_y, draw_x + cell_width - 1, draw_y + font->height - 1) != DISPLAY_OK) {
         return advance;
