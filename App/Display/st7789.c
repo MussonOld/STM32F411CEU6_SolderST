@@ -41,6 +41,21 @@ static uint32_t s_write_remaining = 0;
 static inline void dc_command(void) { HAL_GPIO_WritePin(Disp_DC_GPIO_Port, Disp_DC_Pin, GPIO_PIN_RESET); }
 static inline void dc_data(void)    { HAL_GPIO_WritePin(Disp_DC_GPIO_Port, Disp_DC_Pin, GPIO_PIN_SET); }
 
+/**
+ * @brief Развернуть байты 16-бит цвета для передачи по SPI
+ *
+ * ST7789 в режиме RAMWR/16bpp ждёт каждый пиксель СТАРШИМ байтом вперёд
+ * (см. datasheet, "65K-Colors" write format). STM32 — little-endian,
+ * поэтому display_color_t в памяти лежит младшим байтом первым; передача
+ * "как есть" (прямым приведением к uint8_t*) отправляет байты в обратном
+ * порядке — R и B частично переставляются местами (например, чистый жёлтый
+ * 0xFE80 доходит до контроллера как приглушённый синий).
+ */
+static inline display_color_t byte_swap16(display_color_t v)
+{
+    return (display_color_t)((v << 8) | (v >> 8));
+}
+
 static void write_command(uint8_t cmd)
 {
     dc_command();
@@ -209,6 +224,16 @@ Display_Status_t Display_WritePixelsDMA(const display_color_t *pixels, uint32_t 
         return DISPLAY_ERROR;
     }
 
+    /* Байты меняются местами один раз на весь буфер — дальнейшие чанки
+     * (из ST7789_OnDmaTxComplete) шлют уже развёрнутые данные напрямую,
+     * без повторной обработки. Буфер принадлежит вызывающему коду (gfx.c),
+     * который не читает его обратно после отправки — мутация на месте
+     * безопасна. */
+    display_color_t *mutable_pixels = (display_color_t *)pixels;
+    for (uint32_t i = 0; i < count; i++) {
+        mutable_pixels[i] = byte_swap16(mutable_pixels[i]);
+    }
+
     s_fill_remaining = 0;
 
     uint32_t chunk = (count > DISPLAY_MAX_DMA_PIXELS) ? DISPLAY_MAX_DMA_PIXELS : count;
@@ -235,8 +260,9 @@ Display_Status_t Display_FillColorDMA(display_color_t color, uint32_t count)
         return DISPLAY_ERROR;
     }
 
+    display_color_t wire_color = byte_swap16(color); /* см. byte_swap16() выше */
     for (uint32_t i = 0; i < FILL_LINE_PIXELS; i++) {
-        s_fill_line[i] = color;
+        s_fill_line[i] = wire_color;
     }
     s_fill_color = color;
     s_write_remaining = 0;
