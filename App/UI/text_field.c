@@ -9,16 +9,19 @@ typedef struct {
     uint16_t x, y;
     const font_t *font;
     display_color_t fg, bg;
-    char text[TEXTFIELD_LINE_TEXT_MAX];
+    char text[TEXTFIELD_LINE_TEXT_MAX];      /* желаемый текст (то, что должно быть показано) */
+    char shown_text[TEXTFIELD_LINE_TEXT_MAX]; /* реально отображённый текст (для дозачистки хвоста) */
     bool used;
     bool dirty;
 } TextField_Line_t;
 
 static TextField_Line_t s_lines[TEXTFIELD_MAX_LINES];
+static int s_active_line = -1; /* индекс строки с незавершённым заданием gfx, -1 если нет */
 
 void TextField_Init(void)
 {
     memset(s_lines, 0, sizeof(s_lines));
+    s_active_line = -1;
 }
 
 void TextField_ConfigureLine(uint8_t line, uint16_t x, uint16_t y,
@@ -33,6 +36,7 @@ void TextField_ConfigureLine(uint8_t line, uint16_t x, uint16_t y,
     s_lines[line].fg = fg;
     s_lines[line].bg = bg;
     s_lines[line].text[0] = '\0';
+    s_lines[line].shown_text[0] = '\0';
     s_lines[line].used = true;
     s_lines[line].dirty = false; /* пустая строка и так пуста на экране */
 }
@@ -53,6 +57,8 @@ void TextField_Printf(uint8_t line, const char *fmt, ...)
         strncpy(s_lines[line].text, buf, TEXTFIELD_LINE_TEXT_MAX - 1);
         s_lines[line].text[TEXTFIELD_LINE_TEXT_MAX - 1] = '\0';
         s_lines[line].dirty = true;
+        /* shown_text НЕ трогаем здесь — это то, что реально ещё на экране,
+         * пригодится gfx.c для дозачистки хвоста, когда задание стартует. */
     }
 }
 
@@ -71,21 +77,33 @@ void TextField_SetColors(uint8_t line, display_color_t fg, display_color_t bg)
 
 void TextField_Process(void)
 {
-    /* Продвигаем текущее задание gfx (если есть) вне зависимости от того,
-     * найдём ли ниже новую грязную строку — так символы дорисовываются
-     * даже если в этом вызове стартовать новую отрисовку нельзя. */
-    if (Gfx_Process() == GFX_JOB_BUSY) {
-        return; /* gfx ещё занят предыдущим заданием — новое не начинаем */
+    if (s_active_line >= 0) {
+        Gfx_JobState_t st = Gfx_Process();
+        if (st == GFX_JOB_BUSY) {
+            return; /* задание текущей строки ещё выполняется (включая дозачистку хвоста) */
+        }
+        /* DONE (или ERROR — тоже считаем завершённым, не зацикливаемся) —
+         * теперь то, что реально на экране, совпадает с text. */
+        strncpy(s_lines[s_active_line].shown_text, s_lines[s_active_line].text,
+                TEXTFIELD_LINE_TEXT_MAX - 1);
+        s_lines[s_active_line].shown_text[TEXTFIELD_LINE_TEXT_MAX - 1] = '\0';
+        s_active_line = -1;
+        return; /* не начинаем новую строку в этом же вызове главного цикла */
     }
 
     for (uint8_t i = 0; i < TEXTFIELD_MAX_LINES; i++) {
         if (s_lines[i].used && s_lines[i].dirty) {
             Gfx_JobState_t st = Gfx_DrawTextStart(s_lines[i].x, s_lines[i].y,
-                                                   s_lines[i].text, s_lines[i].font,
+                                                   s_lines[i].text, s_lines[i].shown_text,
+                                                   s_lines[i].font,
                                                    s_lines[i].fg, s_lines[i].bg);
-            if (st != GFX_JOB_ERROR) {
-                s_lines[i].dirty = false;
+            s_lines[i].dirty = false;
+            if (st == GFX_JOB_BUSY) {
+                s_active_line = (int)i;
             }
+            /* GFX_JOB_ERROR — задание не стартовало (например, font/text
+             * некорректны); shown_text не обновляем, dirty уже снят —
+             * решение то же, что было раньше: не зацикливаемся на ошибке. */
             return; /* одна строка за вызов — не задерживаем главный цикл */
         }
     }

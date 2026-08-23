@@ -5,17 +5,20 @@
  * Разметка 320x240 (см. обсуждение):
  *  - y=0..29   : общая инфозона (сейчас пустая — содержимое не определено,
  *                таймеры сна появятся здесь позже)
- *  - x=159..160: вертикальный разделитель — НЕ доходит до строки пресетов
- *                (та зона общая, как и инфозона — разделитель между ними,
- *                не через них)
+ *  - x=159..160: вертикальный разделитель на ВСЮ высоту (0..239) — концепция
+ *                "общих зон" отменена: строка пресетов остаётся раздельной
+ *                по смыслу (два независимых поля), просто больше не
+ *                визуально объединяется через пропуск разделителя
  *  - каждая половина (0..158 / 161..319):
  *      - заголовок канала ("Паяльник"/"Отсос"), шрифт AntiquaB_18_uni
  *      - текущая температура, шрифт Comic_40_dig (крупный, только цифры)
  *      - целевая температура, шрифт AntiquaB_18_uni (ВРЕМЕННО — по ТЗ
  *        будет убрана позже, сейчас нужна для отладки)
- *  - общая строка пресетов внизу, шрифт AntiquaB_24_uni — визуально не
- *    разделена вертикальной линией, хотя технически это два отдельных поля
- *    (значения разные по каналам, разделитель просто до неё не доходит)
+ *      - строка пресетов, шрифт AntiquaB_24_uni, внизу
+ *  - ТОЛЬКО в окне паяльника, ниже целевой температуры — тестовый счётчик
+ *    шрифтом Comic_60_dig, тикает раз в 500 мс. ВРЕМЕННО, только чтобы
+ *    визуально проверить битмап этого шрифта на реальном железе — убрать,
+ *    когда проверка закончена.
  *
  * Координаты — первый приближённый вариант (не откалиброван визуально на
  * реальном дисплее из этой сессии) — при необходимости подвинуть на
@@ -31,6 +34,7 @@
 #include "settings.h"
 #include "fsm.h"
 #include "fixed_point.h"
+#include "stm32f4xx_hal.h" /* HAL_GetTick() — тик тестового счётчика */
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -40,6 +44,7 @@ enum {
     LINE_SOLDER_TITLE,
     LINE_SOLDER_CURRENT,
     LINE_SOLDER_TARGET,
+    LINE_SOLDER_TEST_COUNTER, /* ВРЕМЕННО — проверка битмапа Comic_60_dig, см. докстринг файла */
     LINE_SOLDER_PRESETS,
     LINE_DESOLDER_TITLE,
     LINE_DESOLDER_CURRENT,
@@ -53,10 +58,6 @@ enum {
 #define SCREEN_INFO_HEIGHT  (30U)
 #define SCREEN_DIVIDER_X0   (159U)
 #define SCREEN_DIVIDER_X1   (160U) /* разделитель 2px шириной: X0..X1 включительно */
-/* Разделитель НЕ доходит до строки пресетов — та зона общая (см. докстринг),
- * как и инфозона сверху. Останавливаем линию с небольшим отступом сверху
- * от SCREEN_PRESETS_Y. */
-#define SCREEN_DIVIDER_Y1   (SCREEN_PRESETS_Y - 6U)
 
 #define SCREEN_TITLE_Y   (36U)
 #define SCREEN_LEFT_X    (30U)
@@ -65,6 +66,7 @@ enum {
 #define SCREEN_TITLE_RIGHT_X  (205U)
 #define SCREEN_CURRENT_Y (70U)
 #define SCREEN_TARGET_Y  (130U)
+#define SCREEN_TEST_COUNTER_Y (150U) /* ВРЕМЕННО — см. докстринг файла */
 #define SCREEN_PRESETS_Y (210U)
 #define SCREEN_PRESETS_LEFT_X   (10U)
 #define SCREEN_PRESETS_RIGHT_X  (170U)
@@ -86,6 +88,11 @@ enum {
 
 static channel_id_t s_last_active_channel;
 
+/* ---- ВРЕМЕННО: тестовый счётчик для проверки битмапа Comic_60_dig ---- */
+#define SCREEN_TEST_COUNTER_TICK_MS (500U)
+static uint32_t s_test_counter = 0;
+static uint32_t s_test_counter_last_tick = 0;
+
 /**
  * @brief Применить цвета строк канала (title/current/target/presets) под
  *        активное или неактивное состояние
@@ -99,6 +106,9 @@ static void apply_channel_colors(channel_id_t ch, bool active)
         line_current = LINE_SOLDER_CURRENT;
         line_target  = LINE_SOLDER_TARGET;
         line_presets = LINE_SOLDER_PRESETS;
+        /* Тестовый счётчик (ВРЕМЕННО) тускнеет вместе с остальным окном паяльника */
+        TextField_SetColors(LINE_SOLDER_TEST_COUNTER,
+                             active ? COLOR_ACTIVE_CURRENT : COLOR_INACTIVE_CURRENT, COLOR_BG);
     } else {
         line_title   = LINE_DESOLDER_TITLE;
         line_current = LINE_DESOLDER_CURRENT;
@@ -118,10 +128,10 @@ static void apply_channel_colors(channel_id_t ch, bool active)
 static void draw_divider(void)
 {
     uint16_t width = (uint16_t)(SCREEN_DIVIDER_X1 - SCREEN_DIVIDER_X0 + 1);
-    uint16_t height = (uint16_t)(SCREEN_DIVIDER_Y1 - SCREEN_INFO_HEIGHT + 1);
+    uint16_t height = SCREEN_HEIGHT;
 
-    if (Display_SetWindow(SCREEN_DIVIDER_X0, SCREEN_INFO_HEIGHT,
-                           SCREEN_DIVIDER_X1, SCREEN_DIVIDER_Y1) == DISPLAY_OK) {
+    if (Display_SetWindow(SCREEN_DIVIDER_X0, 0,
+                           SCREEN_DIVIDER_X1, SCREEN_HEIGHT - 1) == DISPLAY_OK) {
         Display_FillColorDMA(COLOR_DIVIDER, (uint32_t)width * height);
         while (Display_IsBusy()) { } /* однократно, при старте, до входа в главный цикл */
     }
@@ -142,6 +152,8 @@ void Screen_Init(void)
                              &Comic_40_dig, COLOR_ACTIVE_CURRENT, COLOR_BG);
     TextField_ConfigureLine(LINE_SOLDER_TARGET, SCREEN_LEFT_X, SCREEN_TARGET_Y,
                              &AntiquaB_18_uni, COLOR_ACTIVE_TARGET, COLOR_BG);
+    TextField_ConfigureLine(LINE_SOLDER_TEST_COUNTER, SCREEN_LEFT_X, SCREEN_TEST_COUNTER_Y,
+                             &Comic_60_dig, COLOR_ACTIVE_CURRENT, COLOR_BG); /* ВРЕМЕННО */
     TextField_ConfigureLine(LINE_SOLDER_PRESETS, SCREEN_PRESETS_LEFT_X, SCREEN_PRESETS_Y,
                              &AntiquaB_24_uni, COLOR_ACTIVE_PRESETS, COLOR_BG);
 
@@ -161,6 +173,10 @@ void Screen_Init(void)
     /* Solder активен по умолчанию при старте (см. InputFSM_Init()) —
      * начальные цвета выше уже расставлены соответственно. */
     s_last_active_channel = CHANNEL_SOLDER;
+
+    s_test_counter = 0;
+    s_test_counter_last_tick = HAL_GetTick();
+    TextField_Printf(LINE_SOLDER_TEST_COUNTER, "%lu", (unsigned long)s_test_counter); /* ВРЕМЕННО */
 }
 
 /**
@@ -186,6 +202,13 @@ void Screen_Update(void)
 {
     update_channel_content(CHANNEL_SOLDER, LINE_SOLDER_CURRENT, LINE_SOLDER_TARGET, LINE_SOLDER_PRESETS);
     update_channel_content(CHANNEL_DESOLDER, LINE_DESOLDER_CURRENT, LINE_DESOLDER_TARGET, LINE_DESOLDER_PRESETS);
+
+    /* ВРЕМЕННО — тестовый счётчик, проверка битмапа Comic_60_dig, см. докстринг файла */
+    if (HAL_GetTick() - s_test_counter_last_tick >= SCREEN_TEST_COUNTER_TICK_MS) {
+        s_test_counter_last_tick += SCREEN_TEST_COUNTER_TICK_MS;
+        s_test_counter++;
+        TextField_Printf(LINE_SOLDER_TEST_COUNTER, "%lu", (unsigned long)(s_test_counter % 10000U));
+    }
 
     channel_id_t active = InputFSM_GetActiveChannel();
     if (active != s_last_active_channel) {
