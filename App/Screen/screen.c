@@ -6,20 +6,30 @@
  *  - y=0..29   : общая инфозона (сейчас пустая — содержимое не определено,
  *                таймеры сна появятся здесь позже)
  *  - x=159..160: вертикальный разделитель — НЕ доходит до строки пресетов
- *                (та зона снова общая: один набор пресетов на экран, для
- *                активного канала — не по одному на каждый)
+ *                (та зона общая: один набор пресетов на экран, для
+ *                активного канала)
  *  - каждая половина (0..158 / 161..319):
  *      - заголовок канала ("Паяльник"/"Отсос"), шрифт AntiquaB_18_uni
- *      - текущая температура, шрифт Comic_60_dig, отцентрована по вертикали
- *        в промежутке между заголовком и строкой пресетов
- *      - целевая температура прямо под ней, шрифт AntiquaB_18_uni
- *        (ВРЕМЕННО — по ТЗ будет убрана позже, сейчас нужна для отладки)
- *  - общая строка пресетов внизу, шрифт AntiquaB_24_uni — ОДНА на весь
- *    экран, показывает 3 пресета АКТИВНОГО канала (не по каналам)
+ *      - текущая температура, шрифт Comic_60_dig — отцентрована и по
+ *        вертикали (в промежутке между заголовком и строкой пресетов), и
+ *        по горизонтали (по реальной ширине глифов для типового
+ *        3-значного числа, см. SCREEN_CURRENT_LEFT_X/RIGHT_X)
+ *      - целевая температура прямо под ней, шрифт AntiquaB_18_uni, тоже
+ *        отцентрована горизонтально (ВРЕМЕННО — по ТЗ будет убрана позже)
+ *  - строка пресетов внизу, шрифт AntiquaB_24_uni, ТРИ отдельных поля
+ *    (не одна строка) — пресеты активного канала:
+ *      - preset1: x=10 от левого края
+ *      - preset2: центрирован ровно на оси разделителя (x=160)
+ *      - preset3: x так, чтобы правый край был в 10px от правого края экрана
+ *    Позиции preset2/preset3 посчитаны под типовую ширину 3-значного числа
+ *    в этом шрифте (все цифры AntiquaB_24_uni одинаковой ширины 12px) —
+ *    НЕ пересчитываются на лету под фактическую ширину каждого значения
+ *    (первый заход, по просьбе — скорректировать позже при необходимости).
  *
- * Координаты — первый приближённый вариант (не откалиброван визуально на
- * реальном дисплее из этой сессии) — при необходимости подвинуть на
- * реальном железе, ничего в остальной архитектуре это не затронет.
+ * Координаты — приближённый вариант, посчитан по реальным dwidth глифов
+ * (не на глаз), но не откалиброван визуально на реальном дисплее из этой
+ * сессии — при необходимости подвинуть, ничего в остальной архитектуре
+ * это не затронет.
  */
 
 #include "screen.h"
@@ -43,7 +53,9 @@ enum {
     LINE_DESOLDER_TITLE,
     LINE_DESOLDER_CURRENT,
     LINE_DESOLDER_TARGET,
-    LINE_PRESETS, /* ОДНА строка на весь экран — пресеты активного канала */
+    LINE_PRESET_1,
+    LINE_PRESET_2,
+    LINE_PRESET_3,
 };
 
 /* ---- Геометрия ---- */
@@ -55,22 +67,39 @@ enum {
 
 #define SCREEN_TITLE_Y      (36U)
 #define SCREEN_TITLE_HEIGHT (18U) /* высота шрифта AntiquaB_18_uni */
-#define SCREEN_LEFT_X    (30U)
-#define SCREEN_RIGHT_X   (190U)
 #define SCREEN_TITLE_LEFT_X   (40U)
 #define SCREEN_TITLE_RIGHT_X  (205U)
 
+/* Текущая температура (Comic_60_dig): типовая ширина "300" в этом шрифте —
+ * все цифры кроме "1" имеют dwidth=37, т.е. 37*3=111px. Центр половины
+ * экрана (159px) минус половина этой ширины: (159-111)/2=24. */
+#define SCREEN_CURRENT_TYPICAL_WIDTH (111U)
+#define SCREEN_CURRENT_LEFT_X   ((SCREEN_DIVIDER_X0 - SCREEN_CURRENT_TYPICAL_WIDTH) / 2U)
+#define SCREEN_CURRENT_RIGHT_X  (SCREEN_DIVIDER_X1 + 1U + SCREEN_CURRENT_LEFT_X)
+
+/* Целевая температура (AntiquaB_18_uni): все цифры dwidth=9, "300"=27px.
+ * (159-27)/2=66. */
+#define SCREEN_TARGET_TYPICAL_WIDTH (27U)
+#define SCREEN_TARGET_LEFT_X   ((SCREEN_DIVIDER_X0 - SCREEN_TARGET_TYPICAL_WIDTH) / 2U)
+#define SCREEN_TARGET_RIGHT_X  (SCREEN_DIVIDER_X1 + 1U + SCREEN_TARGET_LEFT_X)
+
 #define SCREEN_PRESETS_Y (210U)
-#define SCREEN_PRESETS_X (95U) /* примерный центр строки "300 350 450" шрифтом AntiquaB_24_uni */
-/* Разделитель НЕ доходит до строки пресетов — та зона снова общая (одна
- * строка на экран). Останавливаем линию с небольшим отступом сверху от
- * SCREEN_PRESETS_Y. */
+/* Пресеты (AntiquaB_24_uni, все цифры dwidth=12, "300"=36px):
+ *  - preset1: 10px от левого края
+ *  - preset2: центрирован на оси разделителя (x=160)
+ *  - preset3: правый край в 10px от правого края экрана (320-10=310) */
+#define SCREEN_PRESET_TYPICAL_WIDTH (36U)
+#define SCREEN_PRESET1_X (10U)
+#define SCREEN_PRESET2_X ((SCREEN_DIVIDER_X0 + 1U) - SCREEN_PRESET_TYPICAL_WIDTH / 2U)
+#define SCREEN_PRESET3_X ((SCREEN_WIDTH - 10U) - SCREEN_PRESET_TYPICAL_WIDTH)
+
+/* Разделитель НЕ доходит до строки пресетов — та зона общая (одна строка
+ * на экран). Останавливаем линию с небольшим отступом сверху от SCREEN_PRESETS_Y. */
 #define SCREEN_DIVIDER_Y1   (SCREEN_PRESETS_Y - 6U)
 
 /* Текущая+целевая температура центрируются по вертикали в промежутке между
- * низом заголовка и верхом строки пресетов (с тем же отступом 6px, что и
- * у разделителя). CURRENT_HEIGHT/TARGET_HEIGHT — высоты соответствующих
- * шрифтов (Comic_60_dig / AntiquaB_18_uni), GAP — зазор между ними. */
+ * низом заголовка и верхом строки пресетов (тот же отступ 6px, что и у
+ * разделителя). CURRENT_HEIGHT/TARGET_HEIGHT — высоты шрифтов, GAP — зазор. */
 #define SCREEN_CURRENT_HEIGHT (67U)
 #define SCREEN_TARGET_HEIGHT  (18U)
 #define SCREEN_TEMP_GAP       (10U)
@@ -100,8 +129,8 @@ static channel_id_t s_last_active_channel;
 
 /**
  * @brief Применить цвета строк канала (title/current/target) под активное
- *        или неактивное состояние. Пресеты сюда не входят — это общая
- *        строка, всегда цвета "активного" (см. COLOR_ACTIVE_PRESETS).
+ *        или неактивное состояние. Пресеты сюда не входят — общие поля,
+ *        всегда цвета "активного" (см. COLOR_ACTIVE_PRESETS).
  */
 static void apply_channel_colors(channel_id_t ch, bool active)
 {
@@ -148,19 +177,23 @@ void Screen_Init(void)
 
     TextField_ConfigureLine(LINE_SOLDER_TITLE, SCREEN_TITLE_LEFT_X, SCREEN_TITLE_Y,
                              &AntiquaB_18_uni, COLOR_ACTIVE_TITLE, COLOR_BG);
-    TextField_ConfigureLine(LINE_SOLDER_CURRENT, SCREEN_LEFT_X, SCREEN_CURRENT_Y,
+    TextField_ConfigureLine(LINE_SOLDER_CURRENT, SCREEN_CURRENT_LEFT_X, SCREEN_CURRENT_Y,
                              &Comic_60_dig, COLOR_ACTIVE_CURRENT, COLOR_BG);
-    TextField_ConfigureLine(LINE_SOLDER_TARGET, SCREEN_LEFT_X, SCREEN_TARGET_Y,
+    TextField_ConfigureLine(LINE_SOLDER_TARGET, SCREEN_TARGET_LEFT_X, SCREEN_TARGET_Y,
                              &AntiquaB_18_uni, COLOR_ACTIVE_TARGET, COLOR_BG);
 
     TextField_ConfigureLine(LINE_DESOLDER_TITLE, SCREEN_TITLE_RIGHT_X, SCREEN_TITLE_Y,
                              &AntiquaB_18_uni, COLOR_INACTIVE_TITLE, COLOR_BG);
-    TextField_ConfigureLine(LINE_DESOLDER_CURRENT, SCREEN_RIGHT_X, SCREEN_CURRENT_Y,
+    TextField_ConfigureLine(LINE_DESOLDER_CURRENT, SCREEN_CURRENT_RIGHT_X, SCREEN_CURRENT_Y,
                              &Comic_60_dig, COLOR_INACTIVE_CURRENT, COLOR_BG);
-    TextField_ConfigureLine(LINE_DESOLDER_TARGET, SCREEN_RIGHT_X, SCREEN_TARGET_Y,
+    TextField_ConfigureLine(LINE_DESOLDER_TARGET, SCREEN_TARGET_RIGHT_X, SCREEN_TARGET_Y,
                              &AntiquaB_18_uni, COLOR_INACTIVE_TARGET, COLOR_BG);
 
-    TextField_ConfigureLine(LINE_PRESETS, SCREEN_PRESETS_X, SCREEN_PRESETS_Y,
+    TextField_ConfigureLine(LINE_PRESET_1, SCREEN_PRESET1_X, SCREEN_PRESETS_Y,
+                             &AntiquaB_24_uni, COLOR_ACTIVE_PRESETS, COLOR_BG);
+    TextField_ConfigureLine(LINE_PRESET_2, SCREEN_PRESET2_X, SCREEN_PRESETS_Y,
+                             &AntiquaB_24_uni, COLOR_ACTIVE_PRESETS, COLOR_BG);
+    TextField_ConfigureLine(LINE_PRESET_3, SCREEN_PRESET3_X, SCREEN_PRESETS_Y,
                              &AntiquaB_24_uni, COLOR_ACTIVE_PRESETS, COLOR_BG);
 
     /* Подписи каналов — статичный текст, меняется только цвет (активный/неактивный) */
@@ -192,11 +225,10 @@ void Screen_Update(void)
 
     channel_id_t active = InputFSM_GetActiveChannel();
 
-    /* Общая строка пресетов — всегда показывает пресеты АКТИВНОГО канала */
-    uint16_t p1 = Settings_GetPreset(active, PRESET_1);
-    uint16_t p2 = Settings_GetPreset(active, PRESET_2);
-    uint16_t p3 = Settings_GetPreset(active, PRESET_3);
-    TextField_Printf(LINE_PRESETS, "%u %u %u", (unsigned)p1, (unsigned)p2, (unsigned)p3);
+    /* Пресеты — три отдельных поля, всегда показывают пресеты АКТИВНОГО канала */
+    TextField_Printf(LINE_PRESET_1, "%u", (unsigned)Settings_GetPreset(active, PRESET_1));
+    TextField_Printf(LINE_PRESET_2, "%u", (unsigned)Settings_GetPreset(active, PRESET_2));
+    TextField_Printf(LINE_PRESET_3, "%u", (unsigned)Settings_GetPreset(active, PRESET_3));
 
     if (active != s_last_active_channel) {
         apply_channel_colors(s_last_active_channel, false);
