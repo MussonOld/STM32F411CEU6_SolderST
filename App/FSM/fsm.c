@@ -211,6 +211,14 @@ void InputFSM_Init(void)
     s_accel_last_tick = 0;
 }
 
+void InputFSM_SyncStateFromSettings(void)
+{
+    for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
+        uint16_t target = Settings_GetTarget((channel_id_t)ch);
+        State_SetSetpointTemp((channel_id_t)ch, FIXED_FROM_INT(target));
+    }
+}
+
 void InputFSM_Poll(void)
 {
     button_event_t ev;

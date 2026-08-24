@@ -6,7 +6,8 @@
  *
  * Единственный писатель в State_SetSetpointTemp/State_SetEnabled со стороны
  * пользовательского ввода (см. правило в шапке settings.h — Settings сам не
- * трогает State, это делает этот модуль).
+ * трогает State, это делает этот модуль). Та же пара полей синхронизируется
+ * этим модулем и при старте — см. InputFSM_SyncStateFromSettings().
  *
  * InputFSM_Poll() — вызывать из главного цикла каждую итерацию, ПОСЛЕ
  * Buttons_Poll(). Не блокирует.
@@ -50,6 +51,20 @@ typedef enum {
  * @brief Инициализация: активный канал = CHANNEL_SOLDER, режим = MAIN
  */
 void InputFSM_Init(void);
+
+/**
+ * @brief Отразить в State то, что реально загружено в Settings — для КАЖДОГО
+ *        канала: State_SetSetpointTemp(ch, FIXED_FROM_INT(Settings_GetTarget(ch))).
+ *
+ * Не пользовательский ввод (в отличие от остальных писателей этих полей в
+ * этом модуле) — вызвать РОВНО ОДИН РАЗ при старте, сразу после
+ * Settings_Load(), до входа в главный цикл. Без этого State_SetpointTemp
+ * остаётся 0 (дефолт State_Init()) до первого нажатия SET/UP/DN, хотя экран
+ * (читает Settings напрямую) и Settings уже показывают загруженное значение
+ * — рассинхрон State/Settings, который заметен будущему Control/PID, если
+ * тот читает State_GetSetpointTemp() до первого нажатия кнопки.
+ */
+void InputFSM_SyncStateFromSettings(void);
 
 /**
  * @brief Один шаг: разобрать очередь событий Buttons + продвинуть авто-повтор UP/DN

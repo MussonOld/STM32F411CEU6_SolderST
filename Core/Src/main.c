@@ -116,6 +116,7 @@ int main(void)
   State_Init();
   Settings_Init();   /* дефолты в RAM на случай сбоя чтения ниже */
   Settings_Load();   /* поверх дефолтов — то, что реально сохранено в EEPROM (или ошибка/стёртый чип, см. settings.c) */
+  InputFSM_SyncStateFromSettings(); /* без этого State.setpoint_temp==0 до первого нажатия SET/UP/DN — см. fsm.h */
 
   Buttons_Init();
   InputFSM_Init();
