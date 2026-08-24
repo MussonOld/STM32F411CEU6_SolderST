@@ -115,9 +115,12 @@ void ST7789_OnDmaTxComplete(void)
 {
     if (s_fill_remaining > 0) {
         uint32_t chunk = (s_fill_remaining > FILL_LINE_PIXELS) ? FILL_LINE_PIXELS : s_fill_remaining;
-        s_fill_remaining -= chunk;
         dc_data();
-        HAL_SPI_Transmit_DMA(&hspi1, (uint8_t *)s_fill_line, chunk * sizeof(display_color_t));
+        if (HAL_SPI_Transmit_DMA(&hspi1, (uint8_t *)s_fill_line, chunk * sizeof(display_color_t)) != HAL_OK) {
+            s_busy = false; /* DMA не смогла продолжить передачу — останавливаемся, не зависаем в busy навсегда */
+            return;
+        }
+        s_fill_remaining -= chunk; /* декремент только при подтверждённом старте DMA */
         return;
     }
 
