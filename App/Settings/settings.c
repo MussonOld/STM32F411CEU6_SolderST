@@ -16,7 +16,7 @@
 typedef struct {
     uint16_t preset[PRESET_COUNT];
     uint16_t target;
-    uint16_t sleep_temp;
+    uint16_t presleep_temp;
     uint16_t slope;
     uint16_t bias;
     uint16_t pre_sleep_timeout;
@@ -42,7 +42,7 @@ static uint32_t s_last_change_tick = 0;
  * addr 2   : контрольная сумма (8-бит сумма всех байт данных)
  * addr 3   : зарезервировано (не используется, пишется 0)
  * addr 4.. : данные — по CHANNEL_COUNT блоков по SETTINGS_EEPROM_BYTES_PER_CH
- *            байт (preset x3, target, sleep_temp, slope, bias,
+ *            байт (preset x3, target, presleep_temp, slope, bias,
  *            pre_sleep_timeout, sleep_timeout, kp, ki, kd — по 2 байта, LE),
  *            блок CHANNEL_SOLDER первый, затем CHANNEL_DESOLDER; после
  *            обоих блоков — 1 байт flags.
@@ -52,7 +52,7 @@ static uint32_t s_last_change_tick = 0;
 #define SETTINGS_EEPROM_ADDR_CHECKSUM  (2U)
 #define SETTINGS_EEPROM_ADDR_RESERVED  (3U)
 #define SETTINGS_EEPROM_ADDR_DATA      (4U)
-#define SETTINGS_EEPROM_FIELDS_PER_CH  (12U) /* preset x3 + target + sleep_temp + slope + bias + pre_sleep_timeout + sleep_timeout + kp + ki + kd */
+#define SETTINGS_EEPROM_FIELDS_PER_CH  (12U) /* preset x3 + target + presleep_temp + slope + bias + pre_sleep_timeout + sleep_timeout + kp + ki + kd */
 #define SETTINGS_EEPROM_BYTES_PER_CH   (SETTINGS_EEPROM_FIELDS_PER_CH * 2U)
 #define SETTINGS_EEPROM_CH_DATA_LEN    (CHANNEL_COUNT * SETTINGS_EEPROM_BYTES_PER_CH)
 #define SETTINGS_EEPROM_FLAGS_LEN      (1U)
@@ -94,7 +94,7 @@ void Settings_Init(void)
         s_channels[ch].preset[PRESET_2]  = 350;
         s_channels[ch].preset[PRESET_3]  = 450;
         s_channels[ch].target            = 300;  /* = preSet1; не задано явно пользователем */
-        s_channels[ch].sleep_temp        = 150;  /* ВРЕМЕННО, не задано явно пользователем */
+        s_channels[ch].presleep_temp        = 150;  /* ВРЕМЕННО, не задано явно пользователем */
         s_channels[ch].slope             = 72;   /* номинал 0.072 * SETTINGS_SLOPE_SCALE */
         s_channels[ch].bias              = 217;  /* номинал 21.7 * SETTINGS_BIAS_SCALE */
         s_channels[ch].pre_sleep_timeout = 0;     /* sleep выключен по умолчанию */
@@ -136,20 +136,20 @@ uint16_t Settings_GetTarget(channel_id_t ch)
     return s_channels[ch].target;
 }
 
-/* ---- Sleep-температура ---- */
+/* ---- Presleep-температура ---- */
 
-void Settings_SetSleepTemp(channel_id_t ch, uint16_t value)
+void Settings_SetPresleepTemp(channel_id_t ch, uint16_t value)
 {
     if (!channel_valid(ch)) return;
     uint16_t clamped = clamp_u16(value, SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX);
-    mark_dirty_if_changed(s_channels[ch].sleep_temp, clamped);
-    s_channels[ch].sleep_temp = clamped;
+    mark_dirty_if_changed(s_channels[ch].presleep_temp, clamped);
+    s_channels[ch].presleep_temp = clamped;
 }
 
-uint16_t Settings_GetSleepTemp(channel_id_t ch)
+uint16_t Settings_GetPresleepTemp(channel_id_t ch)
 {
     if (!channel_valid(ch)) return 0;
-    return s_channels[ch].sleep_temp;
+    return s_channels[ch].presleep_temp;
 }
 
 /* ---- Калибровка (Slope/Bias) ---- */
@@ -310,7 +310,7 @@ static void pack_data(uint8_t *buf)
             s_channels[ch].preset[PRESET_2],
             s_channels[ch].preset[PRESET_3],
             s_channels[ch].target,
-            s_channels[ch].sleep_temp,
+            s_channels[ch].presleep_temp,
             s_channels[ch].slope,
             s_channels[ch].bias,
             s_channels[ch].pre_sleep_timeout,
@@ -349,7 +349,7 @@ static void unpack_data(const uint8_t *buf)
         s_channels[ch].preset[PRESET_2]  = fields[1];
         s_channels[ch].preset[PRESET_3]  = fields[2];
         s_channels[ch].target            = fields[3];
-        s_channels[ch].sleep_temp        = fields[4];
+        s_channels[ch].presleep_temp        = fields[4];
         s_channels[ch].slope             = fields[5];
         s_channels[ch].bias              = fields[6];
         s_channels[ch].pre_sleep_timeout = fields[7];

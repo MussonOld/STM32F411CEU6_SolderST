@@ -49,7 +49,7 @@ extern "C" {
 
 /* ---- Диапазоны значений (все сеттеры клампят к этим границам) ---- */
 
-/** @brief Температурные уставки (preset*, target, sleepTemp), °C */
+/** @brief Температурные уставки (preset*, target, presleepTemp), °C */
 #define SETTINGS_TEMP_MIN  (50U)
 #define SETTINGS_TEMP_MAX  (450U)
 
@@ -96,7 +96,7 @@ typedef enum {
  * @brief Установить значения по умолчанию всем каналам (не трогает EEPROM)
  *
  * Дефолты: preSet1=300, preSet2=350, preSet3=450 °C (оба инструмента),
- * target=300 (=preSet1), sleepTemp=150 °C, preSleepTimeout=sleepTimeout=0 мин
+ * target=300 (=preSet1), presleepTemp=150 °C, preSleepTimeout=sleepTimeout=0 мин
  * (sleep выключен, пока логика не реализована), Kp=Ki=Kd=0 (регулятор
  * неактивен, пока не настроен), slope/bias — номиналы из формулы датчика
  * (72 / 217, см. SETTINGS_SLOPE_SCALE/SETTINGS_BIAS_SCALE), flags=0.
@@ -118,11 +118,11 @@ uint16_t Settings_GetPreset(channel_id_t ch, preset_id_t preset);
 void     Settings_SetTarget(channel_id_t ch, uint16_t value);
 uint16_t Settings_GetTarget(channel_id_t ch);
 
-/* ---- Sleep-температура ---- */
+/* ---- Presleep-температура ---- */
 
 /** @brief Температура Sleep канала, °C. Клампится к [SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX]. */
-void     Settings_SetSleepTemp(channel_id_t ch, uint16_t value);
-uint16_t Settings_GetSleepTemp(channel_id_t ch);
+void     Settings_SetPresleepTemp(channel_id_t ch, uint16_t value);
+uint16_t Settings_GetPresleepTemp(channel_id_t ch);
 
 /* ---- Калибровка датчика (RTD) ---- */
 
