@@ -15,9 +15,10 @@
 extern SPI_HandleTypeDef hspi1;
 
 /* Максимум пикселей за один DMA-транш: HAL_SPI_Transmit_DMA принимает Size
- * как uint16_t (макс. 65535 байт = 32767 пикселей по 2 байта). Берём с запасом
- * ниже границы для предсказуемости. */
-#define DISPLAY_MAX_DMA_PIXELS  16384
+ * как uint16_t (макс. 65535 байт = 32767 пикселей по 2 байта). Оба чанковых
+ * пути (fill: FILL_LINE_PIXELS=320, write: DISPLAY_WRITE_CHUNK_PIXELS=512,
+ * см. ниже) с большим запасом укладываются в этот предел сами по себе —
+ * отдельная константа-ограничитель на транш здесь не нужна. */
 
 /* ---- Внутреннее состояние драйвера ---- */
 static volatile bool s_busy = false;
@@ -32,9 +33,19 @@ static display_color_t s_fill_line[FILL_LINE_PIXELS];
 static uint32_t s_fill_remaining = 0;
 static display_color_t s_fill_color = 0;
 
-/* Продолжение чанкованной передачи внешнего буфера пикселей (WritePixelsDMA) */
+/* Продолжение чанкованной передачи внешнего буфера пикселей (WritePixelsDMA).
+ * s_write_ptr — указатель на буфер ВЫЗЫВАЮЩЕГО КОДА, он const и НЕ мутируется
+ * (см. байт-свап ниже — идёт в собственный scratch-буфер модуля, а не на месте). */
 static const display_color_t *s_write_ptr = NULL;
 static uint32_t s_write_remaining = 0;
+
+/* Scratch-буфер под байт-свап одного чанка перед отправкой по DMA. Размер —
+ * компромисс между частотой рестартов DMA (чем меньше буфер, тем чаще) и
+ * расходом RAM; для UI-элементов (текст/иконки) этого с большим запасом
+ * хватает за 1-2 чанка, для будущих больших заливок изображений — просто
+ * больше рестартов DMA, не более. */
+#define DISPLAY_WRITE_CHUNK_PIXELS  512U
+static display_color_t s_write_scratch[DISPLAY_WRITE_CHUNK_PIXELS];
 
 /* ---- Низкоуровневые примитивы ---- */
 
@@ -73,6 +84,31 @@ static void write_data_u8(uint8_t value)
     write_data(&value, 1);
 }
 
+/**
+ * @brief Развернуть байты очередного чанка из буфера вызывающего кода
+ *        (s_write_ptr, const, НЕ мутируется) в собственный scratch-буфер
+ *        драйвера и запустить его передачу по DMA. Продвигает s_write_ptr/
+ *        s_write_remaining. Вызывается и из Display_WritePixelsDMA() (первый
+ *        чанк), и из ST7789_OnDmaTxComplete() (продолжение).
+ */
+static Display_Status_t start_write_chunk(void)
+{
+    uint32_t chunk = (s_write_remaining > DISPLAY_WRITE_CHUNK_PIXELS) ? DISPLAY_WRITE_CHUNK_PIXELS
+                                                                        : s_write_remaining;
+    for (uint32_t i = 0; i < chunk; i++) {
+        s_write_scratch[i] = byte_swap16(s_write_ptr[i]);
+    }
+
+    dc_data();
+    if (HAL_SPI_Transmit_DMA(&hspi1, (uint8_t *)s_write_scratch, chunk * sizeof(display_color_t)) != HAL_OK) {
+        return DISPLAY_ERROR; /* s_write_ptr/s_write_remaining НЕ продвигаем — чанк не ушёл */
+    }
+
+    s_write_ptr       += chunk;
+    s_write_remaining -= chunk;
+    return DISPLAY_OK;
+}
+
 /* ---- Обработчик завершения DMA (вызывается из HAL_SPI_TxCpltCallback) ---- */
 
 void ST7789_OnDmaTxComplete(void)
@@ -86,11 +122,9 @@ void ST7789_OnDmaTxComplete(void)
     }
 
     if (s_write_remaining > 0) {
-        uint32_t chunk = (s_write_remaining > DISPLAY_MAX_DMA_PIXELS) ? DISPLAY_MAX_DMA_PIXELS : s_write_remaining;
-        s_write_remaining -= chunk;
-        dc_data();
-        HAL_SPI_Transmit_DMA(&hspi1, (uint8_t *)s_write_ptr, chunk * sizeof(display_color_t));
-        s_write_ptr += chunk;
+        if (start_write_chunk() != DISPLAY_OK) {
+            s_busy = false; /* DMA не смогла продолжить передачу — останавливаемся, не зависаем в busy навсегда */
+        }
         return;
     }
 
@@ -224,30 +258,17 @@ Display_Status_t Display_WritePixelsDMA(const display_color_t *pixels, uint32_t 
         return DISPLAY_ERROR;
     }
 
-    /* Байты меняются местами один раз на весь буфер — дальнейшие чанки
-     * (из ST7789_OnDmaTxComplete) шлют уже развёрнутые данные напрямую,
-     * без повторной обработки. Буфер принадлежит вызывающему коду (gfx.c),
-     * который не читает его обратно после отправки — мутация на месте
-     * безопасна. */
-    display_color_t *mutable_pixels = (display_color_t *)pixels;
-    for (uint32_t i = 0; i < count; i++) {
-        mutable_pixels[i] = byte_swap16(mutable_pixels[i]);
-    }
-
-    s_fill_remaining = 0;
-
-    uint32_t chunk = (count > DISPLAY_MAX_DMA_PIXELS) ? DISPLAY_MAX_DMA_PIXELS : count;
-    s_write_ptr       = pixels + chunk;
-    s_write_remaining = count - chunk;
+    s_fill_remaining  = 0;
+    s_write_ptr       = pixels;
+    s_write_remaining = count;
 
     s_busy = true;
-    dc_data();
-
-    if (HAL_SPI_Transmit_DMA(&hspi1, (uint8_t *)pixels, chunk * sizeof(display_color_t)) != HAL_OK) {
+    if (start_write_chunk() != DISPLAY_OK) { /* байт-свап первого чанка в scratch + запуск DMA; pixels не трогается */
         s_busy = false;
         s_write_remaining = 0;
         return DISPLAY_ERROR;
     }
+
     return DISPLAY_OK;
 }
 
