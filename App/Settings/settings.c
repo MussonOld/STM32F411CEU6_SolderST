@@ -76,6 +76,47 @@ static inline uint16_t clamp_u16(uint16_t value, uint16_t lo, uint16_t hi)
 }
 
 /**
+ * @brief Прогнать значения ОДНОГО канала через те же диапазоны, что и
+ *        публичные Settings_Set*() (см. settings.h) — молча зажимает к
+ *        границе, не отбрасывает.
+ *
+ * Нужна ОТДЕЛЬНО от самих сеттеров: unpack_data() (см. ниже, вызывается из
+ * Settings_Load() после проверки magic+checksum) пишет поля НАПРЯМУЮ в
+ * структуру, в обход сеттеров и их клампинга — корректный checksum сам по
+ * себе не гарантирует, что КАЖДОЕ отдельное поле лежит в допустимом
+ * диапазоне (совпадение checksum на частично повреждённых данных редкое,
+ * но реальное; это persistent-конфиг, включая slope/bias/Kp-Ki-Kd/лимиты
+ * температуры — молча доверять сырым байтам здесь недопустимо).
+ *
+ * @return true, если хоть одно поле реально изменилось (было вне диапазона)
+ */
+static bool clamp_channel(channel_settings_t *c)
+{
+    bool changed = false;
+#define CLAMP_FIELD(field, lo, hi)                              \
+    do {                                                        \
+        uint16_t clamped_ = clamp_u16((c)->field, (lo), (hi));  \
+        if (clamped_ != (c)->field) { (c)->field = clamped_; changed = true; } \
+    } while (0)
+
+    CLAMP_FIELD(preset[PRESET_1],  SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX);
+    CLAMP_FIELD(preset[PRESET_2],  SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX);
+    CLAMP_FIELD(preset[PRESET_3],  SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX);
+    CLAMP_FIELD(target,            SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX);
+    CLAMP_FIELD(presleep_temp,     SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX);
+    CLAMP_FIELD(slope,             SETTINGS_SLOPE_MIN, SETTINGS_SLOPE_MAX);
+    CLAMP_FIELD(bias,              SETTINGS_BIAS_MIN, SETTINGS_BIAS_MAX);
+    CLAMP_FIELD(pre_sleep_timeout, SETTINGS_SLEEP_TIMEOUT_MIN_MINUTES, SETTINGS_SLEEP_TIMEOUT_MAX_MINUTES);
+    CLAMP_FIELD(sleep_timeout,     SETTINGS_SLEEP_TIMEOUT_MIN_MINUTES, SETTINGS_SLEEP_TIMEOUT_MAX_MINUTES);
+    CLAMP_FIELD(kp,                SETTINGS_PID_MIN, SETTINGS_PID_MAX);
+    CLAMP_FIELD(ki,                SETTINGS_PID_MIN, SETTINGS_PID_MAX);
+    CLAMP_FIELD(kd,                SETTINGS_PID_MIN, SETTINGS_PID_MAX);
+
+#undef CLAMP_FIELD
+    return changed;
+}
+
+/**
  * @brief Взвести таймер отложенной записи, если значение реально изменилось
  * @return "новое" значение после клампа (для удобного использования в сеттерах)
  */
@@ -461,7 +502,24 @@ bool Settings_Load(void)
     }
 
     if (data_valid) {
-        s_dirty = false;
+        bool any_clamped = false;
+        for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
+            if (clamp_channel(&s_channels[ch])) {
+                any_clamped = true;
+            }
+        }
+        if (any_clamped) {
+            /* Checksum сошёлся, но хотя бы одно поле оказалось вне
+             * допустимого диапазона (редкое, но реальное совпадение
+             * повреждённых байт с верной контрольной суммой) — молча
+             * зажали к границе; взводим отложенную запись, чтобы при
+             * следующем Settings_Poll() поверх EEPROM легли уже
+             * безопасные значения, а не остались сырые. */
+            s_dirty = true;
+            s_last_change_tick = HAL_GetTick();
+        } else {
+            s_dirty = false;
+        }
         return true;
     }
 
