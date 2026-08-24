@@ -69,6 +69,13 @@ static uint16_t round_up_to_multiple(uint16_t value, uint16_t multiple)
     return (uint16_t)(value - remainder + multiple);
 }
 
+static uint16_t round_down_to_multiple(uint16_t value, uint16_t multiple)
+{
+    if (multiple == 0) return value;
+    uint16_t remainder = (uint16_t)(value % multiple);
+    return (uint16_t)(value - remainder); /* remainder==0 -> value без изменений */
+}
+
 /**
  * @brief Применить один шаг авто-повтора UP/DN, продвинуть фазу ускорения
  */
@@ -105,7 +112,8 @@ static void accel_apply_step(void)
         s_accel_iteration++;
         if (s_accel_iteration >= phase_limit) {
             uint16_t value_after = Settings_GetTarget(s_active_channel);
-            uint16_t rounded = round_up_to_multiple(value_after, round_to);
+            uint16_t rounded = (sign > 0) ? round_up_to_multiple(value_after, round_to)
+                                           : round_down_to_multiple(value_after, round_to);
             apply_target_and_sync(s_active_channel, rounded);
 
             s_accel_phase = (s_accel_phase == ACCEL_PHASE_STEP1) ? ACCEL_PHASE_STEP5 : ACCEL_PHASE_STEP10;
