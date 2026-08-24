@@ -10,26 +10,28 @@
  *                активного канала)
  *  - каждая половина (0..158 / 161..319):
  *      - заголовок канала ("Паяльник"/"Отсос"), шрифт AntiquaB_18_uni
- *      - текущая температура, шрифт Comic_60_dig — отцентрована и по
- *        вертикали (в промежутке между заголовком и строкой пресетов), и
- *        по горизонтали (по реальной ширине глифов для типового
- *        3-значного числа, см. SCREEN_CURRENT_LEFT_X/RIGHT_X)
+ *      - текущая температура, шрифт Comic_60_dig — TextField_PrintfCentered()
+ *        вокруг центра своей половины: и по вертикали (фиксированный y,
+ *        см. SCREEN_CURRENT_Y), и по горизонтали (x пересчитывается каждый
+ *        раз по РЕАЛЬНОЙ ширине текста, не по типовой — корректно работает
+ *        и при 2, и при 3 цифрах)
  *      - целевая температура прямо под ней, шрифт AntiquaB_18_uni, тоже
- *        отцентрована горизонтально (ВРЕМЕННО — по ТЗ будет убрана позже)
+ *        TextField_PrintfCentered() (ВРЕМЕННО — по ТЗ будет убрана позже)
  *  - строка пресетов внизу, шрифт AntiquaB_24_uni, ТРИ отдельных поля
  *    (не одна строка) — пресеты активного канала:
- *      - preset1: x=10 от левого края
- *      - preset2: центрирован ровно на оси разделителя (x=160)
- *      - preset3: x так, чтобы правый край был в 10px от правого края экрана
- *    Позиции preset2/preset3 посчитаны под типовую ширину 3-значного числа
- *    в этом шрифте (все цифры AntiquaB_24_uni одинаковой ширины 12px) —
- *    НЕ пересчитываются на лету под фактическую ширину каждого значения
- *    (первый заход, по просьбе — скорректировать позже при необходимости).
+ *      - preset1: TextField_Printf(), фиксированный x=10 от левого края
+ *      - preset2: TextField_PrintfCentered() вокруг оси разделителя (x=160)
+ *      - preset3: TextField_PrintfRightAligned() — правый край в 10px от
+ *        правого края экрана (320-10=310)
+ *    preset2/preset3 пересчитывают x по факту при каждом изменении значения
+ *    (не по типовой ширине, как было раньше) — тот же механизм, что и у
+ *    температур.
  *
- * Координаты — приближённый вариант, посчитан по реальным dwidth глифов
- * (не на глаз), но не откалиброван визуально на реальном дисплее из этой
- * сессии — при необходимости подвинуть, ничего в остальной архитектуре
- * это не затронет.
+ * Координаты — приближённый вариант по вертикали (не откалиброван визуально
+ * на реальном дисплее из этой сессии), но по горизонтали теперь настоящее
+ * динамическое центрирование/выравнивание (TextField_PrintfCentered/
+ * PrintfRightAligned меряют текст по факту, см. gfx.c/text_field.c) — не
+ * "уедет" при смене количества цифр.
  */
 
 #include "screen.h"
@@ -70,28 +72,19 @@ enum {
 #define SCREEN_TITLE_LEFT_X   (40U)
 #define SCREEN_TITLE_RIGHT_X  (205U)
 
-/* Текущая температура (Comic_60_dig): типовая ширина "300" в этом шрифте —
- * все цифры кроме "1" имеют dwidth=37, т.е. 37*3=111px. Центр половины
- * экрана (159px) минус половина этой ширины: (159-111)/2=24. */
-#define SCREEN_CURRENT_TYPICAL_WIDTH (111U)
-#define SCREEN_CURRENT_LEFT_X   ((SCREEN_DIVIDER_X0 - SCREEN_CURRENT_TYPICAL_WIDTH) / 2U)
-#define SCREEN_CURRENT_RIGHT_X  (SCREEN_DIVIDER_X1 + 1U + SCREEN_CURRENT_LEFT_X)
-
-/* Целевая температура (AntiquaB_18_uni): все цифры dwidth=9, "300"=27px.
- * (159-27)/2=66. */
-#define SCREEN_TARGET_TYPICAL_WIDTH (27U)
-#define SCREEN_TARGET_LEFT_X   ((SCREEN_DIVIDER_X0 - SCREEN_TARGET_TYPICAL_WIDTH) / 2U)
-#define SCREEN_TARGET_RIGHT_X  (SCREEN_DIVIDER_X1 + 1U + SCREEN_TARGET_LEFT_X)
+/* Центры половин экрана — используются TextField_PrintfCentered() для
+ * температур, реальная ширина текста меряется на лету (не типовая). */
+#define SCREEN_HALF_CENTER_LEFT_X   ((SCREEN_DIVIDER_X0) / 2U)
+#define SCREEN_HALF_CENTER_RIGHT_X  (SCREEN_DIVIDER_X1 + 1U + SCREEN_HALF_CENTER_LEFT_X)
 
 #define SCREEN_PRESETS_Y (210U)
-/* Пресеты (AntiquaB_24_uni, все цифры dwidth=12, "300"=36px):
- *  - preset1: 10px от левого края
- *  - preset2: центрирован на оси разделителя (x=160)
- *  - preset3: правый край в 10px от правого края экрана (320-10=310) */
-#define SCREEN_PRESET_TYPICAL_WIDTH (36U)
+/* Пресеты:
+ *  - preset1: 10px от левого края (TextField_Printf, фиксированный x)
+ *  - preset2: центрирован на оси разделителя (TextField_PrintfCentered)
+ *  - preset3: правый край в 10px от правого края экрана (TextField_PrintfRightAligned) */
 #define SCREEN_PRESET1_X (10U)
-#define SCREEN_PRESET2_X ((SCREEN_DIVIDER_X0 + 1U) - SCREEN_PRESET_TYPICAL_WIDTH / 2U)
-#define SCREEN_PRESET3_X ((SCREEN_WIDTH - 10U) - SCREEN_PRESET_TYPICAL_WIDTH)
+#define SCREEN_PRESET2_CENTER_X (SCREEN_DIVIDER_X0 + 1U)
+#define SCREEN_PRESET3_RIGHT_EDGE_X (SCREEN_WIDTH - 10U)
 
 /* Разделитель НЕ доходит до строки пресетов — та зона общая (одна строка
  * на экран). Останавливаем линию с небольшим отступом сверху от SCREEN_PRESETS_Y. */
@@ -177,24 +170,28 @@ void Screen_Init(void)
 
     TextField_ConfigureLine(LINE_SOLDER_TITLE, SCREEN_TITLE_LEFT_X, SCREEN_TITLE_Y,
                              &AntiquaB_18_uni, COLOR_ACTIVE_TITLE, COLOR_BG);
-    TextField_ConfigureLine(LINE_SOLDER_CURRENT, SCREEN_CURRENT_LEFT_X, SCREEN_CURRENT_Y,
+    TextField_ConfigureLine(LINE_SOLDER_CURRENT, SCREEN_HALF_CENTER_LEFT_X, SCREEN_CURRENT_Y,
                              &Comic_60_dig, COLOR_ACTIVE_CURRENT, COLOR_BG);
-    TextField_ConfigureLine(LINE_SOLDER_TARGET, SCREEN_TARGET_LEFT_X, SCREEN_TARGET_Y,
+    TextField_ConfigureLine(LINE_SOLDER_TARGET, SCREEN_HALF_CENTER_LEFT_X, SCREEN_TARGET_Y,
                              &AntiquaB_18_uni, COLOR_ACTIVE_TARGET, COLOR_BG);
 
     TextField_ConfigureLine(LINE_DESOLDER_TITLE, SCREEN_TITLE_RIGHT_X, SCREEN_TITLE_Y,
                              &AntiquaB_18_uni, COLOR_INACTIVE_TITLE, COLOR_BG);
-    TextField_ConfigureLine(LINE_DESOLDER_CURRENT, SCREEN_CURRENT_RIGHT_X, SCREEN_CURRENT_Y,
+    TextField_ConfigureLine(LINE_DESOLDER_CURRENT, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_CURRENT_Y,
                              &Comic_60_dig, COLOR_INACTIVE_CURRENT, COLOR_BG);
-    TextField_ConfigureLine(LINE_DESOLDER_TARGET, SCREEN_TARGET_RIGHT_X, SCREEN_TARGET_Y,
+    TextField_ConfigureLine(LINE_DESOLDER_TARGET, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_TARGET_Y,
                              &AntiquaB_18_uni, COLOR_INACTIVE_TARGET, COLOR_BG);
 
     TextField_ConfigureLine(LINE_PRESET_1, SCREEN_PRESET1_X, SCREEN_PRESETS_Y,
                              &AntiquaB_24_uni, COLOR_ACTIVE_PRESETS, COLOR_BG);
-    TextField_ConfigureLine(LINE_PRESET_2, SCREEN_PRESET2_X, SCREEN_PRESETS_Y,
+    TextField_ConfigureLine(LINE_PRESET_2, SCREEN_PRESET2_CENTER_X, SCREEN_PRESETS_Y,
                              &AntiquaB_24_uni, COLOR_ACTIVE_PRESETS, COLOR_BG);
-    TextField_ConfigureLine(LINE_PRESET_3, SCREEN_PRESET3_X, SCREEN_PRESETS_Y,
+    TextField_ConfigureLine(LINE_PRESET_3, SCREEN_PRESET3_RIGHT_EDGE_X, SCREEN_PRESETS_Y,
                              &AntiquaB_24_uni, COLOR_ACTIVE_PRESETS, COLOR_BG);
+    /* x, переданный здесь для CURRENT/TARGET/PRESET_2/PRESET_3, — просто
+     * начальное значение, реальная позиция пересчитывается по факту при
+     * первом же TextField_PrintfCentered()/PrintfRightAligned() в
+     * Screen_Update(), до первой отрисовки на экран. */
 
     /* Подписи каналов — статичный текст, меняется только цвет (активный/неактивный) */
     TextField_Printf(LINE_SOLDER_TITLE, "Паяльник");
@@ -207,28 +204,30 @@ void Screen_Init(void)
 
 /**
  * @brief Обновить текущую/целевую температуру одного канала из State/Settings
+ * @param center_x Центр половины экрана этого канала — для PrintfCentered()
  */
-static void update_channel_content(channel_id_t ch, uint8_t line_current, uint8_t line_target)
+static void update_channel_content(channel_id_t ch, uint8_t line_current,
+                                    uint8_t line_target, uint16_t center_x)
 {
     fixed_t cur = State_GetCurrentTemp(ch);
     int32_t cur_int = FIXED_TO_INT(cur);
-    TextField_Printf(line_current, "%ld", (long)cur_int);
+    TextField_PrintfCentered(line_current, center_x, "%ld", (long)cur_int);
 
     uint16_t target = Settings_GetTarget(ch);
-    TextField_Printf(line_target, "%u", (unsigned)target);
+    TextField_PrintfCentered(line_target, center_x, "%u", (unsigned)target);
 }
 
 void Screen_Update(void)
 {
-    update_channel_content(CHANNEL_SOLDER, LINE_SOLDER_CURRENT, LINE_SOLDER_TARGET);
-    update_channel_content(CHANNEL_DESOLDER, LINE_DESOLDER_CURRENT, LINE_DESOLDER_TARGET);
+    update_channel_content(CHANNEL_SOLDER, LINE_SOLDER_CURRENT, LINE_SOLDER_TARGET, SCREEN_HALF_CENTER_LEFT_X);
+    update_channel_content(CHANNEL_DESOLDER, LINE_DESOLDER_CURRENT, LINE_DESOLDER_TARGET, SCREEN_HALF_CENTER_RIGHT_X);
 
     channel_id_t active = InputFSM_GetActiveChannel();
 
     /* Пресеты — три отдельных поля, всегда показывают пресеты АКТИВНОГО канала */
     TextField_Printf(LINE_PRESET_1, "%u", (unsigned)Settings_GetPreset(active, PRESET_1));
-    TextField_Printf(LINE_PRESET_2, "%u", (unsigned)Settings_GetPreset(active, PRESET_2));
-    TextField_Printf(LINE_PRESET_3, "%u", (unsigned)Settings_GetPreset(active, PRESET_3));
+    TextField_PrintfCentered(LINE_PRESET_2, SCREEN_PRESET2_CENTER_X, "%u", (unsigned)Settings_GetPreset(active, PRESET_2));
+    TextField_PrintfRightAligned(LINE_PRESET_3, SCREEN_PRESET3_RIGHT_EDGE_X, "%u", (unsigned)Settings_GetPreset(active, PRESET_3));
 
     if (active != s_last_active_channel) {
         apply_channel_colors(s_last_active_channel, false);

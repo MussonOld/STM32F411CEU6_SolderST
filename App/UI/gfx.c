@@ -33,11 +33,9 @@ typedef struct {
     const char       *cursor;   /* текущая позиция в UTF-8 строке */
     const font_t      *font;
     display_color_t    fg, bg;
-    uint16_t            x, y;    /* текущий курсор отрисовки */
+    uint16_t            x, y;    /* курсор отрисовки НОВОЙ строки */
     Gfx_JobState_t      state;
-    uint16_t            erase_to_x;         /* дозачистить хвост до этого x (эксклюзивно) */
-    bool                erase_pending;       /* true — после конца новой строки нужна дозачистка хвоста */
-    uint32_t            erase_remaining_px;  /* >0, пока идёт чанкованная заливка хвоста */
+    uint32_t            erase_remaining_px;  /* >0, пока идёт чанкованное стирание старого прямоугольника (фаза ПЕРЕД отрисовкой) */
 } gfx_job_t;
 
 static gfx_job_t s_job = { .state = GFX_JOB_IDLE };
@@ -206,7 +204,8 @@ uint16_t Gfx_MeasureTextWidth(const font_t *font, const char *text)
 }
 
 Gfx_JobState_t Gfx_DrawTextStart(uint16_t x, uint16_t y, const char *text,
-                                  const char *prev_text, const font_t *font,
+                                  uint16_t prev_x, const char *prev_text,
+                                  const font_t *font,
                                   display_color_t fg_color, display_color_t bg_color)
 {
     if (s_job.state == GFX_JOB_BUSY) {
@@ -223,15 +222,21 @@ Gfx_JobState_t Gfx_DrawTextStart(uint16_t x, uint16_t y, const char *text,
     s_job.x      = x;
     s_job.y      = y;
     s_job.state  = GFX_JOB_BUSY;
-    s_job.erase_pending = false;
     s_job.erase_remaining_px = 0;
 
     if (prev_text && prev_text[0] != '\0') {
-        uint16_t new_w = Gfx_MeasureTextWidth(font, text);
         uint16_t old_w = Gfx_MeasureTextWidth(font, prev_text);
-        if (old_w > new_w) {
-            s_job.erase_to_x = (uint16_t)(x + old_w);
-            s_job.erase_pending = true;
+        if (old_w > 0) {
+            /* Стираем СТАРЫЙ прямоугольник целиком, по СТАРОМУ x (prev_x),
+             * ДО отрисовки новой строки — покрывает и рост/сокращение
+             * ширины, и смену позиции (перецентровку) одним механизмом,
+             * без частных случаев. Небольшая избыточность (при перекрытии
+             * старого и нового прямоугольников часть пикселей стирается и
+             * тут же перерисовывается заново) — цена за простоту и
+             * корректность во всех случаях сразу. */
+            if (Display_SetWindow(prev_x, y, prev_x + old_w - 1, y + font->height - 1) == DISPLAY_OK) {
+                s_job.erase_remaining_px = (uint32_t)old_w * font->height;
+            }
         }
     }
 
@@ -247,13 +252,13 @@ Gfx_JobState_t Gfx_Process(void)
         return GFX_JOB_BUSY; /* DMA ещё занят предыдущим шагом — не ждём, выходим */
     }
 
-    /* Фаза дозачистки хвоста — идёт ПОСЛЕ обычного посимвольного прохода
-     * (см. ветку cp==0 ниже). Чанкуем по GFX_GLYPH_BUFFER_PIXELS, чтобы не
-     * переполнить статический буфер на крупных шрифтах (например
-     * Comic_60_dig) и не слать в DMA новый чанк, пока предыдущий ещё не
-     * ушёл — Display_IsBusy() проверяется выше на каждый вызов, так что
-     * чанки естественным образом растягиваются по нескольким вызовам
-     * Gfx_Process(), не блокируя главный цикл. */
+    /* Фаза стирания старого прямоугольника — идёт ПЕРВОЙ, до посимвольного
+     * прохода новой строки (см. окно, уже установленное в DrawTextStart()).
+     * Чанкуем по GFX_GLYPH_BUFFER_PIXELS, чтобы не переполнить статический
+     * буфер на крупных шрифтах (например Comic_60_dig) и не слать в DMA
+     * новый чанк, пока предыдущий ещё не ушёл — Display_IsBusy() проверяется
+     * выше на каждый вызов, так что чанки естественным образом растягиваются
+     * по нескольким вызовам Gfx_Process(), не блокируя главный цикл. */
     if (s_job.erase_remaining_px > 0) {
         uint32_t chunk = (s_job.erase_remaining_px > GFX_GLYPH_BUFFER_PIXELS)
                           ? GFX_GLYPH_BUFFER_PIXELS : s_job.erase_remaining_px;
@@ -262,28 +267,11 @@ Gfx_JobState_t Gfx_Process(void)
         }
         Display_WritePixelsDMA(s_glyph_buffer, chunk);
         s_job.erase_remaining_px -= chunk;
-        if (s_job.erase_remaining_px == 0) {
-            s_job.state = GFX_JOB_DONE;
-            return GFX_JOB_DONE;
-        }
-        return GFX_JOB_BUSY;
+        return GFX_JOB_BUSY; /* даже когда дошли до 0 — следующий вызов уйдёт в посимвольный проход ниже */
     }
 
     uint32_t cp = utf8_next(&s_job.cursor);
     if (cp == 0) {
-        if (s_job.erase_pending) {
-            s_job.erase_pending = false;
-            /* s_job.x здесь — фактическая ширина отрисованной новой строки
-             * (учитывает пропущенные глифы), не предварительная оценка. */
-            if (s_job.erase_to_x > s_job.x) {
-                uint16_t erase_width = (uint16_t)(s_job.erase_to_x - s_job.x);
-                if (Display_SetWindow(s_job.x, s_job.y, s_job.erase_to_x - 1,
-                                       s_job.y + s_job.font->height - 1) == DISPLAY_OK) {
-                    s_job.erase_remaining_px = (uint32_t)erase_width * s_job.font->height;
-                    return GFX_JOB_BUSY; /* первый чанк дозачистки уйдёт на следующем вызове */
-                }
-            }
-        }
         s_job.state = GFX_JOB_DONE;
         return GFX_JOB_DONE;
     }

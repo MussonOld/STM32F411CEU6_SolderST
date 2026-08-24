@@ -63,6 +63,23 @@ void TextField_ConfigureLine(uint8_t line, uint16_t x, uint16_t y,
 void TextField_Printf(uint8_t line, const char *fmt, ...);
 
 /**
+ * @brief Как TextField_Printf(), но текст центрируется по горизонтали
+ *        вокруг center_x (позиция x строки пересчитывается по РЕАЛЬНОЙ
+ *        измеренной ширине текста — не по типовой/приближённой).
+ *
+ * Полезно для значений с переменным числом цифр (например, текущая
+ * температура: 2 знака при комнатной, 3 при рабочей) — TextField_Printf()
+ * с фиксированным x в этом случае визуально "плывёт" от центра.
+ */
+void TextField_PrintfCentered(uint8_t line, uint16_t center_x, const char *fmt, ...);
+
+/**
+ * @brief Как TextField_Printf(), но текст выравнивается по ПРАВОМУ краю
+ *        right_edge_x (правый край текста заканчивается ровно в этой точке).
+ */
+void TextField_PrintfRightAligned(uint8_t line, uint16_t right_edge_x, const char *fmt, ...);
+
+/**
  * @brief Сменить цвета строки на лету (например, притушить неактивный канал)
  *
  * В отличие от TextField_ConfigureLine() — НЕ трогает текст и НЕ проверяет,

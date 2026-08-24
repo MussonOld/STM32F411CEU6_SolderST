@@ -7,10 +7,11 @@
 
 typedef struct {
     uint16_t x, y;
+    uint16_t shown_x;                         /* x, по которому реально нарисован shown_text */
     const font_t *font;
     display_color_t fg, bg;
-    char text[TEXTFIELD_LINE_TEXT_MAX];      /* желаемый текст (то, что должно быть показано) */
-    char shown_text[TEXTFIELD_LINE_TEXT_MAX]; /* реально отображённый текст (для дозачистки хвоста) */
+    char text[TEXTFIELD_LINE_TEXT_MAX];       /* желаемый текст (то, что должно быть показано) */
+    char shown_text[TEXTFIELD_LINE_TEXT_MAX]; /* реально отображённый текст (для стирания старого прямоугольника) */
     bool used;
     bool dirty;
 } TextField_Line_t;
@@ -32,6 +33,7 @@ void TextField_ConfigureLine(uint8_t line, uint16_t x, uint16_t y,
     }
     s_lines[line].x = x;
     s_lines[line].y = y;
+    s_lines[line].shown_x = x;
     s_lines[line].font = font;
     s_lines[line].fg = fg;
     s_lines[line].bg = bg;
@@ -41,7 +43,43 @@ void TextField_ConfigureLine(uint8_t line, uint16_t x, uint16_t y,
     s_lines[line].dirty = false; /* пустая строка и так пуста на экране */
 }
 
+/**
+ * @brief Общая часть Printf/PrintfCentered/PrintfRightAligned: форматирует,
+ *        при необходимости обновляет x, взводит dirty при реальном изменении.
+ */
+static void printf_at(uint8_t line, uint16_t new_x, const char *fmt, va_list args)
+{
+    if (line >= TEXTFIELD_MAX_LINES || !s_lines[line].used) {
+        return;
+    }
+
+    char buf[TEXTFIELD_LINE_TEXT_MAX];
+    vsnprintf(buf, sizeof(buf), fmt, args);
+
+    s_lines[line].x = new_x; /* дёшево пересчитывать каждый раз, даже если текст не изменился */
+
+    if (strncmp(buf, s_lines[line].text, TEXTFIELD_LINE_TEXT_MAX) != 0) {
+        strncpy(s_lines[line].text, buf, TEXTFIELD_LINE_TEXT_MAX - 1);
+        s_lines[line].text[TEXTFIELD_LINE_TEXT_MAX - 1] = '\0';
+        s_lines[line].dirty = true;
+        /* shown_text/shown_x НЕ трогаем здесь — это то, что реально ещё на
+         * экране, пригодится gfx.c для стирания старого прямоугольника,
+         * когда задание стартует. */
+    }
+}
+
 void TextField_Printf(uint8_t line, const char *fmt, ...)
+{
+    if (line >= TEXTFIELD_MAX_LINES || !s_lines[line].used) {
+        return;
+    }
+    va_list args;
+    va_start(args, fmt);
+    printf_at(line, s_lines[line].x, fmt, args); /* x не меняется — обычное поведение */
+    va_end(args);
+}
+
+void TextField_PrintfCentered(uint8_t line, uint16_t center_x, const char *fmt, ...)
 {
     if (line >= TEXTFIELD_MAX_LINES || !s_lines[line].used) {
         return;
@@ -53,13 +91,33 @@ void TextField_Printf(uint8_t line, const char *fmt, ...)
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
 
-    if (strncmp(buf, s_lines[line].text, TEXTFIELD_LINE_TEXT_MAX) != 0) {
-        strncpy(s_lines[line].text, buf, TEXTFIELD_LINE_TEXT_MAX - 1);
-        s_lines[line].text[TEXTFIELD_LINE_TEXT_MAX - 1] = '\0';
-        s_lines[line].dirty = true;
-        /* shown_text НЕ трогаем здесь — это то, что реально ещё на экране,
-         * пригодится gfx.c для дозачистки хвоста, когда задание стартует. */
+    uint16_t width = Gfx_MeasureTextWidth(s_lines[line].font, buf);
+    uint16_t half = (uint16_t)(width / 2);
+    uint16_t new_x = (center_x > half) ? (uint16_t)(center_x - half) : 0;
+
+    va_start(args, fmt);
+    printf_at(line, new_x, fmt, args);
+    va_end(args);
+}
+
+void TextField_PrintfRightAligned(uint8_t line, uint16_t right_edge_x, const char *fmt, ...)
+{
+    if (line >= TEXTFIELD_MAX_LINES || !s_lines[line].used) {
+        return;
     }
+
+    char buf[TEXTFIELD_LINE_TEXT_MAX];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+
+    uint16_t width = Gfx_MeasureTextWidth(s_lines[line].font, buf);
+    uint16_t new_x = (right_edge_x > width) ? (uint16_t)(right_edge_x - width) : 0;
+
+    va_start(args, fmt);
+    printf_at(line, new_x, fmt, args);
+    va_end(args);
 }
 
 void TextField_SetColors(uint8_t line, display_color_t fg, display_color_t bg)
@@ -80,13 +138,14 @@ void TextField_Process(void)
     if (s_active_line >= 0) {
         Gfx_JobState_t st = Gfx_Process();
         if (st == GFX_JOB_BUSY) {
-            return; /* задание текущей строки ещё выполняется (включая дозачистку хвоста) */
+            return; /* задание текущей строки ещё выполняется (включая стирание старого прямоугольника) */
         }
         /* DONE (или ERROR — тоже считаем завершённым, не зацикливаемся) —
-         * теперь то, что реально на экране, совпадает с text. */
+         * теперь то, что реально на экране, совпадает с text/x. */
         strncpy(s_lines[s_active_line].shown_text, s_lines[s_active_line].text,
                 TEXTFIELD_LINE_TEXT_MAX - 1);
         s_lines[s_active_line].shown_text[TEXTFIELD_LINE_TEXT_MAX - 1] = '\0';
+        s_lines[s_active_line].shown_x = s_lines[s_active_line].x;
         s_active_line = -1;
         return; /* не начинаем новую строку в этом же вызове главного цикла */
     }
@@ -94,7 +153,8 @@ void TextField_Process(void)
     for (uint8_t i = 0; i < TEXTFIELD_MAX_LINES; i++) {
         if (s_lines[i].used && s_lines[i].dirty) {
             Gfx_JobState_t st = Gfx_DrawTextStart(s_lines[i].x, s_lines[i].y,
-                                                   s_lines[i].text, s_lines[i].shown_text,
+                                                   s_lines[i].text,
+                                                   s_lines[i].shown_x, s_lines[i].shown_text,
                                                    s_lines[i].font,
                                                    s_lines[i].fg, s_lines[i].bg);
             s_lines[i].dirty = false;
@@ -102,7 +162,7 @@ void TextField_Process(void)
                 s_active_line = (int)i;
             }
             /* GFX_JOB_ERROR — задание не стартовало (например, font/text
-             * некорректны); shown_text не обновляем, dirty уже снят —
+             * некорректны); shown_text/shown_x не обновляем, dirty уже снят —
              * решение то же, что было раньше: не зацикливаемся на ошибке. */
             return; /* одна строка за вызов — не задерживаем главный цикл */
         }
