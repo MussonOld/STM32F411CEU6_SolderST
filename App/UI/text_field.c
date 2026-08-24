@@ -19,6 +19,20 @@ typedef struct {
 static TextField_Line_t s_lines[TEXTFIELD_MAX_LINES];
 static int s_active_line = -1; /* индекс строки с незавершённым заданием gfx, -1 если нет */
 
+/* Снапшот того, что РЕАЛЬНО передано в Gfx_DrawTextStart() для активной
+ * строки — текст и x на момент старта задания. НЕ читать s_lines[i].text/x
+ * напрямую, пока задание в работе: gfx.c держит s_job.cursor прямо на
+ * буфер, который сюда передан, и растягивает его чтение на много вызовов
+ * Gfx_Process() (по одному символу за вызов). Если в это время придёт
+ * TextField_Printf() для ТОЙ ЖЕ строки (для температуры — реалистично,
+ * State обновляется независимо от завершения DMA), printf_at() перепишет
+ * s_lines[i].text прямо посреди чтения — s_job.cursor может уйти на уже
+ * невалидную позицию (при укорачивании текста — досрочный '\0', обрезанный
+ * рендер с "мусором" на экране, см. историю бага). Раз активна максимум
+ * одна строка одновременно (один s_active_line), одного снапшота хватает. */
+static char     s_active_text[TEXTFIELD_LINE_TEXT_MAX];
+static uint16_t s_active_x;
+
 void TextField_Init(void)
 {
     memset(s_lines, 0, sizeof(s_lines));
@@ -141,19 +155,30 @@ void TextField_Process(void)
             return; /* задание текущей строки ещё выполняется (включая стирание старого прямоугольника) */
         }
         /* DONE (или ERROR — тоже считаем завершённым, не зацикливаемся) —
-         * теперь то, что реально на экране, совпадает с text/x. */
-        strncpy(s_lines[s_active_line].shown_text, s_lines[s_active_line].text,
-                TEXTFIELD_LINE_TEXT_MAX - 1);
+         * shown_text/shown_x берём из СНАПШОТА (что реально ушло в gfx.c
+         * и физически нарисовано), а не из s_lines[...].text/x — те могли
+         * уже измениться за время рендера (см. комментарий у s_active_text
+         * выше). Если изменились — dirty уже выставлен printf_at(), эта же
+         * строка переотрисуется на следующем заходе с уже новым значением. */
+        strncpy(s_lines[s_active_line].shown_text, s_active_text, TEXTFIELD_LINE_TEXT_MAX - 1);
         s_lines[s_active_line].shown_text[TEXTFIELD_LINE_TEXT_MAX - 1] = '\0';
-        s_lines[s_active_line].shown_x = s_lines[s_active_line].x;
+        s_lines[s_active_line].shown_x = s_active_x;
         s_active_line = -1;
         return; /* не начинаем новую строку в этом же вызове главного цикла */
     }
 
     for (uint8_t i = 0; i < TEXTFIELD_MAX_LINES; i++) {
         if (s_lines[i].used && s_lines[i].dirty) {
-            Gfx_JobState_t st = Gfx_DrawTextStart(s_lines[i].x, s_lines[i].y,
-                                                   s_lines[i].text,
+            /* Снапшот СЕЙЧАС, до вызова Gfx_DrawTextStart() — дальше и до
+             * самого завершения задания s_lines[i].text/x могут свободно
+             * меняться (TextField_Printf() и т.п.), это не повлияет на уже
+             * стартовавший рендер. */
+            strncpy(s_active_text, s_lines[i].text, TEXTFIELD_LINE_TEXT_MAX - 1);
+            s_active_text[TEXTFIELD_LINE_TEXT_MAX - 1] = '\0';
+            s_active_x = s_lines[i].x;
+
+            Gfx_JobState_t st = Gfx_DrawTextStart(s_active_x, s_lines[i].y,
+                                                   s_active_text,
                                                    s_lines[i].shown_x, s_lines[i].shown_text,
                                                    s_lines[i].font,
                                                    s_lines[i].fg, s_lines[i].bg);
