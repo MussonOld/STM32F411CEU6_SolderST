@@ -32,13 +32,16 @@ static inline bool channel_valid(channel_id_t ch)
     return (ch >= 0) && (ch < CHANNEL_COUNT);
 }
 
-/** @brief Сырой (недебаунсенный) уровень "простаивает" для канала, активный низкий */
+/** @brief Сырой (недебаунсенный) уровень "простаивает" для канала.
+ *  Оба входа активный низкий (GPIO_PULLUP), НО смысл разный:
+ *  Dock==0     -> паяльник В подставке   -> простой (idle=true)
+ *  Btn_Pump==0 -> кнопка НАЖАТА, помпа работает -> занят, НЕ простой (idle=false) */
 static bool read_raw_idle(channel_id_t ch)
 {
     if (ch == CHANNEL_SOLDER) {
         return HAL_GPIO_ReadPin(Dock_GPIO_Port, Dock_Pin) == GPIO_PIN_RESET;
     } else {
-        return HAL_GPIO_ReadPin(Btn_Pump_GPIO_Port, Btn_Pump_Pin) == GPIO_PIN_RESET;
+        return HAL_GPIO_ReadPin(Btn_Pump_GPIO_Port, Btn_Pump_Pin) == GPIO_PIN_SET;
     }
 }
 
