@@ -47,6 +47,7 @@
 #include "settings.h"
 #include "fsm.h"
 #include "error.h"
+#include <stddef.h>
 #include "fixed_point.h"
 #include <stdint.h>
 #include <stdbool.h>
