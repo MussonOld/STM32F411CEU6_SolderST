@@ -476,14 +476,14 @@ static bool erase_eeprom(void)
     return true;
 }
 
-bool Settings_Load(void)
+SettingsLoadStatus_t Settings_Load(void)
 {
     uint8_t magic_bytes[2];
     if (EEPROM_Read(SETTINGS_EEPROM_ADDR_MAGIC, magic_bytes, 2) != EEPROM_OK) {
         /* Ошибка связи по I2C — просто работаем с дефолтами в RAM, ничего
          * не пишем обратно (бессмысленно/рискованно при нерабочей шине) */
         Settings_Init();
-        return false;
+        return SETTINGS_LOAD_IO_ERROR;
     }
 
     uint16_t magic = (uint16_t)(magic_bytes[0] | ((uint16_t)magic_bytes[1] << 8));
@@ -514,20 +514,25 @@ bool Settings_Load(void)
              * повреждённых байт с верной контрольной суммой) — молча
              * зажали к границе; взводим отложенную запись, чтобы при
              * следующем Settings_Poll() поверх EEPROM легли уже
-             * безопасные значения, а не остались сырые. */
+             * безопасные значения, а не остались сырые. Данные всё
+             * равно считаются невалидными — сам факт клампинга не
+             * "гасится" последующим исправлением. */
             s_dirty = true;
             s_last_change_tick = HAL_GetTick();
-        } else {
-            s_dirty = false;
+            return SETTINGS_LOAD_INVALID;
         }
-        return true;
+        s_dirty = false;
+        return SETTINGS_LOAD_OK;
     }
 
     /* Magic не совпал или контрольная сумма не сошлась — связь с чипом
      * рабочая, но данные не наши/повреждены (например, заменили микросхему).
-     * Стираем чип целиком и пишем значения по умолчанию. */
+     * Стираем чип целиком и пишем значения по умолчанию. Результат — INVALID
+     * независимо от того, успешно ли записались дефолты обратно: сам факт,
+     * что сохранённых данных не было/они не годились, должен долететь до
+     * вызывающего кода, а не потеряться за успешным восстановлением. */
     Settings_Init();
     erase_eeprom();
     Settings_Save();
-    return false;
+    return SETTINGS_LOAD_INVALID;
 }
