@@ -35,6 +35,7 @@
 #include "fsm.h"
 #include "settings.h"
 #include "state.h"
+#include "error.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -115,7 +116,8 @@ int main(void)
 
   State_Init();
   Settings_Init();   /* дефолты в RAM на случай сбоя чтения ниже */
-  Settings_Load();   /* поверх дефолтов — то, что реально сохранено в EEPROM (или ошибка/стёртый чип, см. settings.c) */
+  Error_Init();
+  Error_ReportEepromStatus(Settings_Load()); /* поверх дефолтов — то, что реально сохранено в EEPROM (или ошибка/стёртый чип, см. settings.c); статус — в Error, для сообщения в инфозоне */
   InputFSM_SyncStateFromSettings(); /* без этого State.setpoint_temp==0 до первого нажатия SET/UP/DN — см. fsm.h */
 
   Buttons_Init();
@@ -153,6 +155,7 @@ int main(void)
 
     InputFSM_Poll();
     Settings_Poll();  /* отложенная запись в EEPROM — сама решает, когда физически писать */
+    Error_Poll();     /* таймер транзитного сообщения EEPROM в инфозоне */
 
     Screen_Update();  /* обновить содержимое строк из State/Settings/InputFSM */
     TextField_Process(); /* рендер — сам по себе, догоняет данные по мере готовности DMA */

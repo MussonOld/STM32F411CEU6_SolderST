@@ -9,6 +9,7 @@
 #include "buttons.h"
 #include "settings.h"
 #include "state.h"
+#include "error.h"
 #include "fixed_point.h"
 #include "stm32f4xx_hal.h" /* HAL_GetTick() — интервал авто-повтора UP/DN */
 
@@ -143,10 +144,25 @@ static void dispatch_event(const button_event_t *ev)
         return;
     }
 
-    /* --- TOOLS: переключение активного канала --- */
+    /* --- TOOLS: переключение активного канала ---
+     * Не передаём фокус на неисправный канал (Error_IsChannelBlocked) — если
+     * оба канала неисправны одновременно, переключение всё равно разрешаем
+     * (иначе застреваем на одном канале навсегда без возможности хоть
+     * что-то увидеть по второму; в этом случае управление всё равно
+     * заблокировано на обоих, так что переключение безвредно). */
     if (ev->mask == BUTTON_MASK(BUTTON_TOOLS) && ev->type == BUTTON_EVENT_SHORT_PRESS) {
-        s_active_channel = (s_active_channel == CHANNEL_SOLDER) ? CHANNEL_DESOLDER : CHANNEL_SOLDER;
-        s_accel_active = false; /* на всякий случай, физически невозможно при живом accel, но дёшево подстраховаться */
+        channel_id_t target = (s_active_channel == CHANNEL_SOLDER) ? CHANNEL_DESOLDER : CHANNEL_SOLDER;
+        if (!Error_IsChannelBlocked(target) || Error_IsChannelBlocked(s_active_channel)) {
+            s_active_channel = target;
+            s_accel_active = false; /* на всякий случай, физически невозможно при живом accel, но дёшево подстраховаться */
+        }
+        return;
+    }
+
+    /* Активный канал неисправен — управление (SET/UP/DN) заблокировано,
+     * TOOLS и UP+DN аккорд (выключение/сервисное меню) уже обработаны
+     * или обрабатываются ниже отдельно и под этот блок не подпадают. */
+    if (Error_IsChannelBlocked(s_active_channel) && ev->mask != BUTTONS_CHORD_UP_DN_MASK) {
         return;
     }
 
@@ -227,7 +243,7 @@ void InputFSM_Poll(void)
     }
 
     if (s_accel_active) {
-        if (!Buttons_IsHeld(s_accel_button)) {
+        if (!Buttons_IsHeld(s_accel_button) || Error_IsChannelBlocked(s_active_channel)) {
             s_accel_active = false;
         } else {
             uint32_t now = HAL_GetTick();

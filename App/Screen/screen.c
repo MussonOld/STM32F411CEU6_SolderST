@@ -3,35 +3,39 @@
  * @brief Реализация screen.h — см. правила в шапке заголовка.
  *
  * Разметка 320x240:
- *  - y=0..29   : общая инфозона (сейчас пустая — содержимое не определено,
- *                таймеры сна появятся здесь позже)
+ *  - y=0..29   : общая инфозона — сообщения EEPROM (Error_GetInfoZoneMessage()):
+ *                транзитное ("сброшено на заводские", 5 сек) либо авария
+ *                (весь сеанс); пусто, если показывать нечего. Таймеры сна
+ *                тоже сюда позже, TODO.
  *  - x=159..160: вертикальный разделитель — НЕ доходит до строки пресетов
  *                (та зона общая: один набор пресетов на экран, для
  *                активного канала)
  *  - каждая половина (0..158 / 161..319):
- *      - заголовок канала ("Паяльник"/"Отсос"), шрифт AntiquaB_18_uni
- *      - текущая температура, шрифт Comic_60_dig — TextField_PrintfCentered()
- *        вокруг центра своей половины: и по вертикали (фиксированный y,
- *        см. SCREEN_CURRENT_Y), и по горизонтали (x пересчитывается каждый
- *        раз по РЕАЛЬНОЙ ширине текста, не по типовой — корректно работает
- *        и при 2, и при 3 цифрах)
- *      - целевая температура прямо под ней, шрифт AntiquaB_18_uni, тоже
- *        TextField_PrintfCentered() (ВРЕМЕННО — по ТЗ будет убрана позже)
+ *      - заголовок канала ("Паяльник"/"Отсос"), шрифт AntiquaB_18_uni —
+ *        красный (COLOR_FAULT), если Error_IsChannelFaulted(ch), иначе
+ *        обычная активная/неактивная окраска
+ *      - текущая температура (LINE_x_CURRENT), шрифт Comic_60_dig — И
+ *        сообщение об обрыве (LINE_x_FAULT_MSG), шрифт AntiquaB_18_uni,
+ *        НА ТОЙ ЖЕ позиции — это ДВА РАЗНЫХ поля (Comic_60_dig кириллицу
+ *        физически не содержит, нельзя вывести текст тем же полем), но в
+ *        любой момент содержимое имеет ровно одно из двух, второе пустое
+ *        (см. update_channel_content()): обычный случай — число в CURRENT,
+ *        FAULT_MSG пуст; RTD/нагреватель оборван — CURRENT пуст, в
+ *        FAULT_MSG текст "Обрыв RTD"/"Обрыв нагревателя"
+ *      - целевая температура прямо под ней, шрифт AntiquaB_18_uni, всегда
+ *        числом независимо от неисправности (ВРЕМЕННО — по ТЗ будет
+ *        убрана позже)
  *  - строка пресетов внизу, шрифт AntiquaB_24_uni, ТРИ отдельных поля
  *    (не одна строка) — пресеты активного канала:
  *      - preset1: TextField_Printf(), фиксированный x=10 от левого края
  *      - preset2: TextField_PrintfCentered() вокруг оси разделителя (x=160)
  *      - preset3: TextField_PrintfRightAligned() — правый край в 10px от
  *        правого края экрана (320-10=310)
- *    preset2/preset3 пересчитывают x по факту при каждом изменении значения
- *    (не по типовой ширине, как было раньше) — тот же механизм, что и у
- *    температур.
+ *    preset2/preset3 пересчитывают x по факту при каждом изменении значения.
  *
  * Координаты — приближённый вариант по вертикали (не откалиброван визуально
- * на реальном дисплее из этой сессии), но по горизонтали теперь настоящее
- * динамическое центрирование/выравнивание (TextField_PrintfCentered/
- * PrintfRightAligned меряют текст по факту, см. gfx.c/text_field.c) — не
- * "уедет" при смене количества цифр.
+ * на реальном дисплее из этой сессии), по горизонтали — динамическое
+ * центрирование/выравнивание по факту измеренной ширины (см. gfx.c/text_field.c).
  */
 
 #include "screen.h"
@@ -42,6 +46,7 @@
 #include "state.h"
 #include "settings.h"
 #include "fsm.h"
+#include "error.h"
 #include "fixed_point.h"
 #include <stdint.h>
 #include <stdbool.h>
@@ -50,10 +55,12 @@
 enum {
     LINE_INFO = 0,
     LINE_SOLDER_TITLE,
-    LINE_SOLDER_CURRENT,
+    LINE_SOLDER_CURRENT,      /* число, шрифт Comic_60_dig — пусто, если неисправность с сообщением */
+    LINE_SOLDER_FAULT_MSG,    /* "Обрыв RTD"/"Обрыв нагревателя", шрифт AntiquaB_18_uni — пусто в норме */
     LINE_SOLDER_TARGET,
     LINE_DESOLDER_TITLE,
     LINE_DESOLDER_CURRENT,
+    LINE_DESOLDER_FAULT_MSG,
     LINE_DESOLDER_TARGET,
     LINE_PRESET_1,
     LINE_PRESET_2,
@@ -115,33 +122,47 @@ enum {
 #define COLOR_ACTIVE_PRESETS   DISPLAY_RGB565(255, 210, 0)
 #define COLOR_ACTIVE_TITLE     DISPLAY_RGB565(255, 255, 255)
 #define COLOR_INACTIVE_TITLE   DISPLAY_RGB565(90, 90, 90)
+#define COLOR_FAULT            DISPLAY_RGB565(255, 40, 40) /* заголовок/текущая температура при неисправности инструмента */
 #define COLOR_DIVIDER          DISPLAY_RGB565(100, 100, 100)
 #define COLOR_INFO             DISPLAY_RGB565(255, 255, 255)
 
 static channel_id_t s_last_active_channel;
+static bool s_last_fault[CHANNEL_COUNT]; /* чтобы перекрашивать title/current только при реальном изменении неисправности */
 
 /**
- * @brief Применить цвета строк канала (title/current/target) под активное
- *        или неактивное состояние. Пресеты сюда не входят — общие поля,
- *        всегда цвета "активного" (см. COLOR_ACTIVE_PRESETS).
+ * @brief Применить цвета title/current канала. Приоритет: неисправность
+ *        (красный) > активный/неактивный. Target сюда не входит — он
+ *        всегда числом и обычной активной/неактивной окраской (ВРЕМЕННО,
+ *        см. докстринг файла). Пресеты тоже не входят — общие поля.
  */
-static void apply_channel_colors(channel_id_t ch, bool active)
+static void apply_channel_colors(channel_id_t ch)
 {
-    uint8_t line_title, line_current, line_target;
+    uint8_t line_title, line_current;
+    bool active = (ch == InputFSM_GetActiveChannel());
+    bool faulted = Error_IsChannelFaulted(ch);
 
     if (ch == CHANNEL_SOLDER) {
         line_title   = LINE_SOLDER_TITLE;
         line_current = LINE_SOLDER_CURRENT;
-        line_target  = LINE_SOLDER_TARGET;
     } else {
         line_title   = LINE_DESOLDER_TITLE;
         line_current = LINE_DESOLDER_CURRENT;
-        line_target  = LINE_DESOLDER_TARGET;
     }
 
-    TextField_SetColors(line_title,   active ? COLOR_ACTIVE_TITLE   : COLOR_INACTIVE_TITLE,   COLOR_BG);
-    TextField_SetColors(line_current, active ? COLOR_ACTIVE_CURRENT : COLOR_INACTIVE_CURRENT, COLOR_BG);
-    TextField_SetColors(line_target,  active ? COLOR_ACTIVE_TARGET  : COLOR_INACTIVE_TARGET,  COLOR_BG);
+    if (faulted) {
+        TextField_SetColors(line_title,   COLOR_FAULT, COLOR_BG);
+        TextField_SetColors(line_current, COLOR_FAULT, COLOR_BG);
+    } else {
+        TextField_SetColors(line_title,   active ? COLOR_ACTIVE_TITLE   : COLOR_INACTIVE_TITLE,   COLOR_BG);
+        TextField_SetColors(line_current, active ? COLOR_ACTIVE_CURRENT : COLOR_INACTIVE_CURRENT, COLOR_BG);
+    }
+}
+
+static void apply_target_colors(channel_id_t ch)
+{
+    uint8_t line_target = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_TARGET : LINE_DESOLDER_TARGET;
+    bool active = (ch == InputFSM_GetActiveChannel());
+    TextField_SetColors(line_target, active ? COLOR_ACTIVE_TARGET : COLOR_INACTIVE_TARGET, COLOR_BG);
 }
 
 /**
@@ -165,13 +186,18 @@ void Screen_Init(void)
 
     TextField_ConfigureLine(LINE_INFO, SCREEN_INFO_X, SCREEN_INFO_Y,
                              &AntiquaB_16_uni, COLOR_INFO, COLOR_BG);
-    /* Содержимое инфозоны не определено — оставляем пустой, TODO позже
-     * (таймеры сна и т.п.), геометрия уже готова. */
 
     TextField_ConfigureLine(LINE_SOLDER_TITLE, SCREEN_TITLE_LEFT_X, SCREEN_TITLE_Y,
                              &AntiquaB_18_uni, COLOR_ACTIVE_TITLE, COLOR_BG);
+    /* CURRENT остаётся Comic_60_dig, как и было — крупные цифры. Кириллицу
+     * этот шрифт не содержит физически, поэтому для текста об обрыве
+     * заведено ОТДЕЛЬНОЕ поле FAULT_MSG (AntiquaB_18_uni), на той же
+     * позиции — в любой момент содержимое имеет ровно одно из двух полей,
+     * второе пустое (см. update_channel_content()). */
     TextField_ConfigureLine(LINE_SOLDER_CURRENT, SCREEN_HALF_CENTER_LEFT_X, SCREEN_CURRENT_Y,
                              &Comic_60_dig, COLOR_ACTIVE_CURRENT, COLOR_BG);
+    TextField_ConfigureLine(LINE_SOLDER_FAULT_MSG, SCREEN_HALF_CENTER_LEFT_X, SCREEN_CURRENT_Y,
+                             &AntiquaB_18_uni, COLOR_FAULT, COLOR_BG);
     TextField_ConfigureLine(LINE_SOLDER_TARGET, SCREEN_HALF_CENTER_LEFT_X, SCREEN_TARGET_Y,
                              &AntiquaB_18_uni, COLOR_ACTIVE_TARGET, COLOR_BG);
 
@@ -179,6 +205,8 @@ void Screen_Init(void)
                              &AntiquaB_18_uni, COLOR_INACTIVE_TITLE, COLOR_BG);
     TextField_ConfigureLine(LINE_DESOLDER_CURRENT, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_CURRENT_Y,
                              &Comic_60_dig, COLOR_INACTIVE_CURRENT, COLOR_BG);
+    TextField_ConfigureLine(LINE_DESOLDER_FAULT_MSG, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_CURRENT_Y,
+                             &AntiquaB_18_uni, COLOR_FAULT, COLOR_BG);
     TextField_ConfigureLine(LINE_DESOLDER_TARGET, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_TARGET_Y,
                              &AntiquaB_18_uni, COLOR_INACTIVE_TARGET, COLOR_BG);
 
@@ -193,34 +221,58 @@ void Screen_Init(void)
      * первом же TextField_PrintfCentered()/PrintfRightAligned() в
      * Screen_Update(), до первой отрисовки на экран. */
 
-    /* Подписи каналов — статичный текст, меняется только цвет (активный/неактивный) */
+    /* Подписи каналов — статичный текст, меняется только цвет */
     TextField_Printf(LINE_SOLDER_TITLE, "Паяльник");
     TextField_Printf(LINE_DESOLDER_TITLE, "Отсос");
 
+    for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
+        s_last_fault[ch] = false; /* Error_Init() тоже гарантирует "нет неисправности" по умолчанию */
+    }
     /* Solder активен по умолчанию при старте (см. InputFSM_Init()) —
      * начальные цвета выше уже расставлены соответственно. */
     s_last_active_channel = CHANNEL_SOLDER;
 }
 
 /**
- * @brief Обновить текущую/целевую температуру одного канала из State/Settings
- * @param center_x Центр половины экрана этого канала — для PrintfCentered()
+ * @brief Обновить содержимое канала: title-цвет, current/fault_msg (ровно
+ *        одно из двух непусто), target (всегда число)
+ * @param center_x Центр половины экрана этого канала
  */
-static void update_channel_content(channel_id_t ch, uint8_t line_current,
-                                    uint8_t line_target, uint16_t center_x)
+static void update_channel_content(channel_id_t ch, uint16_t center_x)
 {
-    fixed_t cur = State_GetCurrentTemp(ch);
-    int32_t cur_int = FIXED_TO_INT(cur);
-    TextField_PrintfCentered(line_current, center_x, "%ld", (long)cur_int);
+    uint8_t line_current   = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_CURRENT   : LINE_DESOLDER_CURRENT;
+    uint8_t line_fault_msg = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_FAULT_MSG : LINE_DESOLDER_FAULT_MSG;
+    uint8_t line_target    = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_TARGET   : LINE_DESOLDER_TARGET;
 
+    const char *fault_msg = Error_GetChannelFaultMessage(ch); /* не NULL только для RTD_OPEN/HEATER_OPEN */
+
+    if (fault_msg != NULL) {
+        /* Текущая температура НЕ выводится вообще — на её месте сообщение
+         * в отдельном поле (Comic_60_dig кириллицу не содержит) */
+        TextField_PrintfCentered(line_current, center_x, "");
+        TextField_PrintfCentered(line_fault_msg, center_x, "%s", fault_msg);
+    } else {
+        fixed_t cur = State_GetCurrentTemp(ch);
+        int32_t cur_int = FIXED_TO_INT(cur);
+        TextField_PrintfCentered(line_current, center_x, "%ld", (long)cur_int);
+        TextField_PrintfCentered(line_fault_msg, center_x, "");
+    }
+
+    /* Целевая — всегда числом, независимо от неисправности (ВРЕМЕННО, см. докстринг) */
     uint16_t target = Settings_GetTarget(ch);
     TextField_PrintfCentered(line_target, center_x, "%u", (unsigned)target);
+
+    bool faulted = Error_IsChannelFaulted(ch);
+    if (faulted != s_last_fault[ch]) {
+        apply_channel_colors(ch);
+        s_last_fault[ch] = faulted;
+    }
 }
 
 void Screen_Update(void)
 {
-    update_channel_content(CHANNEL_SOLDER, LINE_SOLDER_CURRENT, LINE_SOLDER_TARGET, SCREEN_HALF_CENTER_LEFT_X);
-    update_channel_content(CHANNEL_DESOLDER, LINE_DESOLDER_CURRENT, LINE_DESOLDER_TARGET, SCREEN_HALF_CENTER_RIGHT_X);
+    update_channel_content(CHANNEL_SOLDER, SCREEN_HALF_CENTER_LEFT_X);
+    update_channel_content(CHANNEL_DESOLDER, SCREEN_HALF_CENTER_RIGHT_X);
 
     channel_id_t active = InputFSM_GetActiveChannel();
 
@@ -230,8 +282,13 @@ void Screen_Update(void)
     TextField_PrintfRightAligned(LINE_PRESET_3, SCREEN_PRESET3_RIGHT_EDGE_X, "%u", (unsigned)Settings_GetPreset(active, PRESET_3));
 
     if (active != s_last_active_channel) {
-        apply_channel_colors(s_last_active_channel, false);
-        apply_channel_colors(active, true);
+        apply_channel_colors(s_last_active_channel);
+        apply_target_colors(s_last_active_channel);
+        apply_channel_colors(active);
+        apply_target_colors(active);
         s_last_active_channel = active;
     }
+
+    const char *info_msg = Error_GetInfoZoneMessage();
+    TextField_Printf(LINE_INFO, "%s", (info_msg != NULL) ? info_msg : "");
 }
