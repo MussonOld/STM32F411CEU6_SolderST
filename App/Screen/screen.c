@@ -34,6 +34,18 @@
  *        правого края экрана (320-10=310)
  *    preset2/preset3 пересчитывают x по факту при каждом изменении значения.
  *
+ *  - Сервисное меню (InputFSM_GetScreenMode()==SCREEN_MODE_SERVICE) —
+ *    ПОЛНОСТЬЮ заменяет собой всё вышеописанное (render_menu(), отдельная
+ *    ветка в Screen_Update()). Заголовок ("Настройка Паяльник"/"Настройка
+ *    Отсос" — Menu_GetTitle()) + до 7 строк списком друг под другом,
+ *    шрифт AntiquaB_18_uni везде. Выбранный пункт подсвечивается цветом
+ *    (жёлтый — выбран, красный — редактируется), не текстовым курсором.
+ *    Те же 7 строк переиспользуются для трёх строк предупреждения Expert
+ *    (Menu_IsShowingExpertWarning()) — отдельных полей под это не заведено.
+ *    Статический разделитель (см. draw_divider()) при этом никуда не
+ *    девается — визуально останется вертикальная линия поверх меню
+ *    (не закрашивается); первый заход, поправить, если будет мешать.
+ *
  * Координаты — приближённый вариант по вертикали (не откалиброван визуально
  * на реальном дисплее из этой сессии), по горизонтали — динамическое
  * центрирование/выравнивание по факту измеренной ширины (см. gfx.c/text_field.c).
@@ -49,6 +61,7 @@
 #include "fsm.h"
 #include "error.h"
 #include "sleep.h"
+#include "menu.h"
 #include <stddef.h>
 #include "fixed_point.h"
 #include <stdint.h>
@@ -70,6 +83,16 @@ enum {
     LINE_PRESET_3,
     LINE_INFO_SLEEP_SOLDER,   /* инфозона слева — таймер сна паяльника */
     LINE_INFO_SLEEP_DESOLDER, /* инфозона справа — таймер сна отсоса */
+    LINE_MENU_TITLE,          /* сервисное меню — "Настройка Паяльник/Отсос" */
+    LINE_MENU_ITEM_0,         /* сервисное меню — 7 строк списка (максимум для уровня Expert);
+                                 при MENU_STATE_EXPERT_WARNING строки 0-2 заняты текстом
+                                 предупреждения, см. render_menu() */
+    LINE_MENU_ITEM_1,
+    LINE_MENU_ITEM_2,
+    LINE_MENU_ITEM_3,
+    LINE_MENU_ITEM_4,
+    LINE_MENU_ITEM_5,
+    LINE_MENU_ITEM_6,
 };
 
 /* ---- Геометрия ---- */
@@ -125,6 +148,15 @@ enum {
 #define SCREEN_INFO_EEPROM_X         (100U)
 #define SCREEN_INFO_SLEEP_DESOLDER_RIGHT_EDGE_X (SCREEN_WIDTH - 10U)
 
+/* ---- Экран сервисного меню (заменяет собой весь главный экран целиком,
+ * пока InputFSM_GetScreenMode() == SCREEN_MODE_SERVICE) ---- */
+#define SCREEN_MENU_TITLE_X   (20U)
+#define SCREEN_MENU_TITLE_Y   (14U)
+#define SCREEN_MENU_ITEM_X    (20U)
+#define SCREEN_MENU_ITEM_Y0   (50U)
+#define SCREEN_MENU_ITEM_STEP (26U)
+#define SCREEN_MENU_ITEM_ROWS (7U) /* максимум пунктов — уровень Expert */
+
 /* ---- Цвета ---- */
 #define COLOR_BG               DISPLAY_RGB565(0, 0, 0)
 #define COLOR_ACTIVE_CURRENT   DISPLAY_RGB565(255, 255, 255)
@@ -137,6 +169,11 @@ enum {
 #define COLOR_FAULT            DISPLAY_RGB565(255, 40, 40) /* заголовок/текущая температура при неисправности инструмента */
 #define COLOR_DIVIDER          DISPLAY_RGB565(100, 100, 100)
 #define COLOR_INFO             DISPLAY_RGB565(255, 255, 255)
+
+#define COLOR_MENU_TITLE    DISPLAY_RGB565(255, 255, 255)
+#define COLOR_MENU_NORMAL   DISPLAY_RGB565(180, 180, 180)
+#define COLOR_MENU_CURSOR   DISPLAY_RGB565(255, 210, 0)  /* выбранный пункт, не редактируется */
+#define COLOR_MENU_EDITING  DISPLAY_RGB565(255, 80, 80)  /* выбранный пункт, редактируется прямо сейчас */
 
 static channel_id_t s_last_active_channel;
 static bool s_last_fault[CHANNEL_COUNT]; /* чтобы перекрашивать title/current только при реальном изменении неисправности */
@@ -241,6 +278,16 @@ void Screen_Init(void)
     TextField_Printf(LINE_SOLDER_TITLE, "Паяльник");
     TextField_Printf(LINE_DESOLDER_TITLE, "Отсос");
 
+    /* Сервисное меню — шрифт 18 везде (см. спецификацию), позиции по
+     * вертикали друг под другом, x общий для title и всех строк списка */
+    TextField_ConfigureLine(LINE_MENU_TITLE, SCREEN_MENU_TITLE_X, SCREEN_MENU_TITLE_Y,
+                             &AntiquaB_18_uni, COLOR_MENU_TITLE, COLOR_BG);
+    for (uint8_t i = 0; i < SCREEN_MENU_ITEM_ROWS; i++) {
+        TextField_ConfigureLine((uint8_t)(LINE_MENU_ITEM_0 + i), SCREEN_MENU_ITEM_X,
+                                 (uint16_t)(SCREEN_MENU_ITEM_Y0 + i * SCREEN_MENU_ITEM_STEP),
+                                 &AntiquaB_18_uni, COLOR_MENU_NORMAL, COLOR_BG);
+    }
+
     for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
         s_last_fault[ch] = false; /* Error_Init() тоже гарантирует "нет неисправности" по умолчанию */
     }
@@ -336,8 +383,62 @@ static void update_sleep_status(channel_id_t ch, uint8_t line, bool right_aligne
     }
 }
 
+/**
+ * @brief Отрисовать экран сервисного меню целиком (заменяет главный экран)
+ */
+static void render_menu(void)
+{
+    TextField_Printf(LINE_MENU_TITLE, "%s", Menu_GetTitle());
+
+    if (Menu_IsShowingExpertWarning()) {
+        for (uint8_t i = 0; i < SCREEN_MENU_ITEM_ROWS; i++) {
+            uint8_t line = (uint8_t)(LINE_MENU_ITEM_0 + i);
+            if (i < 3) {
+                TextField_Printf(line, "%s", Menu_GetExpertWarningLine(i));
+            } else {
+                TextField_Printf(line, "");
+            }
+            TextField_SetColors(line, COLOR_MENU_NORMAL, COLOR_BG);
+        }
+        return;
+    }
+
+    uint8_t count = Menu_GetItemCount();
+    uint8_t cursor = Menu_GetCursor();
+    bool editing = Menu_IsEditing();
+
+    for (uint8_t i = 0; i < SCREEN_MENU_ITEM_ROWS; i++) {
+        uint8_t line = (uint8_t)(LINE_MENU_ITEM_0 + i);
+
+        if (i < count) {
+            char value[16];
+            Menu_GetItemValueText(i, value, sizeof(value));
+            if (value[0] != '\0') {
+                TextField_Printf(line, "%s  %s", Menu_GetItemLabel(i), value);
+            } else {
+                TextField_Printf(line, "%s", Menu_GetItemLabel(i));
+            }
+        } else {
+            TextField_Printf(line, ""); /* уровень User короче Expert — лишние строки пустые */
+        }
+
+        display_color_t color;
+        if (i == cursor) {
+            color = editing ? COLOR_MENU_EDITING : COLOR_MENU_CURSOR;
+        } else {
+            color = COLOR_MENU_NORMAL;
+        }
+        TextField_SetColors(line, color, COLOR_BG);
+    }
+}
+
 void Screen_Update(void)
 {
+    if (InputFSM_GetScreenMode() == SCREEN_MODE_SERVICE) {
+        render_menu();
+        return; /* меню заменяет собой весь главный экран — остальное не обновляем */
+    }
+
     update_channel_content(CHANNEL_SOLDER, SCREEN_HALF_CENTER_LEFT_X);
     update_channel_content(CHANNEL_DESOLDER, SCREEN_HALF_CENTER_RIGHT_X);
 

@@ -187,6 +187,9 @@ uint16_t Settings_GetKd(channel_id_t ch);
 
 /* ---- Глобальные конфигурационные флаги (не по каналам) ---- */
 
+/** @brief Бит зуммера в общем байте флагов (Settings_GetFlagBit/SetFlagBit) — включён из сервисного меню (пункт "Bzzz") */
+#define SETTINGS_FLAG_BUZZER_BIT (0U)
+
 /** @brief Весь байт флагов целиком (удобно для записи/чтения EEPROM одним блоком) */
 void    Settings_SetFlags(uint8_t value);
 uint8_t Settings_GetFlags(void);
@@ -247,6 +250,15 @@ void Settings_Poll(void);
  * @return см. SettingsLoadStatus_t
  */
 SettingsLoadStatus_t Settings_Load(void);
+
+/**
+ * @brief Стереть EEPROM целиком и записать значения по умолчанию — тот же
+ *        путь восстановления, что уже используется в Settings_Load() при
+ *        обнаружении невалидных данных. Публичная обёртка для пункта
+ *        "Сброс" сервисного меню (Expert).
+ * @return true — стирание и запись дефолтов прошли успешно
+ */
+bool Settings_ResetToDefaults(void);
 
 #ifdef __cplusplus
 }

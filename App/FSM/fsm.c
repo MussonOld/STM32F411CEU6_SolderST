@@ -10,6 +10,7 @@
 #include "settings.h"
 #include "state.h"
 #include "error.h"
+#include "menu.h"
 #include "fixed_point.h"
 #include "stm32f4xx_hal.h" /* HAL_GetTick() — интервал авто-повтора UP/DN */
 
@@ -138,13 +139,9 @@ static void accel_start(button_id_t btn)
  */
 static void dispatch_event(const button_event_t *ev)
 {
-    if (s_screen_mode == SCREEN_MODE_SERVICE) {
-        /* Сервисное меню не специфицировано — заглушка, события пока не
-         * обрабатываются. TODO: реализовать, когда меню будет описано. */
-        return;
-    }
-
-    /* --- TOOLS: переключение активного канала ---
+    /* --- TOOLS: переключение активного канала — работает ВСЕГДА, в любом
+     * режиме экрана (в т.ч. внутри сервисного меню — оно наследует активный
+     * канал и TOOLS может переключить его прямо оттуда, см. menu.h).
      * Не передаём фокус на неисправный канал (Error_IsChannelBlocked) — если
      * оба канала неисправны одновременно, переключение всё равно разрешаем
      * (иначе застреваем на одном канале навсегда без возможности хоть
@@ -159,9 +156,33 @@ static void dispatch_event(const button_event_t *ev)
         return;
     }
 
+    if (s_screen_mode == SCREEN_MODE_SERVICE) {
+        /* Глобальный выход из ЛЮБОГО уровня меню сразу в главный экран —
+         * перехватывается здесь, ДО передачи в Menu (Menu эти комбинации
+         * никогда не видит). Запись в EEPROM форсируется немедленно, не
+         * дожидаясь обычного отложенного таймера Settings_Poll(). */
+        bool global_exit =
+            (ev->type == BUTTON_EVENT_CHORD_LONG && ev->mask == BUTTONS_CHORD_UP_DN_MASK) ||
+            (ev->type == BUTTON_EVENT_SHORT_PRESS &&
+             (ev->mask == BUTTON_MASK(BUTTON_SET1) || ev->mask == BUTTON_MASK(BUTTON_SET3)));
+
+        if (global_exit) {
+            Settings_Save();
+            s_screen_mode = SCREEN_MODE_MAIN;
+            return;
+        }
+
+        if (Menu_HandleEvent(ev) == MENU_ACTION_EXIT_TO_MAIN) {
+            /* Пункт "Выход" уровня User — тот же форсированный Settings_Save() */
+            Settings_Save();
+            s_screen_mode = SCREEN_MODE_MAIN;
+        }
+        return;
+    }
+
     /* Активный канал неисправен — управление (SET/UP/DN) заблокировано,
-     * TOOLS и UP+DN аккорд (выключение/сервисное меню) уже обработаны
-     * или обрабатываются ниже отдельно и под этот блок не подпадают. */
+     * TOOLS (уже обработан выше) и UP+DN аккорд (выключение/сервисное меню)
+     * под этот блок не подпадают. */
     if (Error_IsChannelBlocked(s_active_channel) && ev->mask != BUTTONS_CHORD_UP_DN_MASK) {
         return;
     }
@@ -205,7 +226,8 @@ static void dispatch_event(const button_event_t *ev)
         if (ev->type == BUTTON_EVENT_CHORD_SHORT) {
             State_SetEnabled(s_active_channel, false);
         } else if (ev->type == BUTTON_EVENT_CHORD_LONG) {
-            s_screen_mode = SCREEN_MODE_SERVICE; /* заглушка — см. докстринг файла */
+            s_screen_mode = SCREEN_MODE_SERVICE;
+            Menu_Init(); /* всегда с чистого состояния: уровень User, курсор на первом пункте */
         }
         return;
     }
@@ -240,6 +262,11 @@ void InputFSM_Poll(void)
     button_event_t ev;
     while (Buttons_PopEvent(&ev)) {
         dispatch_event(&ev);
+    }
+
+    if (s_screen_mode == SCREEN_MODE_SERVICE) {
+        Menu_Poll();
+        return; /* авто-повтор UP/DN главного экрана (ниже) не имеет смысла в меню */
     }
 
     if (s_accel_active) {
