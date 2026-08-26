@@ -3,10 +3,11 @@
  * @brief Реализация screen.h — см. правила в шапке заголовка.
  *
  * Разметка 320x240:
- *  - y=0..29   : общая инфозона — сообщения EEPROM (Error_GetInfoZoneMessage()):
+ *  - y=0..29   : общая инфозона, три поля: слева таймер сна паяльника,
+ *                справа — отсоса (Sleep_GetMode()/Sleep_GetRemainingSeconds()),
+ *                по центру — сообщение EEPROM (Error_GetInfoZoneMessage()):
  *                транзитное ("сброшено на заводские", 5 сек) либо авария
- *                (весь сеанс); пусто, если показывать нечего. Таймеры сна
- *                тоже сюда позже, TODO.
+ *                (весь сеанс); пусто, если показывать нечего.
  *  - x=159..160: вертикальный разделитель — НЕ доходит до строки пресетов
  *                (та зона общая: один набор пресетов на экран, для
  *                активного канала)
@@ -47,6 +48,7 @@
 #include "settings.h"
 #include "fsm.h"
 #include "error.h"
+#include "sleep.h"
 #include <stddef.h>
 #include "fixed_point.h"
 #include <stdint.h>
@@ -66,6 +68,8 @@ enum {
     LINE_PRESET_1,
     LINE_PRESET_2,
     LINE_PRESET_3,
+    LINE_INFO_SLEEP_SOLDER,   /* инфозона слева — таймер сна паяльника */
+    LINE_INFO_SLEEP_DESOLDER, /* инфозона справа — таймер сна отсоса */
 };
 
 /* ---- Геометрия ---- */
@@ -113,6 +117,13 @@ enum {
 
 #define SCREEN_INFO_X (10U)
 #define SCREEN_INFO_Y (6U)
+/* Инфозона разбита на три поля по x: sleep-таймер паяльника слева,
+ * сообщение EEPROM по центру, sleep-таймер отсоса справа. Если сообщение
+ * EEPROM длинное — может визуально наехать на соседние поля; это
+ * приближённый первый вариант, поправить координаты по факту на экране. */
+#define SCREEN_INFO_SLEEP_SOLDER_X   (10U)
+#define SCREEN_INFO_EEPROM_X         (100U)
+#define SCREEN_INFO_SLEEP_DESOLDER_RIGHT_EDGE_X (SCREEN_WIDTH - 10U)
 
 /* ---- Цвета ---- */
 #define COLOR_BG               DISPLAY_RGB565(0, 0, 0)
@@ -185,7 +196,11 @@ void Screen_Init(void)
 {
     draw_divider();
 
-    TextField_ConfigureLine(LINE_INFO, SCREEN_INFO_X, SCREEN_INFO_Y,
+    TextField_ConfigureLine(LINE_INFO, SCREEN_INFO_EEPROM_X, SCREEN_INFO_Y,
+                             &AntiquaB_16_uni, COLOR_INFO, COLOR_BG);
+    TextField_ConfigureLine(LINE_INFO_SLEEP_SOLDER, SCREEN_INFO_SLEEP_SOLDER_X, SCREEN_INFO_Y,
+                             &AntiquaB_16_uni, COLOR_INFO, COLOR_BG);
+    TextField_ConfigureLine(LINE_INFO_SLEEP_DESOLDER, SCREEN_INFO_SLEEP_DESOLDER_RIGHT_EDGE_X, SCREEN_INFO_Y,
                              &AntiquaB_16_uni, COLOR_INFO, COLOR_BG);
 
     TextField_ConfigureLine(LINE_SOLDER_TITLE, SCREEN_TITLE_LEFT_X, SCREEN_TITLE_Y,
@@ -270,6 +285,57 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
     }
 }
 
+/**
+ * @brief Обновить поле таймера сна одного канала в инфозоне
+ *
+ * AWAKE (простаивает, идёт Таймер 1)    -> "До сна MM:SS"
+ * AWAKE (не простаивает / выключено)    -> "" (пусто)
+ * PRESLEEP (идёт Таймер 2)              -> "Предсон MM:SS"
+ * PRESLEEP (SleepTimeout выключен)      -> "Предсон" (без времени — бессрочно)
+ * SLEEP                                  -> "Спит"
+ *
+ * @param right_aligned false — TextField_Printf с фиксированным x (левое
+ *        поле, паяльник); true — TextField_PrintfRightAligned (правое поле,
+ *        отсос, правый край фиксирован независимо от длины текста)
+ */
+static void update_sleep_status(channel_id_t ch, uint8_t line, bool right_aligned)
+{
+    sleep_mode_t mode = Sleep_GetMode(ch);
+    uint32_t remaining = Sleep_GetRemainingSeconds(ch);
+    uint32_t min = remaining / 60U;
+    uint32_t sec = remaining % 60U;
+
+    if (right_aligned) {
+        switch (mode) {
+            case SLEEP_MODE_AWAKE:
+                if (remaining == 0) TextField_PrintfRightAligned(line, SCREEN_INFO_SLEEP_DESOLDER_RIGHT_EDGE_X, "");
+                else TextField_PrintfRightAligned(line, SCREEN_INFO_SLEEP_DESOLDER_RIGHT_EDGE_X, "До сна %lu:%02lu", (unsigned long)min, (unsigned long)sec);
+                break;
+            case SLEEP_MODE_PRESLEEP:
+                if (remaining == 0) TextField_PrintfRightAligned(line, SCREEN_INFO_SLEEP_DESOLDER_RIGHT_EDGE_X, "Предсон");
+                else TextField_PrintfRightAligned(line, SCREEN_INFO_SLEEP_DESOLDER_RIGHT_EDGE_X, "Предсон %lu:%02lu", (unsigned long)min, (unsigned long)sec);
+                break;
+            case SLEEP_MODE_SLEEP:
+                TextField_PrintfRightAligned(line, SCREEN_INFO_SLEEP_DESOLDER_RIGHT_EDGE_X, "Спит");
+                break;
+        }
+    } else {
+        switch (mode) {
+            case SLEEP_MODE_AWAKE:
+                if (remaining == 0) TextField_Printf(line, "");
+                else TextField_Printf(line, "До сна %lu:%02lu", (unsigned long)min, (unsigned long)sec);
+                break;
+            case SLEEP_MODE_PRESLEEP:
+                if (remaining == 0) TextField_Printf(line, "Предсон");
+                else TextField_Printf(line, "Предсон %lu:%02lu", (unsigned long)min, (unsigned long)sec);
+                break;
+            case SLEEP_MODE_SLEEP:
+                TextField_Printf(line, "Спит");
+                break;
+        }
+    }
+}
+
 void Screen_Update(void)
 {
     update_channel_content(CHANNEL_SOLDER, SCREEN_HALF_CENTER_LEFT_X);
@@ -292,4 +358,7 @@ void Screen_Update(void)
 
     const char *info_msg = Error_GetInfoZoneMessage();
     TextField_Printf(LINE_INFO, "%s", (info_msg != NULL) ? info_msg : "");
+
+    update_sleep_status(CHANNEL_SOLDER, LINE_INFO_SLEEP_SOLDER, false);
+    update_sleep_status(CHANNEL_DESOLDER, LINE_INFO_SLEEP_DESOLDER, true);
 }

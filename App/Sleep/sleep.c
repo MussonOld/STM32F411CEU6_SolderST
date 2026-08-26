@@ -137,3 +137,33 @@ sleep_mode_t Sleep_GetMode(channel_id_t ch)
     if (!channel_valid(ch)) return SLEEP_MODE_AWAKE;
     return s_channels[ch].mode;
 }
+
+uint32_t Sleep_GetRemainingSeconds(channel_id_t ch)
+{
+    if (!channel_valid(ch)) return 0;
+    const sleep_channel_t *c = &s_channels[ch];
+    uint32_t now = HAL_GetTick();
+
+    if (c->mode == SLEEP_MODE_AWAKE) {
+        if (c->timer1_start_tick == 0) return 0; /* не простаивает */
+        uint16_t timeout_min = Settings_GetPreSleepTimeout(ch);
+        if (timeout_min == 0) return 0; /* функция выключена */
+        uint32_t total_ms = (uint32_t)timeout_min * 60000UL;
+        uint32_t elapsed_ms = now - c->timer1_start_tick;
+        if (elapsed_ms >= total_ms) return 0; /* на грани перехода — следующий Sleep_Poll() переведёт в PRESLEEP */
+        return (total_ms - elapsed_ms) / 1000U;
+    }
+
+    if (c->mode == SLEEP_MODE_PRESLEEP) {
+        if (c->timer2_start_tick == 0) return 0;
+        uint16_t timeout_min = Settings_GetSleepTimeout(ch);
+        if (timeout_min == 0) return 0; /* выключено — останется в PRESLEEP бессрочно */
+        uint32_t total_ms = (uint32_t)timeout_min * 60000UL;
+        uint32_t elapsed_ms = now - c->timer2_start_tick;
+        if (elapsed_ms >= total_ms) return 0;
+        return (total_ms - elapsed_ms) / 1000U;
+    }
+
+    /* SLEEP_MODE_SLEEP — финальный режим, считать больше нечего */
+    return 0;
+}

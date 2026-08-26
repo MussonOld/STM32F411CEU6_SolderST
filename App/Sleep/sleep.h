@@ -77,6 +77,17 @@ void Sleep_Poll(void);
 /** @brief Текущий режим простоя канала */
 sleep_mode_t Sleep_GetMode(channel_id_t ch);
 
+/**
+ * @brief Сколько секунд осталось до СЛЕДУЮЩЕГО перехода режима
+ *
+ * AWAKE  — до PRESLEEP (идёт Таймер 1); 0, если инструмент не простаивает
+ *          ИЛИ PreSleepTimeout выключен (0 минут, см. Settings).
+ * PRESLEEP — до SLEEP (идёт Таймер 2); 0, если SleepTimeout выключен —
+ *          канал останется в PRESLEEP бессрочно, дальше не считаем.
+ * SLEEP  — уже финальный режим, дальше считать нечего, всегда 0.
+ */
+uint32_t Sleep_GetRemainingSeconds(channel_id_t ch);
+
 #ifdef __cplusplus
 }
 #endif

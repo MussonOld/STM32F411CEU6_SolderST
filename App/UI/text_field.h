@@ -34,7 +34,7 @@ extern "C" {
 #include "fonts.h"
 
 #ifndef TEXTFIELD_MAX_LINES
-#define TEXTFIELD_MAX_LINES 14
+#define TEXTFIELD_MAX_LINES 16
 #endif
 
 #ifndef TEXTFIELD_LINE_TEXT_MAX
