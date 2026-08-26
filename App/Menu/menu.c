@@ -64,15 +64,6 @@ static bool current_item_is_toggle(void)
     return (s_level == MENU_LEVEL_USER) && (s_cursor == ITEM_BUZZER);
 }
 
-static bool current_item_is_numeric(void)
-{
-    if (s_level == MENU_LEVEL_USER) {
-        return s_cursor == ITEM_PRESLEEP_TIME || s_cursor == ITEM_PRESLEEP_TEMP || s_cursor == ITEM_STANDBY;
-    }
-    return s_cursor == EXPERT_ITEM_KP || s_cursor == EXPERT_ITEM_KI || s_cursor == EXPERT_ITEM_KD ||
-           s_cursor == EXPERT_ITEM_SLOPE || s_cursor == EXPERT_ITEM_BIAS;
-}
-
 /**
  * @brief Применить шаг к значению выбранного пункта (клампинг — уже внутри
  *        соответствующего Settings_Set*())
@@ -168,10 +159,14 @@ menu_action_t Menu_HandleEvent(const button_event_t *ev)
         if (s_state == MENU_STATE_LIST) {
             if (ev->type == BUTTON_EVENT_SHORT_PRESS || ev->type == BUTTON_EVENT_LONG_PRESS) {
                 uint8_t count = (s_level == MENU_LEVEL_USER) ? USER_MENU_ITEM_COUNT : EXPERT_MENU_ITEM_COUNT;
-                if (sign > 0) {
-                    s_cursor = (uint8_t)((s_cursor + 1) % count);
-                } else {
+                /* UP двигает курсор ВВЕРХ по списку (к меньшему индексу — к
+                 * началу), DN — вниз (к большему индексу) — противоположно
+                 * знаку sign, который заточен под смысл "UP=+1" для
+                 * редактирования чисел ниже, а не под визуальную навигацию. */
+                if (btn == BUTTON_UP) {
                     s_cursor = (uint8_t)((s_cursor + count - 1) % count);
+                } else {
+                    s_cursor = (uint8_t)((s_cursor + 1) % count);
                 }
             }
             return MENU_ACTION_NONE;
@@ -279,7 +274,8 @@ void Menu_Poll(void)
 
 const char *Menu_GetTitle(void)
 {
-    static char buf[24];
+    static char buf[48]; /* "Настройка " + "Паяльник"/"Отсос" в UTF-8 — кириллица 2 байта/символ,
+                            "Настройка Паяльник" = 35 байт + '\0'; запас на будущее */
     channel_id_t ch = InputFSM_GetActiveChannel();
     snprintf(buf, sizeof(buf), "Настройка %s", (ch == CHANNEL_SOLDER) ? "Паяльник" : "Отсос");
     return buf;

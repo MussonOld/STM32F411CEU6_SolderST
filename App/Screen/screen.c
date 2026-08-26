@@ -42,9 +42,11 @@
  *    (жёлтый — выбран, красный — редактируется), не текстовым курсором.
  *    Те же 7 строк переиспользуются для трёх строк предупреждения Expert
  *    (Menu_IsShowingExpertWarning()) — отдельных полей под это не заведено.
- *    Статический разделитель (см. draw_divider()) при этом никуда не
- *    девается — визуально останется вертикальная линия поверх меню
- *    (не закрашивается); первый заход, поправить, если будет мешать.
+ *    При КАЖДОЙ смене режима экрана (главный <-> меню, в обе стороны) —
+ *    полная заливка фона + TextField_InvalidateAll() (см.
+ *    clear_screen_for_mode_switch()), чтобы не было наложения одного
+ *    экрана на остатки другого; статический разделитель — часть только
+ *    главного экрана, перерисовывается заново при возврате в него.
  *
  * Координаты — приближённый вариант по вертикали (не откалиброван визуально
  * на реальном дисплее из этой сессии), по горизонтали — динамическое
@@ -177,6 +179,7 @@ enum {
 
 static channel_id_t s_last_active_channel;
 static bool s_last_fault[CHANNEL_COUNT]; /* чтобы перекрашивать title/current только при реальном изменении неисправности */
+static screen_mode_t s_last_screen_mode; /* чтобы очищать экран только при реальной смене режима, не каждый кадр */
 
 /**
  * @brief Применить цвета title/current канала. Приоритет: неисправность
@@ -225,8 +228,29 @@ static void draw_divider(void)
     if (Display_SetWindow(SCREEN_DIVIDER_X0, SCREEN_INFO_HEIGHT,
                            SCREEN_DIVIDER_X1, SCREEN_DIVIDER_Y1) == DISPLAY_OK) {
         Display_FillColorDMA(COLOR_DIVIDER, (uint32_t)width * height);
-        while (Display_IsBusy()) { } /* однократно, при старте, до входа в главный цикл */
+        while (Display_IsBusy()) { } /* однократно, блокирующе — редкое событие (старт/смена режима экрана), не каждый кадр */
     }
+}
+
+/**
+ * @brief Полностью стереть экран и заставить TextField перерисовать всё
+ *        заново — вызывается при КАЖДОЙ смене режима экрана (главный <->
+ *        сервисное меню, в обе стороны), чтобы не было наложения одного
+ *        экрана на остатки другого (разные поля/раскладка, разный набор
+ *        используемых строк). Блокирует ненадолго (редкое событие, не
+ *        каждый кадр — аналогично draw_divider()).
+ */
+static void clear_screen_for_mode_switch(screen_mode_t new_mode)
+{
+    while (Display_IsBusy()) { }
+    if (Display_SetWindow(0, 0, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1) == DISPLAY_OK) {
+        Display_FillColorDMA(COLOR_BG, (uint32_t)SCREEN_WIDTH * SCREEN_HEIGHT);
+        while (Display_IsBusy()) { }
+    }
+    if (new_mode == SCREEN_MODE_MAIN) {
+        draw_divider(); /* стёрли вместе со всем экраном — у главного экрана он статический, рисуем заново */
+    }
+    TextField_InvalidateAll(); /* все строки (обоих экранов) забывают, что было на экране — перерисуются с нуля на чистом фоне */
 }
 
 void Screen_Init(void)
@@ -294,6 +318,7 @@ void Screen_Init(void)
     /* Solder активен по умолчанию при старте (см. InputFSM_Init()) —
      * начальные цвета выше уже расставлены соответственно. */
     s_last_active_channel = CHANNEL_SOLDER;
+    s_last_screen_mode = SCREEN_MODE_MAIN; /* совпадает с InputFSM_Init() — при первом Screen_Update() лишней очистки не будет */
 }
 
 /**
@@ -434,7 +459,13 @@ static void render_menu(void)
 
 void Screen_Update(void)
 {
-    if (InputFSM_GetScreenMode() == SCREEN_MODE_SERVICE) {
+    screen_mode_t mode = InputFSM_GetScreenMode();
+    if (mode != s_last_screen_mode) {
+        clear_screen_for_mode_switch(mode);
+        s_last_screen_mode = mode;
+    }
+
+    if (mode == SCREEN_MODE_SERVICE) {
         render_menu();
         return; /* меню заменяет собой весь главный экран — остальное не обновляем */
     }

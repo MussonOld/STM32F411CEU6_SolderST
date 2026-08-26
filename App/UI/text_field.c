@@ -147,6 +147,21 @@ void TextField_SetColors(uint8_t line, display_color_t fg, display_color_t bg)
     s_lines[line].dirty = true; /* принудительно, независимо от текста */
 }
 
+void TextField_InvalidateAll(void)
+{
+    for (uint8_t i = 0; i < TEXTFIELD_MAX_LINES; i++) {
+        if (s_lines[i].used) {
+            /* shown_text пуст — экран уже физически стёрт снаружи (вызывающий
+             * код обязан это сделать ДО TextField_InvalidateAll()), так что
+             * фаза стирания старого прямоугольника в gfx.c не нужна и не
+             * запустится (см. Gfx_DrawTextStart: prev_text пуст -> пропуск). */
+            s_lines[i].shown_text[0] = '\0';
+            s_lines[i].dirty = true;
+        }
+    }
+    s_active_line = -1; /* экран стёрт целиком снаружи — любое недорисованное задание уже неактуально */
+}
+
 void TextField_Process(void)
 {
     if (s_active_line >= 0) {
