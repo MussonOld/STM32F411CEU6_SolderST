@@ -32,6 +32,7 @@
 #include "text_field.h"
 #include "screen.h"
 #include "buttons.h"
+#include "sleep.h"
 #include "fsm.h"
 #include "settings.h"
 #include "state.h"
@@ -121,6 +122,7 @@ int main(void)
   InputFSM_SyncStateFromSettings(); /* без этого State.setpoint_temp==0 до первого нажатия SET/UP/DN — см. fsm.h */
 
   Buttons_Init();
+  Sleep_Init();
   InputFSM_Init();
 
   Screen_Init();     /* статика (разделитель) + геометрия строк, после TextField_Init() */
@@ -150,9 +152,7 @@ int main(void)
     if (HAL_GetTick() - poll10ms_last_tick >= BUTTONS_POLL_MS) {
         poll10ms_last_tick += BUTTONS_POLL_MS;
         Buttons_Poll();
-        /* Sleep_Poll(); — подключить сюда же, когда модуль сна будет
-         * интегрирован в main.c: его дебаунс/таймеры считаются тем же
-         * способом (см. App/Sleep/sleep.h), тот же гейт ему и нужен. */
+        Sleep_Poll(); /* тот же гейт 10мс — BUTTONS_POLL_MS == SLEEP_POLL_MS, см. sleep.h */
     }
 
     InputFSM_Poll();
