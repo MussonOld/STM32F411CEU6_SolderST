@@ -147,11 +147,11 @@ void Settings_Init(void)
         s_channels[ch].preset[PRESET_2]  = 350;
         s_channels[ch].preset[PRESET_3]  = 450;
         s_channels[ch].target            = 300;  /* = preSet1; не задано явно пользователем */
-        s_channels[ch].presleep_temp        = 150;  /* ВРЕМЕННО, не задано явно пользователем */
+        s_channels[ch].presleep_temp     = 150;  /* температура  инструмента в presleep*/
         s_channels[ch].slope             = 72;   /* номинал 0.072 * SETTINGS_SLOPE_SCALE */
         s_channels[ch].bias              = 217;  /* номинал 21.7 * SETTINGS_BIAS_SCALE */
-        s_channels[ch].pre_sleep_timeout = 0;     /* sleep выключен по умолчанию */
-        s_channels[ch].sleep_timeout     = 0;     /* sleep выключен по умолчанию */
+        s_channels[ch].pre_sleep_timeout = 5;     /* presleep по умолчанию 5мин.*/
+        s_channels[ch].sleep_timeout     = 5;     /* sleep по умолчанию 5мин.*/
         s_channels[ch].kp                = 0;     /* регулятор неактивен, пока не настроен */
         s_channels[ch].ki                = 0;
         s_channels[ch].kd                = 0;
