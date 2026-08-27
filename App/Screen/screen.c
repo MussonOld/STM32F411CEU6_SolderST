@@ -3,11 +3,15 @@
  * @brief Реализация screen.h — см. правила в шапке заголовка.
  *
  * Разметка 320x240:
- *  - y=0..29   : общая инфозона, три поля: слева таймер сна паяльника,
- *                справа — отсоса (Sleep_GetMode()/Sleep_GetRemainingSeconds()),
- *                по центру — сообщение EEPROM (Error_GetInfoZoneMessage()):
- *                транзитное ("сброшено на заводские", 5 сек) либо авария
- *                (весь сеанс); пусто, если показывать нечего.
+ *  - y=0..29   : общая инфозона, три поля: слева иконка+таймер сна
+ *                паяльника (справа от иконки, у своего края — перед
+ *                разделителем), справа — иконка+таймер отсоса (у правого
+ *                края экрана), Sleep_GetMode()/Sleep_GetRemainingSeconds(),
+ *                шрифт AntiquaB_18_uni, цвет по режиму (белый=AWAKE,
+ *                жёлтый=PRESLEEP, красный=SLEEP); по центру — сообщение
+ *                EEPROM (Error_GetInfoZoneMessage()): транзитное
+ *                ("сброшено на заводские", 5 сек) либо авария (весь
+ *                сеанс); пусто, если показывать нечего.
  *  - x=159..160: вертикальный разделитель — НЕ доходит до строки пресетов
  *                (та зона общая: один набор пресетов на экран, для
  *                активного канала)
@@ -55,6 +59,7 @@
 
 #include "screen.h"
 #include "text_field.h"
+#include "gfx.h"
 #include "display.h"
 #include "fonts.h"
 #include "channel.h"
@@ -142,13 +147,29 @@ enum {
 
 #define SCREEN_INFO_X (10U)
 #define SCREEN_INFO_Y (6U)
-/* Инфозона разбита на три поля по x: sleep-таймер паяльника слева,
- * сообщение EEPROM по центру, sleep-таймер отсоса справа. Если сообщение
- * EEPROM длинное — может визуально наехать на соседние поля; это
- * приближённый первый вариант, поправить координаты по факту на экране. */
-#define SCREEN_INFO_SLEEP_SOLDER_X   (10U)
+/* Инфозона разбита на три поля по x: сообщение EEPROM по центру,
+ * иконка+таймер сна паяльника — у ПРАВОГО края своей (левой) половины,
+ * т.е. перед разделителем; иконка+таймер сна отсоса — у правого края
+ * своей (правой) половины, т.е. у правого края экрана. Таймер всегда
+ * выравнивается по правому краю (TextField_PrintfRightAligned), иконка —
+ * статичный элемент с фиксированным x, рассчитанным в Screen_Init() по
+ * замеренной ширине самого широкого реального текста таймера (см.
+ * calc_sleep_icon_x()), чтобы не наезжать на текст при любой его длине.
+ * Если сообщение EEPROM длинное — может визуально наехать на таймер
+ * паяльника (он теперь ближе к центру, чем раньше); это приближённый
+ * первый вариант, поправить координаты по факту на экране. */
 #define SCREEN_INFO_EEPROM_X         (100U)
-#define SCREEN_INFO_SLEEP_DESOLDER_RIGHT_EDGE_X (SCREEN_WIDTH - 10U)
+#define SCREEN_INFO_SLEEP_SOLDER_TEXT_RIGHT_EDGE_X   (SCREEN_DIVIDER_X0 - 6U)
+#define SCREEN_INFO_SLEEP_DESOLDER_TEXT_RIGHT_EDGE_X (SCREEN_WIDTH - 10U)
+
+/* ---- Иконка "циферблат" перед таймером сна (статичная, белая,
+ * рисуется один раз в Screen_Init()/при смене режима экрана — как и
+ * draw_divider(), НЕ перерисовывается каждый кадр) ---- */
+#define SLEEP_ICON_W     (14U)
+#define SLEEP_ICON_H     (14U)
+#define SLEEP_ICON_GAP_X (4U)  /* зазор между иконкой и текстом таймера */
+#define SLEEP_ICON_Y     (SCREEN_INFO_Y + 2U) /* вертикально примерно по центру строки таймера (шрифт 18) */
+#define COLOR_SLEEP_ICON DISPLAY_RGB565(255, 255, 255)
 
 /* ---- Экран сервисного меню (заменяет собой весь главный экран целиком,
  * пока InputFSM_GetScreenMode() == SCREEN_MODE_SERVICE) ---- */
@@ -172,6 +193,10 @@ enum {
 #define COLOR_DIVIDER          DISPLAY_RGB565(100, 100, 100)
 #define COLOR_INFO             DISPLAY_RGB565(255, 255, 255)
 
+#define COLOR_SLEEP_AWAKE    COLOR_INFO                       /* белый — обычный обратный отсчёт до PRESLEEP */
+#define COLOR_SLEEP_PRESLEEP DISPLAY_RGB565(255, 210, 0)      /* жёлтый */
+#define COLOR_SLEEP_SLEEP    DISPLAY_RGB565(255, 40, 40)      /* красный */
+
 #define COLOR_MENU_TITLE    DISPLAY_RGB565(255, 255, 255)
 #define COLOR_MENU_NORMAL   DISPLAY_RGB565(180, 180, 180)
 #define COLOR_MENU_CURSOR   DISPLAY_RGB565(255, 210, 0)  /* выбранный пункт, не редактируется */
@@ -180,6 +205,8 @@ enum {
 static channel_id_t s_last_active_channel;
 static bool s_last_fault[CHANNEL_COUNT]; /* чтобы перекрашивать title/current только при реальном изменении неисправности */
 static screen_mode_t s_last_screen_mode; /* чтобы очищать экран только при реальной смене режима, не каждый кадр */
+static sleep_mode_t s_last_sleep_mode[CHANNEL_COUNT]; /* чтобы перекрашивать таймер сна только при реальной смене режима */
+static uint16_t s_sleep_icon_x[CHANNEL_COUNT]; /* x иконки циферблата на канал, посчитан в Screen_Init() */
 
 /**
  * @brief Применить цвета title/current канала. Приоритет: неисправность
@@ -233,6 +260,80 @@ static void draw_divider(void)
 }
 
 /**
+ * @brief Битмап иконки "циферблат", 14x14, 1 бит/пиксель (MSB=левый пиксель
+ *        строки) — окружность + часовая/минутная стрелки. Нарисован вручную
+ *        (не из шрифта — шрифты проекта не содержат символ часов/циферблата,
+ *        см. bdf2c_TFT.py/fonts.h).
+ */
+static const uint16_t s_sleep_icon_bitmap[SLEEP_ICON_H] = {
+    0b00011111110000,
+    0b00111000111000,
+    0b01100000001100,
+    0b11000010000110,
+    0b11000010000110,
+    0b10000010000010,
+    0b10000011000011,
+    0b10000011100010,
+    0b11000000110110,
+    0b11000000000110,
+    0b01100000001100,
+    0b00111000111000,
+    0b00011111110000,
+    0b00000000000000,
+};
+
+/**
+ * @brief Нарисовать иконку циферблата (статично, блокирующе — как и
+ *        draw_divider(): редкое событие, старт/смена режима экрана, не
+ *        каждый кадр). Буфер на стеке — функция дожидается завершения DMA
+ *        перед возвратом, буфер не переживёт функцию иначе.
+ */
+static void draw_sleep_icon(uint16_t x, uint16_t y)
+{
+    display_color_t buf[SLEEP_ICON_W * SLEEP_ICON_H];
+
+    for (uint16_t row = 0; row < SLEEP_ICON_H; row++) {
+        uint16_t bits = s_sleep_icon_bitmap[row];
+        for (uint16_t col = 0; col < SLEEP_ICON_W; col++) {
+            bool on = ((bits >> (SLEEP_ICON_W - 1U - col)) & 0x1U) != 0U;
+            buf[(row * SLEEP_ICON_W) + col] = on ? COLOR_SLEEP_ICON : COLOR_BG;
+        }
+    }
+
+    while (Display_IsBusy()) { }
+    if (Display_SetWindow(x, y, (uint16_t)(x + SLEEP_ICON_W - 1U), (uint16_t)(y + SLEEP_ICON_H - 1U)) == DISPLAY_OK) {
+        Display_WritePixelsDMA(buf, (uint32_t)SLEEP_ICON_W * SLEEP_ICON_H);
+        while (Display_IsBusy()) { }
+    }
+}
+
+/**
+ * @brief Посчитать x иконки для канала так, чтобы она не наезжала на текст
+ *        таймера при ЛЮБОЙ его длине — по замеренной ширине самого широкого
+ *        реального текста таймера ("Предсон" и "99:59", см.
+ *        update_sleep_status()) для этого шрифта.
+ */
+static uint16_t calc_sleep_icon_x(uint16_t text_right_edge_x)
+{
+    uint16_t w_word = Gfx_MeasureTextWidth(&AntiquaB_18_uni, "Предсон");
+    uint16_t w_time = Gfx_MeasureTextWidth(&AntiquaB_18_uni, "99:59");
+    uint16_t max_text_w = (w_word > w_time) ? w_word : w_time;
+
+    return (uint16_t)(text_right_edge_x - max_text_w - SLEEP_ICON_GAP_X - SLEEP_ICON_W);
+}
+
+/**
+ * @brief Нарисовать обе иконки циферблата инфозоны (паяльник/отсос) по
+ *        уже посчитанным s_sleep_icon_x[]. Вызывается из Screen_Init() и из
+ *        clear_screen_for_mode_switch() (там, где перерисовывается разделитель).
+ */
+static void draw_sleep_icons(void)
+{
+    draw_sleep_icon(s_sleep_icon_x[CHANNEL_SOLDER], SLEEP_ICON_Y);
+    draw_sleep_icon(s_sleep_icon_x[CHANNEL_DESOLDER], SLEEP_ICON_Y);
+}
+
+/**
  * @brief Полностью стереть экран и заставить TextField перерисовать всё
  *        заново — вызывается при КАЖДОЙ смене режима экрана (главный <->
  *        сервисное меню, в обе стороны), чтобы не было наложения одного
@@ -249,6 +350,7 @@ static void clear_screen_for_mode_switch(screen_mode_t new_mode)
     }
     if (new_mode == SCREEN_MODE_MAIN) {
         draw_divider(); /* стёрли вместе со всем экраном — у главного экрана он статический, рисуем заново */
+        draw_sleep_icons(); /* статичные иконки инфозоны — та же логика, что и у разделителя */
     }
     TextField_InvalidateAll(); /* все строки (обоих экранов) забывают, что было на экране — перерисуются с нуля на чистом фоне */
 }
@@ -259,10 +361,17 @@ void Screen_Init(void)
 
     TextField_ConfigureLine(LINE_INFO, SCREEN_INFO_EEPROM_X, SCREEN_INFO_Y,
                              &AntiquaB_16_uni, COLOR_INFO, COLOR_BG);
-    TextField_ConfigureLine(LINE_INFO_SLEEP_SOLDER, SCREEN_INFO_SLEEP_SOLDER_X, SCREEN_INFO_Y,
-                             &AntiquaB_16_uni, COLOR_INFO, COLOR_BG);
-    TextField_ConfigureLine(LINE_INFO_SLEEP_DESOLDER, SCREEN_INFO_SLEEP_DESOLDER_RIGHT_EDGE_X, SCREEN_INFO_Y,
-                             &AntiquaB_16_uni, COLOR_INFO, COLOR_BG);
+    TextField_ConfigureLine(LINE_INFO_SLEEP_SOLDER, SCREEN_INFO_SLEEP_SOLDER_TEXT_RIGHT_EDGE_X, SCREEN_INFO_Y,
+                             &AntiquaB_18_uni, COLOR_SLEEP_AWAKE, COLOR_BG);
+    TextField_ConfigureLine(LINE_INFO_SLEEP_DESOLDER, SCREEN_INFO_SLEEP_DESOLDER_TEXT_RIGHT_EDGE_X, SCREEN_INFO_Y,
+                             &AntiquaB_18_uni, COLOR_SLEEP_AWAKE, COLOR_BG);
+    /* x, переданный здесь для этих двух строк, — просто начальное значение,
+     * реальная позиция пересчитывается по факту при первом же
+     * TextField_PrintfRightAligned() в Screen_Update(), как и у CURRENT/TARGET/пресетов. */
+
+    s_sleep_icon_x[CHANNEL_SOLDER]   = calc_sleep_icon_x(SCREEN_INFO_SLEEP_SOLDER_TEXT_RIGHT_EDGE_X);
+    s_sleep_icon_x[CHANNEL_DESOLDER] = calc_sleep_icon_x(SCREEN_INFO_SLEEP_DESOLDER_TEXT_RIGHT_EDGE_X);
+    draw_sleep_icons();
 
     TextField_ConfigureLine(LINE_SOLDER_TITLE, SCREEN_TITLE_LEFT_X, SCREEN_TITLE_Y,
                              &AntiquaB_18_uni, COLOR_ACTIVE_TITLE, COLOR_BG);
@@ -314,6 +423,7 @@ void Screen_Init(void)
 
     for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
         s_last_fault[ch] = false; /* Error_Init() тоже гарантирует "нет неисправности" по умолчанию */
+        s_last_sleep_mode[ch] = SLEEP_MODE_AWAKE; /* Sleep_Init() тоже гарантирует AWAKE по умолчанию; совпадает с COLOR_SLEEP_AWAKE выше */
     }
     /* Solder активен по умолчанию при старте (см. InputFSM_Init()) —
      * начальные цвета выше уже расставлены соответственно. */
@@ -358,53 +468,48 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
 }
 
 /**
- * @brief Обновить поле таймера сна одного канала в инфозоне
+ * @brief Обновить поле таймера сна одного канала в инфозоне (текст И цвет)
  *
- * AWAKE (простаивает, идёт Таймер 1)    -> "До сна MM:SS"
- * AWAKE (не простаивает / выключено)    -> "" (пусто)
- * PRESLEEP (идёт Таймер 2)              -> "Предсон MM:SS"
- * PRESLEEP (SleepTimeout выключен)      -> "Предсон" (без времени — бессрочно)
- * SLEEP                                  -> "Спит"
+ * AWAKE (простаивает, до PRESLEEP)       -> "MM:SS", белый
+ * AWAKE (не простаивает / выключено)     -> "" (пусто), белый
+ * PRESLEEP (до SLEEP)                    -> "MM:SS", жёлтый
+ * PRESLEEP (SleepTimeout выключен)       -> "Предсон" (без времени — бессрочно), жёлтый
+ * SLEEP                                   -> "Спит", красный
  *
- * @param right_aligned false — TextField_Printf с фиксированным x (левое
- *        поле, паяльник); true — TextField_PrintfRightAligned (правое поле,
- *        отсос, правый край фиксирован независимо от длины текста)
+ * Текст всегда выравнивается по правому краю right_edge_x — у своей
+ * (статичной, белой) иконки циферблата слева от текста, см.
+ * draw_sleep_icons()/calc_sleep_icon_x().
  */
-static void update_sleep_status(channel_id_t ch, uint8_t line, bool right_aligned)
+static void update_sleep_status(channel_id_t ch, uint8_t line, uint16_t right_edge_x)
 {
     sleep_mode_t mode = Sleep_GetMode(ch);
     uint32_t remaining = Sleep_GetRemainingSeconds(ch);
     uint32_t min = remaining / 60U;
     uint32_t sec = remaining % 60U;
 
-    if (right_aligned) {
+    switch (mode) {
+        case SLEEP_MODE_AWAKE:
+            if (remaining == 0) TextField_PrintfRightAligned(line, right_edge_x, "");
+            else TextField_PrintfRightAligned(line, right_edge_x, "%lu:%02lu", (unsigned long)min, (unsigned long)sec);
+            break;
+        case SLEEP_MODE_PRESLEEP:
+            if (remaining == 0) TextField_PrintfRightAligned(line, right_edge_x, "Предсон");
+            else TextField_PrintfRightAligned(line, right_edge_x, "%lu:%02lu", (unsigned long)min, (unsigned long)sec);
+            break;
+        case SLEEP_MODE_SLEEP:
+            TextField_PrintfRightAligned(line, right_edge_x, "Спит");
+            break;
+    }
+
+    if (mode != s_last_sleep_mode[ch]) {
+        display_color_t color;
         switch (mode) {
-            case SLEEP_MODE_AWAKE:
-                if (remaining == 0) TextField_PrintfRightAligned(line, SCREEN_INFO_SLEEP_DESOLDER_RIGHT_EDGE_X, "");
-                else TextField_PrintfRightAligned(line, SCREEN_INFO_SLEEP_DESOLDER_RIGHT_EDGE_X, "До сна %lu:%02lu", (unsigned long)min, (unsigned long)sec);
-                break;
-            case SLEEP_MODE_PRESLEEP:
-                if (remaining == 0) TextField_PrintfRightAligned(line, SCREEN_INFO_SLEEP_DESOLDER_RIGHT_EDGE_X, "Предсон");
-                else TextField_PrintfRightAligned(line, SCREEN_INFO_SLEEP_DESOLDER_RIGHT_EDGE_X, "Предсон %lu:%02lu", (unsigned long)min, (unsigned long)sec);
-                break;
-            case SLEEP_MODE_SLEEP:
-                TextField_PrintfRightAligned(line, SCREEN_INFO_SLEEP_DESOLDER_RIGHT_EDGE_X, "Спит");
-                break;
+            case SLEEP_MODE_PRESLEEP: color = COLOR_SLEEP_PRESLEEP; break;
+            case SLEEP_MODE_SLEEP:    color = COLOR_SLEEP_SLEEP;    break;
+            default:                  color = COLOR_SLEEP_AWAKE;   break;
         }
-    } else {
-        switch (mode) {
-            case SLEEP_MODE_AWAKE:
-                if (remaining == 0) TextField_Printf(line, "");
-                else TextField_Printf(line, "До сна %lu:%02lu", (unsigned long)min, (unsigned long)sec);
-                break;
-            case SLEEP_MODE_PRESLEEP:
-                if (remaining == 0) TextField_Printf(line, "Предсон");
-                else TextField_Printf(line, "Предсон %lu:%02lu", (unsigned long)min, (unsigned long)sec);
-                break;
-            case SLEEP_MODE_SLEEP:
-                TextField_Printf(line, "Спит");
-                break;
-        }
+        TextField_SetColors(line, color, COLOR_BG);
+        s_last_sleep_mode[ch] = mode;
     }
 }
 
@@ -491,6 +596,6 @@ void Screen_Update(void)
     const char *info_msg = Error_GetInfoZoneMessage();
     TextField_Printf(LINE_INFO, "%s", (info_msg != NULL) ? info_msg : "");
 
-    update_sleep_status(CHANNEL_SOLDER, LINE_INFO_SLEEP_SOLDER, false);
-    update_sleep_status(CHANNEL_DESOLDER, LINE_INFO_SLEEP_DESOLDER, true);
+    update_sleep_status(CHANNEL_SOLDER, LINE_INFO_SLEEP_SOLDER, SCREEN_INFO_SLEEP_SOLDER_TEXT_RIGHT_EDGE_X);
+    update_sleep_status(CHANNEL_DESOLDER, LINE_INFO_SLEEP_DESOLDER, SCREEN_INFO_SLEEP_DESOLDER_TEXT_RIGHT_EDGE_X);
 }
