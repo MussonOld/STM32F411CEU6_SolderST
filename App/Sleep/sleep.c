@@ -1,7 +1,17 @@
 /**
  * @file sleep.c
- * @brief Реализация sleep.h — дебаунс сырых входов + двухуровневая
- *        таймерная FSM на канал.
+ * @brief Реализация sleep.h — дебаунс сырых входов + таймерная FSM на канал.
+ *
+ * Таймеры PreSleep/Sleep НЕЗАВИСИМЫ друг от друга: оба отсчитываются от
+ * ОДНОГО И ТОГО ЖЕ момента начала простоя (idle_start_tick), а не один
+ * от другого. Режим на каждом опросе выбирается прямым сравнением
+ * накопленного времени простоя с обоими порогами — SLEEP проверяется
+ * первым, чтобы он "победил", даже если SleepTimeout < PreSleepTimeout
+ * или если PreSleepTimeout==0 (выключен) — тогда PRESLEEP просто
+ * пропускается, канал уходит из AWAKE сразу в SLEEP по истечении
+ * SleepTimeout. Симметрично: PreSleepTimeout может быть > 0 при
+ * SleepTimeout==0 — тогда канал зависает в PRESLEEP бессрочно, как и
+ * раньше.
  */
 
 #include "sleep.h"
@@ -17,12 +27,12 @@ typedef struct {
     bool     raw_idle_candidate;
     uint8_t  stable_count;
 
-    /* Таймеры — храним отметку старта, а не остаток; 0 = таймер не идёт.
-     * HAL_GetTick() ==0 в первую миллисекунду после старта МК теоретически
+    /* Единый момент начала простоя — от него независимо отсчитываются
+     * оба порога (PreSleepTimeout и SleepTimeout). 0 = не простаивает.
+     * HAL_GetTick()==0 в первую миллисекунду после старта МК теоретически
      * не отличим от "не идёт" — не критично (окно в 1 мс, канал стартует
-     * в AWAKE без запущенных таймеров, см. Sleep_Init()). */
-    uint32_t timer1_start_tick;
-    uint32_t timer2_start_tick;
+     * в AWAKE, см. Sleep_Init()). */
+    uint32_t idle_start_tick;
 } sleep_channel_t;
 
 static sleep_channel_t s_channels[CHANNEL_COUNT];
@@ -45,10 +55,9 @@ static bool read_raw_idle(channel_id_t ch)
     }
 }
 
-static void stop_reset_timers(sleep_channel_t *c)
+static void stop_reset_timer(sleep_channel_t *c)
 {
-    c->timer1_start_tick = 0;
-    c->timer2_start_tick = 0;
+    c->idle_start_tick = 0;
     c->mode = SLEEP_MODE_AWAKE;
 }
 
@@ -59,7 +68,7 @@ void Sleep_Init(void)
         c->debounced_idle      = false;
         c->raw_idle_candidate  = false;
         c->stable_count        = 0;
-        stop_reset_timers(c);
+        stop_reset_timer(c);
     }
 }
 
@@ -81,48 +90,47 @@ static void poll_channel(channel_id_t ch)
     bool debounced = (c->stable_count >= SLEEP_DEBOUNCE_TICKS) ? c->raw_idle_candidate
                                                                  : c->debounced_idle;
 
-    /* ---- Переход занят -> простаивает: запускаем Таймер 1 ---- */
+    /* ---- Переход занят -> простаивает: запускаем единый таймер простоя ---- */
     if (debounced && !c->debounced_idle) {
-        c->timer1_start_tick = HAL_GetTick();
-        if (c->timer1_start_tick == 0) c->timer1_start_tick = 1; /* см. комментарий в структуре: 0 зарезервирован под "не идёт" */
-        c->timer2_start_tick = 0;
+        c->idle_start_tick = HAL_GetTick();
+        if (c->idle_start_tick == 0) c->idle_start_tick = 1; /* см. комментарий в структуре: 0 зарезервирован под "не идёт" */
         c->mode = SLEEP_MODE_AWAKE;
     }
-    /* ---- Переход простаивает -> занят: сброс обоих таймеров, назад в AWAKE ---- */
+    /* ---- Переход простаивает -> занят: сброс таймера, назад в AWAKE ---- */
     else if (!debounced && c->debounced_idle) {
-        stop_reset_timers(c);
+        stop_reset_timer(c);
     }
     c->debounced_idle = debounced;
 
-    if (!debounced) {
-        return; /* инструмент используется — таймерам сейчас нечего делать */
+    if (!debounced || c->idle_start_tick == 0) {
+        return; /* инструмент используется — таймеру сейчас нечего делать */
     }
 
     uint32_t now = HAL_GetTick();
+    uint32_t elapsed_ms = now - c->idle_start_tick; /* корректно и при переполнении HAL_GetTick() */
 
-    /* ---- Таймер 1: AWAKE -> PRESLEEP ---- */
-    if (c->mode == SLEEP_MODE_AWAKE && c->timer1_start_tick != 0) {
-        uint16_t timeout_min = Settings_GetPreSleepTimeout(ch);
-        if (timeout_min > 0) {
-            uint32_t elapsed_ms = now - c->timer1_start_tick; /* корректно и при переполнении HAL_GetTick() */
-            if (elapsed_ms >= (uint32_t)timeout_min * 60000UL) {
-                c->mode = SLEEP_MODE_PRESLEEP;
-                c->timer2_start_tick = now;
-                if (c->timer2_start_tick == 0) c->timer2_start_tick = 1;
-            }
+    /* ---- Независимая проверка обоих порогов от ОДНОГО старта простоя ----
+     * SLEEP проверяется первым: если SleepTimeout короче (или PreSleepTimeout
+     * выключен), канал должен уйти в SLEEP напрямую из AWAKE, минуя PRESLEEP. */
+    uint16_t sleep_timeout_min = Settings_GetSleepTimeout(ch);
+    if (sleep_timeout_min > 0) {
+        uint32_t sleep_total_ms = (uint32_t)sleep_timeout_min * 60000UL;
+        if (elapsed_ms >= sleep_total_ms) {
+            c->mode = SLEEP_MODE_SLEEP;
+            return;
         }
     }
 
-    /* ---- Таймер 2: PRESLEEP -> SLEEP ---- */
-    if (c->mode == SLEEP_MODE_PRESLEEP && c->timer2_start_tick != 0) {
-        uint16_t timeout_min = Settings_GetSleepTimeout(ch);
-        if (timeout_min > 0) {
-            uint32_t elapsed_ms = now - c->timer2_start_tick;
-            if (elapsed_ms >= (uint32_t)timeout_min * 60000UL) {
-                c->mode = SLEEP_MODE_SLEEP;
-            }
+    uint16_t presleep_timeout_min = Settings_GetPreSleepTimeout(ch);
+    if (presleep_timeout_min > 0) {
+        uint32_t presleep_total_ms = (uint32_t)presleep_timeout_min * 60000UL;
+        if (elapsed_ms >= presleep_total_ms) {
+            c->mode = SLEEP_MODE_PRESLEEP;
+            return;
         }
     }
+
+    c->mode = SLEEP_MODE_AWAKE;
 }
 
 void Sleep_Poll(void)
@@ -142,24 +150,41 @@ uint32_t Sleep_GetRemainingSeconds(channel_id_t ch)
 {
     if (!channel_valid(ch)) return 0;
     const sleep_channel_t *c = &s_channels[ch];
+
+    if (c->idle_start_tick == 0) return 0; /* не простаивает */
+
     uint32_t now = HAL_GetTick();
+    uint32_t elapsed_ms = now - c->idle_start_tick;
 
     if (c->mode == SLEEP_MODE_AWAKE) {
-        if (c->timer1_start_tick == 0) return 0; /* не простаивает */
-        uint16_t timeout_min = Settings_GetPreSleepTimeout(ch);
-        if (timeout_min == 0) return 0; /* функция выключена */
-        uint32_t total_ms = (uint32_t)timeout_min * 60000UL;
-        uint32_t elapsed_ms = now - c->timer1_start_tick;
-        if (elapsed_ms >= total_ms) return 0; /* на грани перехода — следующий Sleep_Poll() переведёт в PRESLEEP */
-        return (total_ms - elapsed_ms) / 1000U;
+        /* До ближайшего порога — который из двух наступит раньше и включён (>0) */
+        uint16_t sleep_min = Settings_GetSleepTimeout(ch);
+        uint16_t presleep_min = Settings_GetPreSleepTimeout(ch);
+
+        uint32_t candidate_ms = 0;
+        bool have_candidate = false;
+
+        if (sleep_min > 0) {
+            candidate_ms = (uint32_t)sleep_min * 60000UL;
+            have_candidate = true;
+        }
+        if (presleep_min > 0) {
+            uint32_t presleep_ms = (uint32_t)presleep_min * 60000UL;
+            if (!have_candidate || presleep_ms < candidate_ms) {
+                candidate_ms = presleep_ms;
+                have_candidate = true;
+            }
+        }
+
+        if (!have_candidate) return 0; /* оба порога выключены */
+        if (elapsed_ms >= candidate_ms) return 0; /* на грани перехода — следующий Sleep_Poll() переведёт режим */
+        return (candidate_ms - elapsed_ms) / 1000U;
     }
 
     if (c->mode == SLEEP_MODE_PRESLEEP) {
-        if (c->timer2_start_tick == 0) return 0;
-        uint16_t timeout_min = Settings_GetSleepTimeout(ch);
-        if (timeout_min == 0) return 0; /* выключено — останется в PRESLEEP бессрочно */
-        uint32_t total_ms = (uint32_t)timeout_min * 60000UL;
-        uint32_t elapsed_ms = now - c->timer2_start_tick;
+        uint16_t sleep_min = Settings_GetSleepTimeout(ch);
+        if (sleep_min == 0) return 0; /* выключено — останется в PRESLEEP бессрочно */
+        uint32_t total_ms = (uint32_t)sleep_min * 60000UL;
         if (elapsed_ms >= total_ms) return 0;
         return (total_ms - elapsed_ms) / 1000U;
     }
