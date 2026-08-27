@@ -13,14 +13,27 @@
  *   Выход, Bzzz (ON/OFF, глобальный флаг — см. SETTINGS_FLAG_BUZZER_BIT),
  *   PreslipTime (Settings_GetPreSleepTimeout, канала), PreslipTemp
  *   (Settings_GetPresleepTemp, канала), Standby (Settings_GetSleepTimeout,
- *   канала), Expert (переход на уровень Expert).
+ *   канала), Сброс (см. ниже), Expert (переход на уровень Expert).
  *
  * Expert — войти можно только длинным SET2 на пункте "Expert": первое
  * длинное нажатие показывает предупреждение (Menu_IsShowingExpertWarning()),
  * второе длинное — открывает уровень. Короткое нажатие на "Expert" ничего
- * не делает. Пункты: Выход (обратно в User, НЕ в главный экран), Сброс
- * (Settings_ResetToDefaults() — стирание чипа и запись дефолтов, без
- * дополнительного подтверждения), Kp/Ki/Kd/Slope/Bias (канала).
+ * не делает. Пункты: Выход (обратно в User, НЕ в главный экран),
+ * Kp/Ki/Kd/Slope/Bias (канала), Сброс (см. ниже, идёт последним, после Bias).
+ *
+ * ---- Пункт "Сброс" (есть на обоих уровнях, User и Expert) ----
+ * Пункт-действие: сбрасывает к значениям по умолчанию поля ТЕКУЩЕГО уровня
+ * меню для ТЕКУЩЕГО активного канала (Settings_ResetUserDefaults() /
+ * Settings_ResetExpertDefaults() — точечно, EEPROM не стирается, в отличие
+ * от Settings_ResetToDefaults()). На уровне User сброс также затрагивает
+ * глобальный флаг Bzzz (общий на оба канала).
+ *
+ * Требует подтверждения: короткий SET2 на пункте "Сброс" переводит в режим
+ * подтверждения (Menu_IsShowingResetConfirm()) — короткий SET2 в этом режиме
+ * отменяет (возврат в список), длинный SET2 выполняет сброс и переводит в
+ * режим показа результата (Menu_IsShowingResetDone()) на MENU_RESET_DONE_MS,
+ * после чего меню автоматически возвращается в список (тот же уровень и
+ * курсор, где был выбран "Сброс" — экран меню не покидается).
  *
  * ---- Навигация ----
  * UP/DN — циклический выбор пункта текущего уровня, когда ничего не
@@ -91,7 +104,7 @@ void Menu_Poll(void);
 /** @brief "Настройка Паяльник" / "Настройка Отсос" — по текущему активному каналу */
 const char *Menu_GetTitle(void);
 
-/** @brief Число пунктов в ТЕКУЩЕМ уровне (6 для User, 7 для Expert) */
+/** @brief Число пунктов в ТЕКУЩЕМ уровне (7 для User, 7 для Expert) */
 uint8_t Menu_GetItemCount(void);
 
 /** @brief Название пункта по индексу текущего уровня (например "Bzzz", "Kp") */
@@ -114,6 +127,18 @@ bool Menu_IsShowingExpertWarning(void);
 
 /** @brief Строка предупреждения Expert, index 0..2 (три строки текста) */
 const char *Menu_GetExpertWarningLine(uint8_t line_index);
+
+/** @brief true — показывается промт подтверждения пункта "Сброс" (см. докстринг файла) */
+bool Menu_IsShowingResetConfirm(void);
+
+/** @brief Строка промта подтверждения сброса, index 0..2 (три строки текста) */
+const char *Menu_GetResetConfirmLine(uint8_t line_index);
+
+/** @brief true — показывается сообщение о выполненном сбросе (см. докстринг файла) */
+bool Menu_IsShowingResetDone(void);
+
+/** @brief Строка сообщения о выполненном сбросе, index 0..2 (три строки текста) */
+const char *Menu_GetResetDoneLine(uint8_t line_index);
 
 #ifdef __cplusplus
 }

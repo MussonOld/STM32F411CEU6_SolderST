@@ -58,6 +58,18 @@ static uint32_t s_last_change_tick = 0;
 #define SETTINGS_EEPROM_FLAGS_LEN      (1U)
 #define SETTINGS_EEPROM_DATA_LEN       (SETTINGS_EEPROM_CH_DATA_LEN + SETTINGS_EEPROM_FLAGS_LEN)
 
+/* ---- Значения по умолчанию (совпадают с Settings_Init()) — используются
+ * точечными Settings_Reset*Defaults() ниже, чтобы не разъезжались с
+ * Settings_Init() при будущих правках дефолтов. */
+#define SETTINGS_DEFAULT_PRESLEEP_TEMP      (150U)
+#define SETTINGS_DEFAULT_PRE_SLEEP_TIMEOUT  (0U)
+#define SETTINGS_DEFAULT_SLEEP_TIMEOUT      (0U)
+#define SETTINGS_DEFAULT_SLOPE              (72U)
+#define SETTINGS_DEFAULT_BIAS               (217U)
+#define SETTINGS_DEFAULT_KP                 (0U)
+#define SETTINGS_DEFAULT_KI                 (0U)
+#define SETTINGS_DEFAULT_KD                 (0U)
+
 static inline bool channel_valid(channel_id_t ch)
 {
     return (ch >= 0) && (ch < CHANNEL_COUNT);
@@ -547,4 +559,25 @@ bool Settings_ResetToDefaults(void)
     bool erased = erase_eeprom();
     bool saved = Settings_Save();
     return erased && saved;
+}
+
+void Settings_ResetUserDefaults(channel_id_t ch)
+{
+    if (!channel_valid(ch)) return;
+
+    Settings_SetPresleepTemp(ch, SETTINGS_DEFAULT_PRESLEEP_TEMP);
+    Settings_SetPreSleepTimeout(ch, SETTINGS_DEFAULT_PRE_SLEEP_TIMEOUT);
+    Settings_SetSleepTimeout(ch, SETTINGS_DEFAULT_SLEEP_TIMEOUT);
+    Settings_SetFlagBit(SETTINGS_FLAG_BUZZER_BIT, false); /* глобальный флаг — см. докстринг в settings.h */
+}
+
+void Settings_ResetExpertDefaults(channel_id_t ch)
+{
+    if (!channel_valid(ch)) return;
+
+    Settings_SetKp(ch, SETTINGS_DEFAULT_KP);
+    Settings_SetKi(ch, SETTINGS_DEFAULT_KI);
+    Settings_SetKd(ch, SETTINGS_DEFAULT_KD);
+    Settings_SetSlope(ch, SETTINGS_DEFAULT_SLOPE);
+    Settings_SetBias(ch, SETTINGS_DEFAULT_BIAS);
 }

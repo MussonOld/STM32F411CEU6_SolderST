@@ -17,19 +17,20 @@ typedef enum {
     ITEM_PRESLEEP_TIME,
     ITEM_PRESLEEP_TEMP,
     ITEM_STANDBY,
+    ITEM_RESET,
     ITEM_EXPERT,
 } user_item_t;
-#define USER_MENU_ITEM_COUNT (6U)
+#define USER_MENU_ITEM_COUNT (7U)
 
 /* ---- Пункты уровня Expert ---- */
 typedef enum {
     EXPERT_ITEM_EXIT = 0,
-    EXPERT_ITEM_RESET,
     EXPERT_ITEM_KP,
     EXPERT_ITEM_KI,
     EXPERT_ITEM_KD,
     EXPERT_ITEM_SLOPE,
     EXPERT_ITEM_BIAS,
+    EXPERT_ITEM_RESET,
 } expert_item_t;
 #define EXPERT_MENU_ITEM_COUNT (7U)
 
@@ -42,12 +43,17 @@ typedef enum {
     MENU_STATE_LIST = 0,       /* обычная навигация UP/DN по пунктам */
     MENU_STATE_EDITING,        /* UP/DN меняют значение выбранного пункта */
     MENU_STATE_EXPERT_WARNING, /* предупреждение перед входом в Expert, ждём второй длинный SET2 */
+    MENU_STATE_RESET_CONFIRM,  /* промт подтверждения пункта "Сброс", ждём короткий (отмена) либо длинный (подтверждение) SET2 */
+    MENU_STATE_RESET_DONE,     /* сообщение "готово" после сброса, таймер MENU_RESET_DONE_MS, см. Menu_Poll() */
 } menu_internal_state_t;
 
 /* Упрощённый (не многофазный, в отличие от главного экрана) авто-повтор
  * при удержании UP/DN во время редактирования числового параметра */
 #define MENU_ACCEL_REPEAT_MS (150U)
 #define MENU_ACCEL_STEP      (10U)
+
+/* Длительность показа сообщения после выполненного сброса */
+#define MENU_RESET_DONE_MS (3000U)
 
 static menu_level_t           s_level;
 static uint8_t                s_cursor;
@@ -56,6 +62,8 @@ static menu_internal_state_t  s_state;
 static bool        s_accel_active;
 static button_id_t s_accel_button;
 static uint32_t    s_accel_last_tick;
+
+static uint32_t    s_reset_done_start_tick;
 
 /* ---- Классификация текущего пункта ---- */
 
@@ -139,6 +147,17 @@ static void toggle_buzzer(void)
     Settings_SetFlagBit(SETTINGS_FLAG_BUZZER_BIT, !cur);
 }
 
+/** @brief Выполнить сброс полей текущего уровня меню для активного канала */
+static void perform_reset(void)
+{
+    channel_id_t ch = InputFSM_GetActiveChannel();
+    if (s_level == MENU_LEVEL_USER) {
+        Settings_ResetUserDefaults(ch);
+    } else {
+        Settings_ResetExpertDefaults(ch);
+    }
+}
+
 /* ---- Публичный API ---- */
 
 void Menu_Init(void)
@@ -206,6 +225,23 @@ menu_action_t Menu_HandleEvent(const button_event_t *ev)
             return MENU_ACTION_NONE;
         }
 
+        if (s_state == MENU_STATE_RESET_CONFIRM) {
+            if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
+                s_state = MENU_STATE_LIST; /* отмена — возвращаемся к списку, курсор остаётся на "Сброс" */
+            } else if (ev->type == BUTTON_EVENT_LONG_PRESS) {
+                perform_reset();
+                s_state = MENU_STATE_RESET_DONE;
+                s_reset_done_start_tick = HAL_GetTick();
+            }
+            return MENU_ACTION_NONE;
+        }
+
+        if (s_state == MENU_STATE_RESET_DONE) {
+            /* сообщение показывается фиксированное время (см. Menu_Poll()),
+             * до истечения таймера SET2 не обрабатываем */
+            return MENU_ACTION_NONE;
+        }
+
         if (s_state == MENU_STATE_EDITING) {
             s_state = MENU_STATE_LIST;
             s_accel_active = false;
@@ -217,6 +253,12 @@ menu_action_t Menu_HandleEvent(const button_event_t *ev)
             if (s_cursor == ITEM_EXIT) {
                 if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
                     return MENU_ACTION_EXIT_TO_MAIN;
+                }
+                return MENU_ACTION_NONE;
+            }
+            if (s_cursor == ITEM_RESET) {
+                if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
+                    s_state = MENU_STATE_RESET_CONFIRM;
                 }
                 return MENU_ACTION_NONE;
             }
@@ -241,7 +283,7 @@ menu_action_t Menu_HandleEvent(const button_event_t *ev)
         }
         if (s_cursor == EXPERT_ITEM_RESET) {
             if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
-                Settings_ResetToDefaults();
+                s_state = MENU_STATE_RESET_CONFIRM;
             }
             return MENU_ACTION_NONE;
         }
@@ -257,6 +299,13 @@ menu_action_t Menu_HandleEvent(const button_event_t *ev)
 
 void Menu_Poll(void)
 {
+    if (s_state == MENU_STATE_RESET_DONE) {
+        if ((HAL_GetTick() - s_reset_done_start_tick) >= MENU_RESET_DONE_MS) {
+            s_state = MENU_STATE_LIST; /* остаёмся в том же уровне/на том же курсоре ("Сброс") */
+        }
+        return;
+    }
+
     if (s_state != MENU_STATE_EDITING || !s_accel_active) {
         return;
     }
@@ -295,18 +344,19 @@ const char *Menu_GetItemLabel(uint8_t index)
             case ITEM_PRESLEEP_TIME: return "PreslipTime";
             case ITEM_PRESLEEP_TEMP: return "PreslipTemp";
             case ITEM_STANDBY:       return "Standby";
+            case ITEM_RESET:         return "Сброс";
             case ITEM_EXPERT:        return "Expert";
             default:                 return "";
         }
     }
     switch (index) {
         case EXPERT_ITEM_EXIT:  return "Выход";
-        case EXPERT_ITEM_RESET: return "Сброс";
         case EXPERT_ITEM_KP:    return "Kp";
         case EXPERT_ITEM_KI:    return "Ki";
         case EXPERT_ITEM_KD:    return "Kd";
         case EXPERT_ITEM_SLOPE: return "Slope";
         case EXPERT_ITEM_BIAS:  return "Bias";
+        case EXPERT_ITEM_RESET: return "Сброс";
         default:                return "";
     }
 }
@@ -369,6 +419,34 @@ const char *Menu_GetExpertWarningLine(uint8_t line_index)
         case 0: return "Внимание!!!";
         case 1: return "Режим требует квалификации!";
         case 2: return "Неверные настройки могут повредить инструмент.";
+        default: return "";
+    }
+}
+
+bool Menu_IsShowingResetConfirm(void)
+{
+    return s_state == MENU_STATE_RESET_CONFIRM;
+}
+
+const char *Menu_GetResetConfirmLine(uint8_t line_index)
+{
+    switch (line_index) {
+        case 0: return "Сбросить настройки?";
+        case 1: return "SET2 (удержать) - да";
+        case 2: return "SET2 (коротко) - отмена";
+        default: return "";
+    }
+}
+
+bool Menu_IsShowingResetDone(void)
+{
+    return s_state == MENU_STATE_RESET_DONE;
+}
+
+const char *Menu_GetResetDoneLine(uint8_t line_index)
+{
+    switch (line_index) {
+        case 0: return "Настройки сброшены";
         default: return "";
     }
 }

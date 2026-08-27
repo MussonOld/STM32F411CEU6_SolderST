@@ -260,6 +260,29 @@ SettingsLoadStatus_t Settings_Load(void);
  */
 bool Settings_ResetToDefaults(void);
 
+/**
+ * @brief Точечный сброс полей уровня User сервисного меню (см. menu.h) для
+ *        ОДНОГО канала — PreslipTime, PreslipTemp, Standby — к значениям по
+ *        умолчанию (тем же, что в Settings_Init()). Дополнительно сбрасывает
+ *        и глобальный флаг Bzzz (SETTINGS_FLAG_BUZZER_BIT) в OFF — это общий
+ *        на оба канала флаг, но пункт "Сброс" уровня User сбрасывает его
+ *        тоже (см. чат).
+ *
+ * В отличие от Settings_ResetToDefaults(), EEPROM НЕ стирается и другие
+ * каналы/поля не трогаются — обычный путь через публичные сеттеры (клампинг
+ * + отложенная запись через Settings_Poll(), как при обычном редактировании
+ * из меню).
+ */
+void Settings_ResetUserDefaults(channel_id_t ch);
+
+/**
+ * @brief Точечный сброс полей уровня Expert сервисного меню (см. menu.h) для
+ *        ОДНОГО канала — Kp, Ki, Kd, Slope, Bias — к значениям по умолчанию
+ *        (тем же, что в Settings_Init()). EEPROM не стирается — см.
+ *        Settings_ResetUserDefaults().
+ */
+void Settings_ResetExpertDefaults(channel_id_t ch);
+
 #ifdef __cplusplus
 }
 #endif

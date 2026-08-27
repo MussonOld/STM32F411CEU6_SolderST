@@ -45,7 +45,9 @@
  *    шрифт AntiquaB_18_uni везде. Выбранный пункт подсвечивается цветом
  *    (жёлтый — выбран, красный — редактируется), не текстовым курсором.
  *    Те же 7 строк переиспользуются для трёх строк предупреждения Expert
- *    (Menu_IsShowingExpertWarning()) — отдельных полей под это не заведено.
+ *    (Menu_IsShowingExpertWarning()), промта подтверждения сброса
+ *    (Menu_IsShowingResetConfirm()) и сообщения о выполненном сбросе
+ *    (Menu_IsShowingResetDone()) — отдельных полей под это не заведено.
  *    При КАЖДОЙ смене режима экрана (главный <-> меню, в обе стороны) —
  *    полная заливка фона + TextField_InvalidateAll() (см.
  *    clear_screen_for_mode_switch()), чтобы не было наложения одного
@@ -525,6 +527,32 @@ static void render_menu(void)
             uint8_t line = (uint8_t)(LINE_MENU_ITEM_0 + i);
             if (i < 3) {
                 TextField_Printf(line, "%s", Menu_GetExpertWarningLine(i));
+            } else {
+                TextField_Printf(line, "");
+            }
+            TextField_SetColors(line, COLOR_MENU_NORMAL, COLOR_BG);
+        }
+        return;
+    }
+
+    if (Menu_IsShowingResetConfirm()) {
+        for (uint8_t i = 0; i < SCREEN_MENU_ITEM_ROWS; i++) {
+            uint8_t line = (uint8_t)(LINE_MENU_ITEM_0 + i);
+            if (i < 3) {
+                TextField_Printf(line, "%s", Menu_GetResetConfirmLine(i));
+            } else {
+                TextField_Printf(line, "");
+            }
+            TextField_SetColors(line, COLOR_MENU_NORMAL, COLOR_BG);
+        }
+        return;
+    }
+
+    if (Menu_IsShowingResetDone()) {
+        for (uint8_t i = 0; i < SCREEN_MENU_ITEM_ROWS; i++) {
+            uint8_t line = (uint8_t)(LINE_MENU_ITEM_0 + i);
+            if (i < 3) {
+                TextField_Printf(line, "%s", Menu_GetResetDoneLine(i));
             } else {
                 TextField_Printf(line, "");
             }
