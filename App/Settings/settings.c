@@ -58,14 +58,19 @@ static uint32_t s_last_change_tick = 0;
 #define SETTINGS_EEPROM_FLAGS_LEN      (1U)
 #define SETTINGS_EEPROM_DATA_LEN       (SETTINGS_EEPROM_CH_DATA_LEN + SETTINGS_EEPROM_FLAGS_LEN)
 
-/* ---- Значения по умолчанию (совпадают с Settings_Init()) — используются
- * точечными Settings_Reset*Defaults() ниже, чтобы не разъезжались с
- * Settings_Init() при будущих правках дефолтов. */
+/* ---- Значения по умолчанию — единственный источник истины, используются
+ * и Settings_Init() (полный сброс/первый старт/INVALID EEPROM), и точечными
+ * Settings_Reset*Defaults() (пункт "Сброс" сервисного меню), чтобы они не
+ * могли разъехаться при будущих правках дефолтов. */
+#define SETTINGS_DEFAULT_PRESET_1           (300U)
+#define SETTINGS_DEFAULT_PRESET_2           (350U)
+#define SETTINGS_DEFAULT_PRESET_3           (450U)
+#define SETTINGS_DEFAULT_TARGET             (SETTINGS_DEFAULT_PRESET_1) /* не задано явно пользователем */
 #define SETTINGS_DEFAULT_PRESLEEP_TEMP      (150U)
-#define SETTINGS_DEFAULT_PRE_SLEEP_TIMEOUT  (0U)
-#define SETTINGS_DEFAULT_SLEEP_TIMEOUT      (0U)
-#define SETTINGS_DEFAULT_SLOPE              (72U)
-#define SETTINGS_DEFAULT_BIAS               (217U)
+#define SETTINGS_DEFAULT_PRE_SLEEP_TIMEOUT  (5U)
+#define SETTINGS_DEFAULT_SLEEP_TIMEOUT      (5U)
+#define SETTINGS_DEFAULT_SLOPE              (72U)  /* номинал 0.072 * SETTINGS_SLOPE_SCALE */
+#define SETTINGS_DEFAULT_BIAS               (217U) /* номинал 21.7 * SETTINGS_BIAS_SCALE */
 #define SETTINGS_DEFAULT_KP                 (0U)
 #define SETTINGS_DEFAULT_KI                 (0U)
 #define SETTINGS_DEFAULT_KD                 (0U)
@@ -143,18 +148,18 @@ static void mark_dirty_if_changed(uint16_t old_value, uint16_t new_value)
 void Settings_Init(void)
 {
     for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
-        s_channels[ch].preset[PRESET_1]  = 300;
-        s_channels[ch].preset[PRESET_2]  = 350;
-        s_channels[ch].preset[PRESET_3]  = 450;
-        s_channels[ch].target            = 300;  /* = preSet1; не задано явно пользователем */
-        s_channels[ch].presleep_temp     = 150;  /* температура  инструмента в presleep*/
-        s_channels[ch].slope             = 72;   /* номинал 0.072 * SETTINGS_SLOPE_SCALE */
-        s_channels[ch].bias              = 217;  /* номинал 21.7 * SETTINGS_BIAS_SCALE */
-        s_channels[ch].pre_sleep_timeout = 5;     /* presleep по умолчанию 5мин.*/
-        s_channels[ch].sleep_timeout     = 5;     /* sleep по умолчанию 5мин.*/
-        s_channels[ch].kp                = 0;     /* регулятор неактивен, пока не настроен */
-        s_channels[ch].ki                = 0;
-        s_channels[ch].kd                = 0;
+        s_channels[ch].preset[PRESET_1]  = SETTINGS_DEFAULT_PRESET_1;
+        s_channels[ch].preset[PRESET_2]  = SETTINGS_DEFAULT_PRESET_2;
+        s_channels[ch].preset[PRESET_3]  = SETTINGS_DEFAULT_PRESET_3;
+        s_channels[ch].target            = SETTINGS_DEFAULT_TARGET;
+        s_channels[ch].presleep_temp     = SETTINGS_DEFAULT_PRESLEEP_TEMP;
+        s_channels[ch].slope             = SETTINGS_DEFAULT_SLOPE;
+        s_channels[ch].bias              = SETTINGS_DEFAULT_BIAS;
+        s_channels[ch].pre_sleep_timeout = SETTINGS_DEFAULT_PRE_SLEEP_TIMEOUT;
+        s_channels[ch].sleep_timeout     = SETTINGS_DEFAULT_SLEEP_TIMEOUT;
+        s_channels[ch].kp                = SETTINGS_DEFAULT_KP;
+        s_channels[ch].ki                = SETTINGS_DEFAULT_KI;
+        s_channels[ch].kd                = SETTINGS_DEFAULT_KD;
     }
     s_flags = 0;
 
