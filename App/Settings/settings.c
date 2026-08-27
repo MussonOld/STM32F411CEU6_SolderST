@@ -570,6 +570,9 @@ void Settings_ResetUserDefaults(channel_id_t ch)
 {
     if (!channel_valid(ch)) return;
 
+    Settings_SetPreset(ch, PRESET_1, SETTINGS_DEFAULT_PRESET_1);
+    Settings_SetPreset(ch, PRESET_2, SETTINGS_DEFAULT_PRESET_2);
+    Settings_SetPreset(ch, PRESET_3, SETTINGS_DEFAULT_PRESET_3);
     Settings_SetPresleepTemp(ch, SETTINGS_DEFAULT_PRESLEEP_TEMP);
     Settings_SetPreSleepTimeout(ch, SETTINGS_DEFAULT_PRE_SLEEP_TIMEOUT);
     Settings_SetSleepTimeout(ch, SETTINGS_DEFAULT_SLEEP_TIMEOUT);

@@ -47,10 +47,23 @@ typedef enum {
     MENU_STATE_RESET_DONE,     /* сообщение "готово" после сброса, таймер MENU_RESET_DONE_MS, см. Menu_Poll() */
 } menu_internal_state_t;
 
-/* Упрощённый (не многофазный, в отличие от главного экрана) авто-повтор
- * при удержании UP/DN во время редактирования числового параметра */
-#define MENU_ACCEL_REPEAT_MS (150U)
-#define MENU_ACCEL_STEP      (10U)
+/* Авто-повтор при удержании UP/DN во время редактирования числового
+ * параметра — тот же многофазный алгоритм, что на главном экране (см.
+ * accel_apply_step() в fsm.c): шаг 1 десять итераций -> округление до
+ * ближайших 5 -> шаг 5 пять итераций -> округление до ближайших 10 -> шаг
+ * 10 без ограничения по числу итераций, до отпускания кнопки. */
+#define MENU_ACCEL_REPEAT_MS        (150U)
+#define MENU_ACCEL_STEP1_ITERATIONS (10U)
+#define MENU_ACCEL_STEP5_ITERATIONS (5U)
+#define MENU_ACCEL_STEP_1  (1U)
+#define MENU_ACCEL_STEP_5  (5U)
+#define MENU_ACCEL_STEP_10 (10U)
+
+typedef enum {
+    MENU_ACCEL_PHASE_STEP1 = 0,
+    MENU_ACCEL_PHASE_STEP5,
+    MENU_ACCEL_PHASE_STEP10,
+} menu_accel_phase_t;
 
 /* Длительность показа сообщения после выполненного сброса */
 #define MENU_RESET_DONE_MS (3000U)
@@ -59,9 +72,11 @@ static menu_level_t           s_level;
 static uint8_t                s_cursor;
 static menu_internal_state_t  s_state;
 
-static bool        s_accel_active;
-static button_id_t s_accel_button;
-static uint32_t    s_accel_last_tick;
+static bool               s_accel_active;
+static button_id_t        s_accel_button;
+static uint32_t           s_accel_last_tick;
+static menu_accel_phase_t s_accel_phase;
+static uint8_t            s_accel_iteration;
 
 static uint32_t    s_reset_done_start_tick;
 
@@ -73,72 +88,137 @@ static bool current_item_is_toggle(void)
 }
 
 /**
+ * @brief Прочитать текущее значение редактируемого сейчас пункта (клампинг
+ *        не нужен — читаем уже закламленное значение из Settings)
+ */
+static uint16_t get_current_value(channel_id_t ch)
+{
+    if (s_level == MENU_LEVEL_USER) {
+        switch (s_cursor) {
+            case ITEM_PRESLEEP_TIME: return Settings_GetPreSleepTimeout(ch);
+            case ITEM_PRESLEEP_TEMP: return Settings_GetPresleepTemp(ch);
+            case ITEM_STANDBY:       return Settings_GetSleepTimeout(ch);
+            default: return 0;
+        }
+    }
+    switch (s_cursor) {
+        case EXPERT_ITEM_KP:    return Settings_GetKp(ch);
+        case EXPERT_ITEM_KI:    return Settings_GetKi(ch);
+        case EXPERT_ITEM_KD:    return Settings_GetKd(ch);
+        case EXPERT_ITEM_SLOPE: return Settings_GetSlope(ch);
+        case EXPERT_ITEM_BIAS:  return Settings_GetBias(ch);
+        default: return 0;
+    }
+}
+
+/**
+ * @brief Записать значение в редактируемый сейчас пункт (клампинг — уже
+ *        внутри соответствующего Settings_Set*())
+ */
+static void set_current_value(channel_id_t ch, uint16_t value)
+{
+    if (s_level == MENU_LEVEL_USER) {
+        switch (s_cursor) {
+            case ITEM_PRESLEEP_TIME: Settings_SetPreSleepTimeout(ch, value); break;
+            case ITEM_PRESLEEP_TEMP: Settings_SetPresleepTemp(ch, value);    break;
+            case ITEM_STANDBY:       Settings_SetSleepTimeout(ch, value);    break;
+            default: break;
+        }
+        return;
+    }
+    switch (s_cursor) {
+        case EXPERT_ITEM_KP:    Settings_SetKp(ch, value);    break;
+        case EXPERT_ITEM_KI:    Settings_SetKi(ch, value);    break;
+        case EXPERT_ITEM_KD:    Settings_SetKd(ch, value);    break;
+        case EXPERT_ITEM_SLOPE: Settings_SetSlope(ch, value); break;
+        case EXPERT_ITEM_BIAS:  Settings_SetBias(ch, value);  break;
+        default: break;
+    }
+}
+
+/**
  * @brief Применить шаг к значению выбранного пункта (клампинг — уже внутри
  *        соответствующего Settings_Set*())
  */
 static void apply_step(int32_t sign, uint16_t step)
 {
     channel_id_t ch = InputFSM_GetActiveChannel();
-    int32_t delta = sign * (int32_t)step;
+    int32_t v = (int32_t)get_current_value(ch) + sign * (int32_t)step;
+    if (v < 0) v = 0;
+    set_current_value(ch, (uint16_t)v);
+}
 
-    if (s_level == MENU_LEVEL_USER) {
-        switch (s_cursor) {
-            case ITEM_PRESLEEP_TIME: {
-                int32_t v = (int32_t)Settings_GetPreSleepTimeout(ch) + delta;
-                if (v < 0) v = 0;
-                Settings_SetPreSleepTimeout(ch, (uint16_t)v);
-                break;
-            }
-            case ITEM_PRESLEEP_TEMP: {
-                int32_t v = (int32_t)Settings_GetPresleepTemp(ch) + delta;
-                if (v < 0) v = 0;
-                Settings_SetPresleepTemp(ch, (uint16_t)v);
-                break;
-            }
-            case ITEM_STANDBY: {
-                int32_t v = (int32_t)Settings_GetSleepTimeout(ch) + delta;
-                if (v < 0) v = 0;
-                Settings_SetSleepTimeout(ch, (uint16_t)v);
-                break;
-            }
-            default: break;
-        }
-        return;
+static uint16_t round_up_to_multiple(uint16_t value, uint16_t multiple)
+{
+    if (multiple == 0) return value;
+    uint16_t remainder = (uint16_t)(value % multiple);
+    if (remainder == 0) return value;
+    return (uint16_t)(value - remainder + multiple);
+}
+
+static uint16_t round_down_to_multiple(uint16_t value, uint16_t multiple)
+{
+    if (multiple == 0) return value;
+    uint16_t remainder = (uint16_t)(value % multiple);
+    return (uint16_t)(value - remainder); /* remainder==0 -> value без изменений */
+}
+
+/**
+ * @brief Применить один шаг авто-повтора UP/DN при редактировании,
+ *        продвинуть фазу ускорения (зеркало accel_apply_step() в fsm.c)
+ */
+static void accel_apply_step(void)
+{
+    int32_t sign = (s_accel_button == BUTTON_UP) ? 1 : -1;
+    uint16_t step;
+    uint16_t phase_limit;
+    uint16_t round_to;
+
+    switch (s_accel_phase) {
+        case MENU_ACCEL_PHASE_STEP1:
+            step = MENU_ACCEL_STEP_1;
+            phase_limit = MENU_ACCEL_STEP1_ITERATIONS;
+            round_to = 5;
+            break;
+        case MENU_ACCEL_PHASE_STEP5:
+            step = MENU_ACCEL_STEP_5;
+            phase_limit = MENU_ACCEL_STEP5_ITERATIONS;
+            round_to = 10;
+            break;
+        case MENU_ACCEL_PHASE_STEP10:
+        default:
+            step = MENU_ACCEL_STEP_10;
+            phase_limit = 0; /* без ограничения — держим шаг 10 до отпускания */
+            round_to = 0;
+            break;
     }
 
-    switch (s_cursor) {
-        case EXPERT_ITEM_KP: {
-            int32_t v = (int32_t)Settings_GetKp(ch) + delta;
-            if (v < 0) v = 0;
-            Settings_SetKp(ch, (uint16_t)v);
-            break;
+    apply_step(sign, step);
+
+    if (phase_limit != 0) {
+        s_accel_iteration++;
+        if (s_accel_iteration >= phase_limit) {
+            channel_id_t ch = InputFSM_GetActiveChannel();
+            uint16_t value_after = get_current_value(ch);
+            uint16_t rounded = (sign > 0) ? round_up_to_multiple(value_after, round_to)
+                                           : round_down_to_multiple(value_after, round_to);
+            set_current_value(ch, rounded);
+
+            s_accel_phase = (s_accel_phase == MENU_ACCEL_PHASE_STEP1) ? MENU_ACCEL_PHASE_STEP5
+                                                                       : MENU_ACCEL_PHASE_STEP10;
+            s_accel_iteration = 0;
         }
-        case EXPERT_ITEM_KI: {
-            int32_t v = (int32_t)Settings_GetKi(ch) + delta;
-            if (v < 0) v = 0;
-            Settings_SetKi(ch, (uint16_t)v);
-            break;
-        }
-        case EXPERT_ITEM_KD: {
-            int32_t v = (int32_t)Settings_GetKd(ch) + delta;
-            if (v < 0) v = 0;
-            Settings_SetKd(ch, (uint16_t)v);
-            break;
-        }
-        case EXPERT_ITEM_SLOPE: {
-            int32_t v = (int32_t)Settings_GetSlope(ch) + delta;
-            if (v < 0) v = 0;
-            Settings_SetSlope(ch, (uint16_t)v);
-            break;
-        }
-        case EXPERT_ITEM_BIAS: {
-            int32_t v = (int32_t)Settings_GetBias(ch) + delta;
-            if (v < 0) v = 0;
-            Settings_SetBias(ch, (uint16_t)v);
-            break;
-        }
-        default: break;
     }
+}
+
+static void accel_start(button_id_t btn)
+{
+    s_accel_active    = true;
+    s_accel_button    = btn;
+    s_accel_phase     = MENU_ACCEL_PHASE_STEP1;
+    s_accel_iteration = 0;
+    s_accel_last_tick = HAL_GetTick();
+    accel_apply_step(); /* первый шаг сразу, не дожидаясь интервала */
 }
 
 static void toggle_buzzer(void)
@@ -166,6 +246,8 @@ void Menu_Init(void)
     s_cursor = 0;
     s_state = MENU_STATE_LIST;
     s_accel_active = false;
+    s_accel_phase = MENU_ACCEL_PHASE_STEP1;
+    s_accel_iteration = 0;
 }
 
 menu_action_t Menu_HandleEvent(const button_event_t *ev)
@@ -201,10 +283,7 @@ menu_action_t Menu_HandleEvent(const button_event_t *ev)
             if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
                 apply_step(sign, 1);
             } else if (ev->type == BUTTON_EVENT_LONG_PRESS) {
-                s_accel_active = true;
-                s_accel_button = btn;
-                s_accel_last_tick = HAL_GetTick();
-                apply_step(sign, MENU_ACCEL_STEP); /* первый шаг сразу, не дожидаясь интервала */
+                accel_start(btn);
             }
             return MENU_ACTION_NONE;
         }
@@ -315,8 +394,7 @@ void Menu_Poll(void)
     }
     uint32_t now = HAL_GetTick();
     if ((now - s_accel_last_tick) >= MENU_ACCEL_REPEAT_MS) {
-        int32_t sign = (s_accel_button == BUTTON_UP) ? 1 : -1;
-        apply_step(sign, MENU_ACCEL_STEP);
+        accel_apply_step();
         s_accel_last_tick = now;
     }
 }
