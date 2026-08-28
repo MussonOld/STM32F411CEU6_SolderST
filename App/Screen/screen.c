@@ -75,6 +75,7 @@
 #include "sleep.h"
 #include "menu.h"
 #include <stddef.h>
+#include <stdio.h>
 #include "fixed_point.h"
 #include <stdint.h>
 #include <stdbool.h>
@@ -157,9 +158,18 @@ enum {
  * т.е. перед разделителем; иконка+таймер сна отсоса — у правого края
  * своей (правой) половины, т.е. у правого края экрана. Таймер всегда
  * выравнивается по правому краю (TextField_PrintfRightAligned), иконка —
- * статичный элемент с фиксированным x, рассчитанным в Screen_Init() по
- * замеренной ширине самого широкого реального текста таймера (см.
- * calc_sleep_icon_x()), чтобы не наезжать на текст при любой его длине.
+ * ПЕРЕСЧИТЫВАЕТСЯ на каждое обновление по ФАКТИЧЕСКОЙ ширине текущего
+ * текста таймера (см. update_sleep_status()), а не по одной статичной
+ * позиции под "худший случай" — раньше расчёт брал самый широкий из
+ * реальных текстов ("Предсон"/"99:59") и добавлял ручной сдвиг
+ * SLEEP_ICON_X_OFFSET вправо, к более узкому обычному "M:SS", но это
+ * означало, что при РЕАЛЬНОМ показе широкого текста ("Предсон") его
+ * прямоугольник перекрывал область иконки и стирал её пикселями текста
+ * (см. историю бага — "у второго таймера пропал циферблат"). Пересчёт по
+ * факту на каждый вызов гарантированно исключает такое наложение — зазор
+ * SLEEP_ICON_GAP_X между иконкой и текстом всегда одинаковый, независимо
+ * от длины текста. Работает независимо для каждого инструмента (своя
+ * половина экрана, свои координаты — см. вызовы update_sleep_status()).
  * Если сообщение EEPROM длинное — может визуально наехать на таймер
  * паяльника (он теперь ближе к центру, чем раньше); это приближённый
  * первый вариант, поправить координаты по факту на экране. */
@@ -167,13 +177,12 @@ enum {
 #define SCREEN_INFO_SLEEP_SOLDER_TEXT_RIGHT_EDGE_X   (SCREEN_DIVIDER_X0 - 6U)
 #define SCREEN_INFO_SLEEP_DESOLDER_TEXT_RIGHT_EDGE_X (SCREEN_WIDTH - 10U)
 
-/* ---- Иконка "циферблат" перед таймером сна (статичная, белая,
- * рисуется один раз в Screen_Init()/при смене режима экрана — как и
- * draw_divider(), НЕ перерисовывается каждый кадр) ---- */
+/* ---- Иконка "циферблат" перед таймером сна (белая; x пересчитывается
+ * динамически по факту текста в update_sleep_status(), см. выше — y и
+ * размер статичны) ---- */
 #define SLEEP_ICON_W     (14U)
 #define SLEEP_ICON_H     (14U)
 #define SLEEP_ICON_GAP_X (4U)  /* зазор между иконкой и текстом таймера */
-#define SLEEP_ICON_X_OFFSET (35U) /* сдвиг иконки вправо (к тексту) от расчётной позиции — подбирается по месту на экране */
 #define SLEEP_ICON_Y     (SCREEN_INFO_Y + 2U) /* вертикально примерно по центру строки таймера (шрифт 18) */
 #define COLOR_SLEEP_ICON DISPLAY_RGB565(255, 255, 255)
 
@@ -212,7 +221,7 @@ static channel_id_t s_last_active_channel;
 static bool s_last_fault[CHANNEL_COUNT]; /* чтобы перекрашивать title/current только при реальном изменении неисправности */
 static screen_mode_t s_last_screen_mode; /* чтобы очищать экран только при реальной смене режима, не каждый кадр */
 static sleep_mode_t s_last_sleep_mode[CHANNEL_COUNT]; /* чтобы перекрашивать таймер сна только при реальной смене режима */
-static uint16_t s_sleep_icon_x[CHANNEL_COUNT]; /* x иконки циферблата на канал, посчитан в Screen_Init() */
+static uint16_t s_sleep_icon_x[CHANNEL_COUNT]; /* x, по которому иконка РЕАЛЬНО сейчас нарисована на экране (актуален только пока s_sleep_icon_shown[ch]==true) — пересчитывается в update_sleep_status() */
 static bool s_sleep_icon_shown[CHANNEL_COUNT]; /* сейчас ли иконка реально нарисована на экране (скрыта, когда таймер не отображается) */
 
 /**
@@ -330,22 +339,6 @@ static void erase_sleep_icon(uint16_t x, uint16_t y)
 }
 
 /**
- * @brief Посчитать x иконки для канала так, чтобы она не наезжала на текст
- *        таймера при ЛЮБОЙ его длине — по замеренной ширине самого широкого
- *        реального текста таймера ("Предсон" и "99:59", см.
- *        update_sleep_status()) для этого шрифта. SLEEP_ICON_X_OFFSET —
- *        дополнительный ручной сдвиг вправо (к тексту) от этой позиции.
- */
-static uint16_t calc_sleep_icon_x(uint16_t text_right_edge_x)
-{
-    uint16_t w_word = Gfx_MeasureTextWidth(&AntiquaB_18_uni, "Предсон");
-    uint16_t w_time = Gfx_MeasureTextWidth(&AntiquaB_18_uni, "99:59");
-    uint16_t max_text_w = (w_word > w_time) ? w_word : w_time;
-
-    return (uint16_t)(text_right_edge_x - max_text_w - SLEEP_ICON_GAP_X - SLEEP_ICON_W + SLEEP_ICON_X_OFFSET);
-}
-
-/**
  * @brief Полностью стереть экран и заставить TextField перерисовать всё
  *        заново — вызывается при КАЖДОЙ смене режима экрана (главный <->
  *        сервисное меню, в обе стороны), чтобы не было наложения одного
@@ -388,12 +381,11 @@ void Screen_Init(void)
      * реальная позиция пересчитывается по факту при первом же
      * TextField_PrintfRightAligned() в Screen_Update(), как и у CURRENT/TARGET/пресетов. */
 
-    s_sleep_icon_x[CHANNEL_SOLDER]   = calc_sleep_icon_x(SCREEN_INFO_SLEEP_SOLDER_TEXT_RIGHT_EDGE_X);
-    s_sleep_icon_x[CHANNEL_DESOLDER] = calc_sleep_icon_x(SCREEN_INFO_SLEEP_DESOLDER_TEXT_RIGHT_EDGE_X);
-    /* Иконки не рисуем здесь принудительно — их видимость зависит от того,
-     * отображается ли таймер сна прямо сейчас; s_sleep_icon_shown[] по
-     * умолчанию false (статическая переменная), первый же
-     * update_sleep_status() в Screen_Update() нарисует иконку, если нужно. */
+    /* s_sleep_icon_x[]/s_sleep_icon_shown[] инициализировать здесь не нужно —
+     * обе статические (нули по умолчанию), а x всё равно пересчитывается
+     * заново на каждый вызов update_sleep_status(), прежде чем что-либо
+     * рисовать; первый же вызов из Screen_Update() нарисует иконку по
+     * месту, если нужно. */
 
     TextField_ConfigureLine(LINE_SOLDER_TITLE, SCREEN_TITLE_LEFT_X, SCREEN_TITLE_Y,
                              &AntiquaB_18_uni, COLOR_ACTIVE_TITLE, COLOR_BG);
@@ -490,7 +482,8 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
 }
 
 /**
- * @brief Обновить поле таймера сна одного канала в инфозоне (текст И цвет)
+ * @brief Обновить поле таймера сна одного канала в инфозоне (текст, цвет
+ *        И иконку циферблата)
  *
  * AWAKE (простаивает, до PRESLEEP)       -> "MM:SS", белый
  * AWAKE (не простаивает / выключено)     -> "" (пусто), белый
@@ -498,9 +491,12 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
  * PRESLEEP (SleepTimeout выключен)       -> "Предсон" (без времени — бессрочно), жёлтый
  * SLEEP                                   -> "Спит", красный
  *
- * Текст всегда выравнивается по правому краю right_edge_x — у своей
- * (статичной, белой) иконки циферблата слева от текста, см.
- * draw_sleep_icon()/erase_sleep_icon()/calc_sleep_icon_x().
+ * Текст всегда выравнивается по правому краю right_edge_x. Иконка
+ * циферблата ставится СЛЕВА от него вплотную (зазор SLEEP_ICON_GAP_X) —
+ * позиция пересчитывается тут же по РЕАЛЬНОЙ ширине текста buf (а не по
+ * заранее прикинутому "худшему случаю", см. докстринг констант выше),
+ * поэтому у любого по длине текста ("Спит"/"Предсон"/"M:SS"/"MM:SS")
+ * иконка гарантированно не перекрывается текстом.
  */
 static void update_sleep_status(channel_id_t ch, uint8_t line, uint16_t right_edge_x)
 {
@@ -509,31 +505,46 @@ static void update_sleep_status(channel_id_t ch, uint8_t line, uint16_t right_ed
     uint32_t min = remaining / 60U;
     uint32_t sec = remaining % 60U;
     bool timer_visible = true;
+    char buf[16];
 
     switch (mode) {
         case SLEEP_MODE_AWAKE:
             if (remaining == 0) {
-                TextField_PrintfRightAligned(line, right_edge_x, "");
+                buf[0] = '\0';
                 timer_visible = false; /* нечего показывать — таймер не идёт */
             } else {
-                TextField_PrintfRightAligned(line, right_edge_x, "%lu:%02lu", (unsigned long)min, (unsigned long)sec);
+                snprintf(buf, sizeof(buf), "%lu:%02lu", (unsigned long)min, (unsigned long)sec);
             }
             break;
         case SLEEP_MODE_PRESLEEP:
-            if (remaining == 0) TextField_PrintfRightAligned(line, right_edge_x, "Предсон");
-            else TextField_PrintfRightAligned(line, right_edge_x, "%lu:%02lu", (unsigned long)min, (unsigned long)sec);
+            if (remaining == 0) snprintf(buf, sizeof(buf), "Предсон");
+            else snprintf(buf, sizeof(buf), "%lu:%02lu", (unsigned long)min, (unsigned long)sec);
             break;
         case SLEEP_MODE_SLEEP:
-            TextField_PrintfRightAligned(line, right_edge_x, "Спит");
+            snprintf(buf, sizeof(buf), "Спит");
+            break;
+        default:
+            buf[0] = '\0';
             break;
     }
+    TextField_PrintfRightAligned(line, right_edge_x, "%s", buf);
 
     /* Иконка циферблата видна ровно тогда, когда рядом с ней есть что
-     * показать (см. докстринг файла выше) — синхронизируем её отдельно
-     * от цвета/текста, только по факту смены видимости. */
-    if (timer_visible != s_sleep_icon_shown[ch]) {
-        if (timer_visible) draw_sleep_icon(s_sleep_icon_x[ch], SLEEP_ICON_Y);
-        else erase_sleep_icon(s_sleep_icon_x[ch], SLEEP_ICON_Y);
+     * показать (см. докстринг функции выше). Позиция пересчитывается по
+     * факту ширины buf на каждый вызов — перерисовываем (стираем старую,
+     * рисуем новую), если видимость сменилась ИЛИ позиция реально
+     * сдвинулась (текст изменил длину, например "M:SS" -> "MM:SS" или
+     * "Предсон"); лишний вызов при неизменной позиции не делаем. */
+    uint16_t new_icon_x = s_sleep_icon_x[ch];
+    if (timer_visible) {
+        uint16_t text_w = Gfx_MeasureTextWidth(&AntiquaB_18_uni, buf);
+        new_icon_x = (uint16_t)(right_edge_x - text_w - SLEEP_ICON_GAP_X - SLEEP_ICON_W);
+    }
+    bool icon_moved = timer_visible && s_sleep_icon_shown[ch] && (new_icon_x != s_sleep_icon_x[ch]);
+    if (timer_visible != s_sleep_icon_shown[ch] || icon_moved) {
+        if (s_sleep_icon_shown[ch]) erase_sleep_icon(s_sleep_icon_x[ch], SLEEP_ICON_Y);
+        if (timer_visible) draw_sleep_icon(new_icon_x, SLEEP_ICON_Y);
+        s_sleep_icon_x[ch] = new_icon_x;
         s_sleep_icon_shown[ch] = timer_visible;
     }
 
