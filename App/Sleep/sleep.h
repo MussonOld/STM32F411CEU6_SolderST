@@ -2,15 +2,16 @@
  * @file sleep.h
  * @brief Таймеры простоя (Presleep/Sleep) по инструментам.
  *
- * Модель — два НЕЗАВИСИМЫХ порога на канал, отсчитываемых от одного и
- * того же момента начала простоя:
+ * Модель — два ПОСЛЕДОВАТЕЛЬНЫХ (двухступенчатых) порога на канал:
  *  - PreSleepTimeout: по истечении Settings_GetPreSleepTimeout() минут
- *    простоя канал переходит в PRESLEEP.
- *  - SleepTimeout: по истечении Settings_GetSleepTimeout() минут простоя
- *    канал переходит в SLEEP — НЕЗАВИСИМО от того, сработал ли PRESLEEP.
- *    Если SleepTimeout наступает раньше PreSleepTimeout (или
- *    PreSleepTimeout==0, т.е. выключен), канал уходит из AWAKE сразу в
- *    SLEEP, минуя PRESLEEP.
+ *    простоя (от его начала) канал переходит в PRESLEEP.
+ *  - SleepTimeout: вступает в игру только ПОСЛЕ PreSleepTimeout — по
+ *    истечении ещё Settings_GetSleepTimeout() минут (отсчитываются от
+ *    момента входа в PRESLEEP, "ждёт своей очереди") канал переходит в
+ *    SLEEP. Если PreSleepTimeout==0 (выключен), SleepTimeout считается
+ *    сразу от начала простоя, минуя PRESLEEP.
+ *    Если SleepTimeout==0 при работающем PreSleepTimeout — канал
+ *    зависает в PRESLEEP бессрочно.
  *
  * PRESLEEP: рабочая уставка (State setpoint) НЕ меняется, но эффективная
  * температура нагрева должна браться из Settings_GetPresleepTemp() — это
@@ -85,12 +86,14 @@ sleep_mode_t Sleep_GetMode(channel_id_t ch);
 /**
  * @brief Сколько секунд осталось до СЛЕДУЮЩЕГО перехода режима
  *
- * AWAKE  — до ближайшего из двух порогов (PreSleepTimeout/SleepTimeout),
- *          какой наступит раньше и включён; 0, если инструмент не
- *          простаивает ИЛИ оба порога выключены (0 минут, см. Settings).
- * PRESLEEP — до SLEEP (порог SleepTimeout); 0, если SleepTimeout
- *          выключен — канал останется в PRESLEEP бессрочно, дальше не
- *          считаем.
+ * AWAKE  — до ближайшего следующего события: если PreSleepTimeout
+ *          включён — до него (SleepTimeout ещё не считается — ждёт
+ *          своей очереди); иначе — до SleepTimeout, если он включён;
+ *          0, если инструмент не простаивает ИЛИ оба порога выключены.
+ * PRESLEEP — до SLEEP (порог SleepTimeout, отсчитываемый от момента
+ *          входа в PRESLEEP, а не от начала простоя); 0, если
+ *          SleepTimeout выключен — канал останется в PRESLEEP
+ *          бессрочно, дальше не считаем.
  * SLEEP  — уже финальный режим, дальше считать нечего, всегда 0.
  */
 uint32_t Sleep_GetRemainingSeconds(channel_id_t ch);

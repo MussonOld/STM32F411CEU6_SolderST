@@ -2,16 +2,13 @@
  * @file sleep.c
  * @brief Реализация sleep.h — дебаунс сырых входов + таймерная FSM на канал.
  *
- * Таймеры PreSleep/Sleep НЕЗАВИСИМЫ друг от друга: оба отсчитываются от
- * ОДНОГО И ТОГО ЖЕ момента начала простоя (idle_start_tick), а не один
- * от другого. Режим на каждом опросе выбирается прямым сравнением
- * накопленного времени простоя с обоими порогами — SLEEP проверяется
- * первым, чтобы он "победил", даже если SleepTimeout < PreSleepTimeout
- * или если PreSleepTimeout==0 (выключен) — тогда PRESLEEP просто
- * пропускается, канал уходит из AWAKE сразу в SLEEP по истечении
- * SleepTimeout. Симметрично: PreSleepTimeout может быть > 0 при
- * SleepTimeout==0 — тогда канал зависает в PRESLEEP бессрочно, как и
- * раньше.
+ * Таймеры PreSleep/Sleep ПОСЛЕДОВАТЕЛЬНЫ (двухступенчатые), а не
+ * независимы: PreSleepTimeout отсчитывается от начала простоя
+ * (idle_start_tick). SleepTimeout вступает в игру только ПОСЛЕ того, как
+ * отработал PreSleepTimeout — отсчитывается от момента входа в PRESLEEP,
+ * а не от начала простоя — либо сразу от начала простоя, если
+ * PreSleepTimeout==0 (выключен). Если PreSleepTimeout>0, а SleepTimeout==0
+ * — канал зависает в PRESLEEP бессрочно (SleepTimeout выключен).
  */
 
 #include "sleep.h"
@@ -27,7 +24,10 @@ typedef struct {
     bool     raw_idle_candidate;
     uint8_t  stable_count;
 
-    /* Единый момент начала простоя — от него независимо отсчитываются
+    /* Единый момент начала простоя — от него отсчитывается PreSleepTimeout
+     * (и SleepTimeout, если PreSleepTimeout==0 — см. poll_channel()); при
+     * работающем PreSleepTimeout SleepTimeout отсчитывается уже не от
+     * этой точки, а от момента входа в PRESLEEP (последовательно).
      * оба порога (PreSleepTimeout и SleepTimeout). 0 = не простаивает.
      * HAL_GetTick()==0 в первую миллисекунду после старта МК теоретически
      * не отличим от "не идёт" — не критично (окно в 1 мс, канал стартует
@@ -111,28 +111,40 @@ static void poll_channel(channel_id_t ch)
     uint32_t now = HAL_GetTick();
     uint32_t elapsed_ms = now - c->idle_start_tick; /* корректно и при переполнении HAL_GetTick() */
 
-    /* ---- Независимая проверка обоих порогов от ОДНОГО старта простоя ----
-     * SLEEP проверяется первым: если SleepTimeout короче (или PreSleepTimeout
-     * выключен), канал должен уйти в SLEEP напрямую из AWAKE, минуя PRESLEEP. */
-    uint16_t sleep_timeout_min = Settings_GetSleepTimeout(ch);
-    if (sleep_timeout_min > 0) {
-        uint32_t sleep_total_ms = (uint32_t)sleep_timeout_min * 60000UL;
-        if (elapsed_ms >= sleep_total_ms) {
-            c->mode = SLEEP_MODE_SLEEP;
-            return;
-        }
-    }
-
+    /* ---- Последовательная (двухступенчатая) проверка порогов ----
+     * PreSleepTimeout отсчитывается от начала простоя. SleepTimeout
+     * вступает в игру только ПОСЛЕ того, как отработал PreSleepTimeout
+     * (отсчитывается от момента входа в PRESLEEP, а не от начала простоя) —
+     * либо сразу от начала простоя, если PreSleepTimeout==0 (выключен). */
     uint16_t presleep_timeout_min = Settings_GetPreSleepTimeout(ch);
+    uint16_t sleep_timeout_min = Settings_GetSleepTimeout(ch);
+
     if (presleep_timeout_min > 0) {
         uint32_t presleep_total_ms = (uint32_t)presleep_timeout_min * 60000UL;
-        if (elapsed_ms >= presleep_total_ms) {
-            c->mode = SLEEP_MODE_PRESLEEP;
+        if (elapsed_ms < presleep_total_ms) {
+            c->mode = SLEEP_MODE_AWAKE;
             return;
         }
+        /* PreSleep уже отработал — SleepTimeout ждёт своей очереди и
+         * считается от МОМЕНТА ВХОДА В PRESLEEP, а не от начала простоя. */
+        if (sleep_timeout_min > 0) {
+            uint32_t elapsed_since_presleep_ms = elapsed_ms - presleep_total_ms;
+            uint32_t sleep_total_ms = (uint32_t)sleep_timeout_min * 60000UL;
+            c->mode = (elapsed_since_presleep_ms >= sleep_total_ms) ? SLEEP_MODE_SLEEP : SLEEP_MODE_PRESLEEP;
+        } else {
+            c->mode = SLEEP_MODE_PRESLEEP; /* SleepTimeout выключен — зависаем в PRESLEEP бессрочно */
+        }
+        return;
     }
 
-    c->mode = SLEEP_MODE_AWAKE;
+    /* PreSleepTimeout выключен — SleepTimeout считает прямо от начала простоя */
+    if (sleep_timeout_min > 0) {
+        uint32_t sleep_total_ms = (uint32_t)sleep_timeout_min * 60000UL;
+        c->mode = (elapsed_ms >= sleep_total_ms) ? SLEEP_MODE_SLEEP : SLEEP_MODE_AWAKE;
+        return;
+    }
+
+    c->mode = SLEEP_MODE_AWAKE; /* оба порога выключены */
 }
 
 void Sleep_Poll(void)
@@ -157,38 +169,31 @@ uint32_t Sleep_GetRemainingSeconds(channel_id_t ch)
 
     uint32_t now = HAL_GetTick();
     uint32_t elapsed_ms = now - c->idle_start_tick;
+    uint16_t presleep_min = Settings_GetPreSleepTimeout(ch);
+    uint16_t sleep_min = Settings_GetSleepTimeout(ch);
 
     if (c->mode == SLEEP_MODE_AWAKE) {
-        /* До ближайшего порога — который из двух наступит раньше и включён (>0) */
-        uint16_t sleep_min = Settings_GetSleepTimeout(ch);
-        uint16_t presleep_min = Settings_GetPreSleepTimeout(ch);
-
-        uint32_t candidate_ms = 0;
-        bool have_candidate = false;
-
-        if (sleep_min > 0) {
-            candidate_ms = (uint32_t)sleep_min * 60000UL;
-            have_candidate = true;
-        }
+        /* До ближайшего следующего события: PreSleep, если он включён —
+         * иначе (PreSleep выключен) сразу Sleep, если включён он. */
+        uint32_t candidate_ms;
         if (presleep_min > 0) {
-            uint32_t presleep_ms = (uint32_t)presleep_min * 60000UL;
-            if (!have_candidate || presleep_ms < candidate_ms) {
-                candidate_ms = presleep_ms;
-                have_candidate = true;
-            }
+            candidate_ms = (uint32_t)presleep_min * 60000UL;
+        } else if (sleep_min > 0) {
+            candidate_ms = (uint32_t)sleep_min * 60000UL;
+        } else {
+            return 0; /* оба порога выключены */
         }
-
-        if (!have_candidate) return 0; /* оба порога выключены */
         if (elapsed_ms >= candidate_ms) return 0; /* на грани перехода — следующий Sleep_Poll() переведёт режим */
         return (candidate_ms - elapsed_ms) / 1000U;
     }
 
     if (c->mode == SLEEP_MODE_PRESLEEP) {
-        uint16_t sleep_min = Settings_GetSleepTimeout(ch);
+        /* SleepTimeout считается от момента входа в PRESLEEP, т.е. от
+         * presleep_total_ms, а не от начала простоя — см. poll_channel(). */
         if (sleep_min == 0) return 0; /* выключено — останется в PRESLEEP бессрочно */
-        uint32_t total_ms = (uint32_t)sleep_min * 60000UL;
-        if (elapsed_ms >= total_ms) return 0;
-        return (total_ms - elapsed_ms) / 1000U;
+        uint32_t sleep_deadline_ms = (uint32_t)presleep_min * 60000UL + (uint32_t)sleep_min * 60000UL;
+        if (elapsed_ms >= sleep_deadline_ms) return 0;
+        return (sleep_deadline_ms - elapsed_ms) / 1000U;
     }
 
     /* SLEEP_MODE_SLEEP — финальный режим, считать больше нечего */
