@@ -147,6 +147,21 @@ uint16_t TextField_GetShownWidth(uint8_t line)
     return Gfx_MeasureTextWidth(s_lines[line].font, s_lines[line].shown_text);
 }
 
+bool TextField_IsSettled(uint8_t line)
+{
+    if (line >= TEXTFIELD_MAX_LINES || !s_lines[line].used) {
+        return true; /* нет такой строки — трогать нечего, не блокируем вызывающий код */
+    }
+    /* Пока задание для строки не завершилось, text и shown_text различаются
+     * (см. TextField_Process()/printf_at()) — как только gfx.c доигрывает
+     * задание до конца, TextField_Process() копирует снапшот в shown_text
+     * и они снова совпадают. Это тот же критерий, что использует сам
+     * TextField_Process() (через сравнение при старте нового задания), так
+     * что "settled" здесь означает буквально "ничего не рисуется/не ждёт
+     * рисования для этой строки прямо сейчас". */
+    return strncmp(s_lines[line].text, s_lines[line].shown_text, TEXTFIELD_LINE_TEXT_MAX) == 0;
+}
+
 void TextField_SetColors(uint8_t line, display_color_t fg, display_color_t bg)
 {
     if (line >= TEXTFIELD_MAX_LINES || !s_lines[line].used) {
