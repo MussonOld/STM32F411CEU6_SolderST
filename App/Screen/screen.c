@@ -7,8 +7,8 @@
  *                паяльника (справа от иконки, у своего края — перед
  *                разделителем), справа — иконка+таймер отсоса (у правого
  *                края экрана), Sleep_GetMode()/Sleep_GetRemainingSeconds(),
- *                шрифт AntiquaB_18_uni, цвет по режиму (белый=AWAKE/
- *                PRESLEEP, жёлтый=SLEEP); иконка циферблата
+ *                шрифт AntiquaB_18_uni, цвет по режиму (белый=AWAKE,
+ *                жёлтый=PRESLEEP, красный=SLEEP); иконка циферблата
  *                показывается ТОЛЬКО когда рядом с ней есть текст таймера —
  *                скрыта в AWAKE, когда таймер не идёт (remaining==0), см.
  *                update_sleep_status()/s_sleep_icon_shown[]; по центру —
@@ -200,8 +200,8 @@ enum {
 #define COLOR_INFO             DISPLAY_RGB565(255, 255, 255)
 
 #define COLOR_SLEEP_AWAKE    COLOR_INFO                       /* белый — обычный обратный отсчёт до PRESLEEP */
-#define COLOR_SLEEP_PRESLEEP COLOR_INFO                       /* белый */
-#define COLOR_SLEEP_SLEEP    DISPLAY_RGB565(255, 210, 0)      /* жёлтый */
+#define COLOR_SLEEP_PRESLEEP DISPLAY_RGB565(255, 210, 0)      /* жёлтый */
+#define COLOR_SLEEP_SLEEP    DISPLAY_RGB565(255, 40, 40)      /* красный */
 
 #define COLOR_MENU_TITLE    DISPLAY_RGB565(255, 255, 255)
 #define COLOR_MENU_NORMAL   DISPLAY_RGB565(180, 180, 180)

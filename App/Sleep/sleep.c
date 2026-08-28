@@ -184,7 +184,15 @@ uint32_t Sleep_GetRemainingSeconds(channel_id_t ch)
             return 0; /* оба порога выключены */
         }
         if (elapsed_ms >= candidate_ms) return 0; /* на грани перехода — следующий Sleep_Poll() переведёт режим */
-        return (candidate_ms - elapsed_ms) / 1000U;
+        /* Округление ВВЕРХ (не вниз): иначе на последней неполной секунде
+         * до срабатывания таймера (elapsed_ms и candidate_ms отличаются
+         * меньше чем на 1000мс) remaining уже становится 0 при ещё не
+         * переключившемся режиме — экран трактует это как "таймер не
+         * идёт" и на секунду прячет иконку+текст ДО того, как следующий
+         * Sleep_Poll() (10мс) реально сменит режим. Округление вверх
+         * держит remaining>=1, пока elapsed_ms < candidate_ms, и переход
+         * между таймерами становится бесшовным. */
+        return ((candidate_ms - elapsed_ms) + 999U) / 1000U;
     }
 
     if (c->mode == SLEEP_MODE_PRESLEEP) {
@@ -193,7 +201,10 @@ uint32_t Sleep_GetRemainingSeconds(channel_id_t ch)
         if (sleep_min == 0) return 0; /* выключено — останется в PRESLEEP бессрочно */
         uint32_t sleep_deadline_ms = (uint32_t)presleep_min * 60000UL + (uint32_t)sleep_min * 60000UL;
         if (elapsed_ms >= sleep_deadline_ms) return 0;
-        return (sleep_deadline_ms - elapsed_ms) / 1000U;
+        /* Та же причина округления вверх, что и в ветке AWAKE выше — иначе
+         * "Предсон" (remaining==0, см. update_sleep_status()) мигал бы на
+         * последней секунде PRESLEEP вместо "0:01". */
+        return ((sleep_deadline_ms - elapsed_ms) + 999U) / 1000U;
     }
 
     /* SLEEP_MODE_SLEEP — финальный режим, считать больше нечего */
