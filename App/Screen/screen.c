@@ -9,9 +9,11 @@
  *                края экрана), Sleep_GetMode()/Sleep_GetRemainingSeconds(),
  *                шрифт AntiquaB_18_uni, цвет по режиму (белый=AWAKE,
  *                жёлтый=PRESLEEP, красный=SLEEP); иконка циферблата
- *                показывается ТОЛЬКО когда рядом с ней есть текст таймера —
- *                скрыта в AWAKE, когда таймер не идёт (remaining==0), см.
- *                update_sleep_status()/s_sleep_icon_shown[]; по центру —
+ *                показывается ТОЛЬКО пока идёт обратный отсчёт (AWAKE/
+ *                PRESLEEP) — скрыта и в AWAKE, когда таймер не идёт
+ *                (remaining==0), и в SLEEP ("Спит" показывается без
+ *                иконки — инструмент уже спит, отсчитывать больше нечего),
+ *                см. update_sleep_status()/s_sleep_icon_shown[]; по центру —
  *                сообщение EEPROM (Error_GetInfoZoneMessage()): транзитное
  *                ("сброшено на заводские", 5 сек) либо авария (весь
  *                сеанс); пусто, если показывать нечего.
@@ -303,8 +305,18 @@ static const uint16_t s_sleep_icon_bitmap[SLEEP_ICON_H] = {
  *        draw_divider(): редкое событие, старт/смена режима экрана, не
  *        каждый кадр). Буфер на стеке — функция дожидается завершения DMA
  *        перед возвратом, буфер не переживёт функцию иначе.
+ *
+ * @return true, если реально нарисована (Display_SetWindow() успешен).
+ *         false — окно не выставилось (например, DISPLAY_ERROR); ничего
+ *         не нарисовано. Вызывающий код (update_sleep_status()) ОБЯЗАН
+ *         проверять результат и не фиксировать s_sleep_icon_shown[]/
+ *         s_sleep_icon_x[] как "нарисовано", если он false — иначе
+ *         состояние разъезжается с реальным экраном НАВСЕГДА (следующий
+ *         вызов решит, что иконка уже там, где её на самом деле нет, и
+ *         не предпримет повторной попытки) — см. историю бага "у второго
+ *         таймера пропал циферблат".
  */
-static void draw_sleep_icon(uint16_t x, uint16_t y)
+static bool draw_sleep_icon(uint16_t x, uint16_t y)
 {
     display_color_t buf[SLEEP_ICON_W * SLEEP_ICON_H];
 
@@ -317,10 +329,12 @@ static void draw_sleep_icon(uint16_t x, uint16_t y)
     }
 
     while (Display_IsBusy()) { }
-    if (Display_SetWindow(x, y, (uint16_t)(x + SLEEP_ICON_W - 1U), (uint16_t)(y + SLEEP_ICON_H - 1U)) == DISPLAY_OK) {
-        Display_WritePixelsDMA(buf, (uint32_t)SLEEP_ICON_W * SLEEP_ICON_H);
-        while (Display_IsBusy()) { }
+    if (Display_SetWindow(x, y, (uint16_t)(x + SLEEP_ICON_W - 1U), (uint16_t)(y + SLEEP_ICON_H - 1U)) != DISPLAY_OK) {
+        return false;
     }
+    Display_WritePixelsDMA(buf, (uint32_t)SLEEP_ICON_W * SLEEP_ICON_H);
+    while (Display_IsBusy()) { }
+    return true;
 }
 
 /**
@@ -328,14 +342,19 @@ static void draw_sleep_icon(uint16_t x, uint16_t y)
  *        отображается (см. update_sleep_status()). Тот же блокирующий
  *        паттерн, что и draw_sleep_icon() — редкое событие (смена
  *        видимости), не каждый кадр.
+ *
+ * @return true, если реально стёрта — тот же контракт и та же причина,
+ *         что и у draw_sleep_icon() (см. её докстринг).
  */
-static void erase_sleep_icon(uint16_t x, uint16_t y)
+static bool erase_sleep_icon(uint16_t x, uint16_t y)
 {
     while (Display_IsBusy()) { }
-    if (Display_SetWindow(x, y, (uint16_t)(x + SLEEP_ICON_W - 1U), (uint16_t)(y + SLEEP_ICON_H - 1U)) == DISPLAY_OK) {
-        Display_FillColorDMA(COLOR_BG, (uint32_t)SLEEP_ICON_W * SLEEP_ICON_H);
-        while (Display_IsBusy()) { }
+    if (Display_SetWindow(x, y, (uint16_t)(x + SLEEP_ICON_W - 1U), (uint16_t)(y + SLEEP_ICON_H - 1U)) != DISPLAY_OK) {
+        return false;
     }
+    Display_FillColorDMA(COLOR_BG, (uint32_t)SLEEP_ICON_W * SLEEP_ICON_H);
+    while (Display_IsBusy()) { }
+    return true;
 }
 
 /**
@@ -485,11 +504,12 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
  * @brief Обновить поле таймера сна одного канала в инфозоне (текст, цвет
  *        И иконку циферблата)
  *
- * AWAKE (простаивает, до PRESLEEP)       -> "MM:SS", белый
- * AWAKE (не простаивает / выключено)     -> "" (пусто), белый
- * PRESLEEP (до SLEEP)                    -> "MM:SS", жёлтый
- * PRESLEEP (SleepTimeout выключен)       -> "Предсон" (без времени — бессрочно), жёлтый
- * SLEEP                                   -> "Спит", красный
+ * AWAKE (простаивает, до PRESLEEP)       -> "MM:SS" + иконка, белый
+ * AWAKE (не простаивает / выключено)     -> "" (пусто), без иконки, белый
+ * PRESLEEP (до SLEEP)                    -> "MM:SS" + иконка, жёлтый
+ * PRESLEEP (SleepTimeout выключен)       -> "Предсон" + иконка (без времени — бессрочно), жёлтый
+ * SLEEP                                   -> "Спит", БЕЗ иконки (отсчитывать
+ *                                            больше нечего — инструмент уже спит), красный
  *
  * Текст всегда выравнивается по правому краю right_edge_x. Иконка
  * циферблата ставится СЛЕВА от него вплотную (зазор SLEEP_ICON_GAP_X) —
@@ -529,6 +549,7 @@ static void update_sleep_status(channel_id_t ch, uint8_t line, uint16_t right_ed
             break;
         case SLEEP_MODE_SLEEP:
             snprintf(buf, sizeof(buf), "Спит");
+            timer_visible = false; /* инструмент уже спит — отсчитывать нечего, иконку убираем (текст остаётся) */
             break;
         default:
             buf[0] = '\0';
@@ -564,10 +585,24 @@ static void update_sleep_status(channel_id_t ch, uint8_t line, uint16_t right_ed
     }
     bool icon_moved = timer_visible && s_sleep_icon_shown[ch] && (new_icon_x != s_sleep_icon_x[ch]);
     if (timer_visible != s_sleep_icon_shown[ch] || icon_moved) {
-        if (s_sleep_icon_shown[ch]) erase_sleep_icon(s_sleep_icon_x[ch], SLEEP_ICON_Y);
-        if (timer_visible) draw_sleep_icon(new_icon_x, SLEEP_ICON_Y);
-        s_sleep_icon_x[ch] = new_icon_x;
-        s_sleep_icon_shown[ch] = timer_visible;
+        /* Состояние (s_sleep_icon_shown[]/s_sleep_icon_x[]) фиксируем ТОЛЬКО
+         * по факту успеха каждой операции — не "оптимистично". Если
+         * стирание/рисование не удалось, оставляем состояние как было
+         * (или как получилось после частичного успеха), чтобы следующий
+         * вызов update_sleep_status() сам повторил недостающий шаг, а не
+         * решил, что экран уже соответствует желаемому виду. Без этого
+         * несовпадение остаётся НАВСЕГДА — та самая пропавшая иконка. */
+        if (s_sleep_icon_shown[ch]) {
+            if (erase_sleep_icon(s_sleep_icon_x[ch], SLEEP_ICON_Y)) {
+                s_sleep_icon_shown[ch] = false; /* точно стёрта, старое место чистое */
+            }
+        }
+        if (timer_visible && !s_sleep_icon_shown[ch]) {
+            if (draw_sleep_icon(new_icon_x, SLEEP_ICON_Y)) {
+                s_sleep_icon_x[ch] = new_icon_x;
+                s_sleep_icon_shown[ch] = true;
+            }
+        }
     }
 
     if (mode != s_last_sleep_mode[ch]) {
