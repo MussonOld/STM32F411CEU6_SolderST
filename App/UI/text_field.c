@@ -134,6 +134,19 @@ void TextField_PrintfRightAligned(uint8_t line, uint16_t right_edge_x, const cha
     va_end(args);
 }
 
+uint16_t TextField_GetShownWidth(uint8_t line)
+{
+    if (line >= TEXTFIELD_MAX_LINES || !s_lines[line].used) {
+        return 0;
+    }
+    /* Ширина именно shown_text (что физически ещё на экране), не text
+     * (желаемое) — см. докстринг в text_field.h. Тем же измерением
+     * (Gfx_MeasureTextWidth) пользуется и gfx.c при расчёте прямоугольника
+     * стирания в Gfx_DrawTextStart(), так что значение совпадает 1-в-1 с
+     * тем, что реально будет стёрто. */
+    return Gfx_MeasureTextWidth(s_lines[line].font, s_lines[line].shown_text);
+}
+
 void TextField_SetColors(uint8_t line, display_color_t fg, display_color_t bg)
 {
     if (line >= TEXTFIELD_MAX_LINES || !s_lines[line].used) {

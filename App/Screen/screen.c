@@ -497,6 +497,13 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
  * заранее прикинутому "худшему случаю", см. докстринг констант выше),
  * поэтому у любого по длине текста ("Спит"/"Предсон"/"M:SS"/"MM:SS")
  * иконка гарантированно не перекрывается текстом.
+ *
+ * Позиция считается по БОЛЬШЕЙ из двух ширин — новый текст И то, что ещё
+ * физически показано на экране (TextField_GetShownWidth()) — иначе при
+ * сокращении текста (широкий -> узкий, тот же кадр) иконка попадает под
+ * прямоугольник стирания СТАРОГО (более широкого) текста, который
+ * TextField_Process() выполнит следом же за этим вызовом (см. историю
+ * бага и докстринг TextField_GetShownWidth() в text_field.h).
  */
 static void update_sleep_status(channel_id_t ch, uint8_t line, uint16_t right_edge_x)
 {
@@ -537,8 +544,23 @@ static void update_sleep_status(channel_id_t ch, uint8_t line, uint16_t right_ed
      * "Предсон"); лишний вызов при неизменной позиции не делаем. */
     uint16_t new_icon_x = s_sleep_icon_x[ch];
     if (timer_visible) {
+        /* Иконка рисуется здесь СИНХРОННО (блокирующе), а стирание СТАРОГО
+         * прямоугольника этой же текстовой строки (TextField_PrintfRightAligned()
+         * чуть выше уже пометил её грязной) произойдёт ПОЗЖЕ, в
+         * TextField_Process() того же прохода главного цикла — по ширине
+         * того, что ФАКТИЧЕСКИ ещё показано на экране (shown_text), а не по
+         * новому buf. Если старый показанный текст был шире нового (переход,
+         * например, "Предсон" -> "12:34"), его прямоугольник стирания
+         * простирается левее позиции, посчитанной только по новой ширине,
+         * и стирает свежерисованную иконку в тот же кадр (см. историю бага —
+         * "у второго таймера пропал циферблат"). Берём ширину по большему
+         * из двух — новый текст и то, что ещё реально на экране — чтобы
+         * иконка гарантированно оставалась вне ЛЮБОГО прямоугольника
+         * стирания, ожидающего эту строку. */
         uint16_t text_w = Gfx_MeasureTextWidth(&AntiquaB_18_uni, buf);
-        new_icon_x = (uint16_t)(right_edge_x - text_w - SLEEP_ICON_GAP_X - SLEEP_ICON_W);
+        uint16_t shown_w = TextField_GetShownWidth(line);
+        uint16_t safe_w = (shown_w > text_w) ? shown_w : text_w;
+        new_icon_x = (uint16_t)(right_edge_x - safe_w - SLEEP_ICON_GAP_X - SLEEP_ICON_W);
     }
     bool icon_moved = timer_visible && s_sleep_icon_shown[ch] && (new_icon_x != s_sleep_icon_x[ch]);
     if (timer_visible != s_sleep_icon_shown[ch] || icon_moved) {
