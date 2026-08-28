@@ -27,7 +27,7 @@
 - Пресеты: preSet1=300, preSet2=350, preSet3=450 °C (оба канала)
 - target = 300 (= preSet1)
 - presleepTemp = 150 °C
-- preSleepTimeout = sleepTimeout = 0 мин (sleep выключен, пока логика не реализована)
+- preSleepTimeout = sleepTimeout = 10 мин
 - Kp = Ki = Kd = 0 (регулятор неактивен, пока не настроен)
 - slope/bias — номиналы из формулы датчика (72 / 217)
 - flags = 0

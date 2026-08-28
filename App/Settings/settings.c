@@ -67,8 +67,8 @@ static uint32_t s_last_change_tick = 0;
 #define SETTINGS_DEFAULT_PRESET_3           (450U)
 #define SETTINGS_DEFAULT_TARGET             (SETTINGS_DEFAULT_PRESET_1) /* не задано явно пользователем */
 #define SETTINGS_DEFAULT_PRESLEEP_TEMP      (150U)
-#define SETTINGS_DEFAULT_PRE_SLEEP_TIMEOUT  (5U)
-#define SETTINGS_DEFAULT_SLEEP_TIMEOUT      (5U)
+#define SETTINGS_DEFAULT_PRE_SLEEP_TIMEOUT  (10U)
+#define SETTINGS_DEFAULT_SLEEP_TIMEOUT      (10U)
 #define SETTINGS_DEFAULT_SLOPE              (72U)  /* номинал 0.072 * SETTINGS_SLOPE_SCALE */
 #define SETTINGS_DEFAULT_BIAS               (217U) /* номинал 21.7 * SETTINGS_BIAS_SCALE */
 #define SETTINGS_DEFAULT_KP                 (0U)

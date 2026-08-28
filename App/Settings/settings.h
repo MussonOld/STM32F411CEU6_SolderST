@@ -115,8 +115,9 @@ typedef enum {
  * @brief Установить значения по умолчанию всем каналам (не трогает EEPROM)
  *
  * Дефолты: preSet1=300, preSet2=350, preSet3=450 °C (оба инструмента),
- * target=300 (=preSet1), presleepTemp=150 °C, preSleepTimeout=sleepTimeout=0 мин
- * (sleep выключен, пока логика не реализована), Kp=Ki=Kd=0 (регулятор
+ * target=300 (=preSet1), presleepTemp=150 °C, preSleepTimeout=sleepTimeout=10 мин
+ * (см. SETTINGS_DEFAULT_PRE_SLEEP_TIMEOUT/SETTINGS_DEFAULT_SLEEP_TIMEOUT в
+ * settings.c), Kp=Ki=Kd=0 (регулятор
  * неактивен, пока не настроен), slope/bias — номиналы из формулы датчика
  * (72 / 217, см. SETTINGS_SLOPE_SCALE/SETTINGS_BIAS_SCALE), flags=0.
  * Значения без явного задания от пользователя помечены в реализации как
