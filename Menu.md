@@ -62,6 +62,10 @@
 | `Menu_IsEditing()` | true — значение выбранного пункта сейчас редактируется (UP/DN меняют его, а не курсор) |
 | `Menu_IsShowingExpertWarning()` | true — показывается предупреждение перед первым входом в Expert |
 | `Menu_GetExpertWarningLine(line_index)` | Строка предупреждения Expert, index 0..2 (три строки текста) |
+| `Menu_IsShowingResetConfirm()` | true — показывается промт подтверждения пункта "Сброс" (после короткого SET2 на нём) |
+| `Menu_GetResetConfirmLine(line_index)` | Строка промта подтверждения, index 0..2 (три строки текста) |
+| `Menu_IsShowingResetDone()` | true — показывается сообщение "готово" после выполненного сброса, на `MENU_RESET_DONE_MS` |
+| `Menu_GetResetDoneLine(line_index)` | Строка сообщения "готово", index 0 (одна строка текста, остальные — пустая строка) |
 
 ## Связь с другими модулями
 
