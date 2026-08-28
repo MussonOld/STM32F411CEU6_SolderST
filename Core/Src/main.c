@@ -140,6 +140,12 @@ int main(void)
    * main.c) — += period, а не = HAL_GetTick(). */
   uint32_t poll10ms_last_tick = HAL_GetTick();
 
+  /* Отдельный дрейф-фри гейт на SCREEN_UPDATE_MS (30мс) для Screen_Update() —
+   * период другой, чем у 10мс-блока выше, поэтому отдельная переменная и
+   * отдельный if, а не общий счётчик. TextField_Process() — без гейта, см.
+   * ниже. */
+  uint32_t screen_update_last_tick = HAL_GetTick();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -159,8 +165,11 @@ int main(void)
     Settings_Poll();  /* отложенная запись в EEPROM — сама решает, когда физически писать */
     Error_Poll();     /* таймер транзитного сообщения EEPROM в инфозоне */
 
-    Screen_Update();  /* обновить содержимое строк из State/Settings/InputFSM */
-    TextField_Process(); /* рендер — сам по себе, догоняет данные по мере готовности DMA */
+    if (HAL_GetTick() - screen_update_last_tick >= SCREEN_UPDATE_MS) {
+        screen_update_last_tick += SCREEN_UPDATE_MS;
+        Screen_Update();  /* обновить содержимое строк из State/Settings/InputFSM */
+    }
+    TextField_Process(); /* рендер — сам по себе, догоняет данные по мере готовности DMA, без гейта */
   }
   /* USER CODE END 3 */
 }
