@@ -203,6 +203,60 @@ uint16_t Gfx_MeasureTextWidth(const font_t *font, const char *text)
     return width;
 }
 
+/**
+ * @brief Реальный правый край текста, если бы он был нарисован с курсора
+ *        x=0 — то есть максимум по ВСЕМ символам от (накопленный advance
+ *        до символа + cell_right ЭТОГО символа), а не просто сумма advance
+ *        (см. Gfx_MeasureTextWidth()).
+ *
+ * У большинства глифов "чернила" укладываются в свой advance (xoff+width
+ * <= advance), и тогда это совпадает с Gfx_MeasureTextWidth(). Но у
+ * некоторых (например "4" в AntiquaB_18_uni: width=10, xoff=0, advance=9)
+ * штрих на 1 столбец шире собственного advance — submit_glyph() рисует
+ * этот столбец (её cell_right = max(xoff+width, advance)), физически он
+ * оказывается на экране, а Gfx_MeasureTextWidth() (сумма advance) его не
+ * учитывает. Нужна ИМЕННО эта функция — не Gfx_MeasureTextWidth() — там,
+ * где ширина текста определяет размер прямоугольника СТИРАНИЯ (см.
+ * Gfx_DrawTextStart()): иначе прямоугольник стирания на 1px уже реально
+ * нарисованного, и после такого символа остаётся столбец-призрак (не
+ * стирается никогда, пока какой-то другой символ не перекроет ту же
+ * позицию). Для позиционирования (центровка/выравнивание — где нужен
+ * именно "курсорный" типографский шаг, а не bbox чернил) по-прежнему
+ * нужна Gfx_MeasureTextWidth(), не эта функция.
+ */
+static uint16_t measure_real_right_edge(const font_t *font, const char *text)
+{
+    uint16_t cursor_x = 0;
+    uint16_t max_right = 0;
+    const char *cursor = text;
+
+    for (;;) {
+        uint32_t cp = utf8_next(&cursor);
+        if (cp == 0) {
+            break;
+        }
+        int idx = find_glyph_index(font, cp);
+        if (idx < 0) {
+            continue; /* см. Gfx_MeasureTextWidth() — курсор не двигаем */
+        }
+        uint8_t  width   = font->widths[idx];
+        int8_t   xoff    = font->xoffset[idx];
+        uint8_t  advance = font->dwidth[idx];
+
+        /* Та же формула, что и cell_right в submit_glyph() — реальный
+         * правый край ЭТОГО символа относительно его собственного x. */
+        int16_t cell_right = (width == 0) ? (int16_t)advance
+                            : (((int16_t)xoff + width > advance) ? ((int16_t)xoff + width) : advance);
+        uint16_t right_edge = (uint16_t)(cursor_x + cell_right);
+        if (right_edge > max_right) {
+            max_right = right_edge;
+        }
+        cursor_x = (uint16_t)(cursor_x + advance);
+    }
+
+    return max_right;
+}
+
 Gfx_JobState_t Gfx_DrawTextStart(uint16_t x, uint16_t y, const char *text,
                                   uint16_t prev_x, const char *prev_text,
                                   const font_t *font,
@@ -225,7 +279,10 @@ Gfx_JobState_t Gfx_DrawTextStart(uint16_t x, uint16_t y, const char *text,
     s_job.erase_remaining_px = 0;
 
     if (prev_text && prev_text[0] != '\0') {
-        uint16_t old_w = Gfx_MeasureTextWidth(font, prev_text);
+        /* Не Gfx_MeasureTextWidth() — нужен реальный "чернильный" правый
+         * край, а не сумма advance, иначе после символов с overhang
+         * (см. measure_real_right_edge()) остаётся столбец-призрак. */
+        uint16_t old_w = measure_real_right_edge(font, prev_text);
 
         /* Реально нарисованная (и потому подлежащая стиранию) ширина не
          * может выходить за правый край экрана — submit_glyph() тихо
