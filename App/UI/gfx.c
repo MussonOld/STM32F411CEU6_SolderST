@@ -100,11 +100,11 @@ static int find_glyph_index(const font_t *font, uint32_t codepoint)
  * предположение когда-нибудь нарушится, GFX не должен продолжать работу с
  * ложным ощущением, что DMA запущен.
  *
- * При отказе переводит текущее задание в GFX_JOB_ERROR — дальнейшая
+ * При отказе переводит текущее задание в GFX_JOB_ERROR_RETRY — дальнейшая
  * обработка задания останавливается на стороне вызывающего кода (см.
  * Gfx_Process()), не отправляем новые транши поверх уже неисправной шины.
  *
- * Та же модель (переход в GFX_JOB_ERROR при отказе) вручную повторена на
+ * Та же модель (переход в GFX_JOB_ERROR_RETRY при отказе) вручную повторена на
  * каждом вызове Display_SetWindow() ниже — исторически её отказ везде
  * молча проглатывался (символ просто не рисовался, курсор всё равно
  * двигался дальше, будто всё в порядке), пока это не поправили; отдельного
@@ -116,7 +116,7 @@ static bool write_pixels_or_fail(const display_color_t *data, uint32_t count)
 {
     Display_Status_t status = Display_WritePixelsDMA(data, count);
     if (status != DISPLAY_OK) {
-        s_job.state = GFX_JOB_ERROR;
+        s_job.state = GFX_JOB_ERROR_RETRY;
         return false;
     }
     return true;
@@ -154,7 +154,7 @@ static void draw_glyph_overflow_marker(uint16_t x, uint16_t y, uint16_t advance,
         s_glyph_buffer[i] = fg; /* сплошной маркер — не пытаемся имитировать форму символа */
     }
     if (Display_SetWindow(x, y, x + w - 1, y + h - 1) != DISPLAY_OK) {
-        s_job.state = GFX_JOB_ERROR;
+        s_job.state = GFX_JOB_ERROR_RETRY;
         return; /* отказ — не рисуем; состояние увидит Gfx_Process() у вызывающего submit_glyph() */
     }
     write_pixels_or_fail(s_glyph_buffer, px_count);
@@ -188,7 +188,7 @@ static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx
             s_glyph_buffer[i] = bg;
         }
         if (Display_SetWindow(x, y, x + advance - 1, y + font->height - 1) != DISPLAY_OK) {
-            s_job.state = GFX_JOB_ERROR;
+            s_job.state = GFX_JOB_ERROR_RETRY;
             return advance; /* курсор всё равно двигаем; Gfx_Process() проверит состояние сразу после возврата */
         }
         write_pixels_or_fail(s_glyph_buffer, px_count);
@@ -253,7 +253,7 @@ static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx
     uint16_t draw_y = y;
 
     if (Display_SetWindow(draw_x, draw_y, draw_x + cell_width - 1, draw_y + font->height - 1) != DISPLAY_OK) {
-        s_job.state = GFX_JOB_ERROR;
+        s_job.state = GFX_JOB_ERROR_RETRY;
         return advance; /* курсор всё равно двигаем; Gfx_Process() проверит состояние сразу после возврата */
     }
     write_pixels_or_fail(s_glyph_buffer, pixel_count); /* асинхронно, не ждём; отказ запуска — см. write_pixels_or_fail() */
@@ -351,7 +351,7 @@ Gfx_JobState_t Gfx_DrawTextStart(uint16_t x, uint16_t y, const char *text,
         return GFX_JOB_BUSY; /* предыдущее задание ещё выполняется — отклоняем новое */
     }
     if (!text || !font) {
-        return GFX_JOB_ERROR;
+        return GFX_JOB_ERROR_FATAL; /* баг вызывающего кода — не транзиентно, ретраить бессмысленно */
     }
 
     s_job.cursor = text;
@@ -395,14 +395,14 @@ Gfx_JobState_t Gfx_DrawTextStart(uint16_t x, uint16_t y, const char *text,
              * тут же перерисовывается заново) — цена за простоту и
              * корректность во всех случаях сразу. */
             if (Display_SetWindow(prev_x, y, prev_x + old_w - 1, y + font->height - 1) != DISPLAY_OK) {
-                s_job.state = GFX_JOB_ERROR; /* раньше здесь молча пропускалось стирание и функция всё равно возвращала GFX_JOB_BUSY */
+                s_job.state = GFX_JOB_ERROR_RETRY; /* раньше здесь молча пропускалось стирание и функция всё равно возвращала GFX_JOB_BUSY */
             } else {
                 s_job.erase_remaining_px = (uint32_t)old_w * font->height;
             }
         }
     }
 
-    return s_job.state; /* GFX_JOB_BUSY, либо GFX_JOB_ERROR при отказе SetWindow выше */
+    return s_job.state; /* GFX_JOB_BUSY, либо GFX_JOB_ERROR_RETRY при отказе SetWindow выше */
 }
 
 Gfx_JobState_t Gfx_Process(void)
@@ -428,7 +428,7 @@ Gfx_JobState_t Gfx_Process(void)
             s_glyph_buffer[i] = s_job.bg;
         }
         if (!write_pixels_or_fail(s_glyph_buffer, chunk)) {
-            return GFX_JOB_ERROR; /* DMA не стартовал — remaining НЕ трогаем, задание уже помечено ERROR */
+            return GFX_JOB_ERROR_RETRY; /* DMA не стартовал — remaining НЕ трогаем, задание уже помечено ERROR_RETRY */
         }
         s_job.erase_remaining_px -= chunk;
         return GFX_JOB_BUSY; /* даже когда дошли до 0 — следующий вызов уйдёт в посимвольный проход ниже */
@@ -444,8 +444,8 @@ Gfx_JobState_t Gfx_Process(void)
     if (idx >= 0) {
         uint16_t advance = submit_glyph(s_job.x, s_job.y, s_job.font, idx, s_job.fg, s_job.bg);
         s_job.x += advance;
-        if (s_job.state == GFX_JOB_ERROR) {
-            return GFX_JOB_ERROR; /* DMA не стартовал внутри submit_glyph() — не продолжаем строку */
+        if (s_job.state == GFX_JOB_ERROR_RETRY) {
+            return GFX_JOB_ERROR_RETRY; /* DMA не стартовал внутри submit_glyph() — не продолжаем строку */
         }
     }
     /* Символа нет в шрифте — просто пропускаем, курсор не двигаем */

@@ -20,10 +20,16 @@ extern "C" {
 #include "fonts.h"
 
 typedef enum {
-    GFX_JOB_IDLE = 0,  /**< Нет активного задания */
-    GFX_JOB_BUSY,      /**< Задание выполняется (ещё есть символы для отрисовки) */
-    GFX_JOB_DONE,       /**< Задание завершено на предыдущем вызове Gfx_Process() */
-    GFX_JOB_ERROR       /**< Некорректные аргументы при постановке задания */
+    GFX_JOB_IDLE = 0,     /**< Нет активного задания */
+    GFX_JOB_BUSY,         /**< Задание выполняется (ещё есть символы для отрисовки) */
+    GFX_JOB_DONE,          /**< Задание завершено на предыдущем вызове Gfx_Process() */
+    GFX_JOB_ERROR_RETRY,   /**< Транзиентный отказ уровня железа/шины (Display_SetWindow()
+                                 или Display_WritePixelsDMA() вернули не DISPLAY_OK) —
+                                 попытка имеет смысл повторить теми же аргументами позже */
+    GFX_JOB_ERROR_FATAL    /**< Некорректные аргументы при постановке задания (баг
+                                 вызывающего кода, например NULL font/text) — повторная
+                                 попытка теми же аргументами даст тот же результат,
+                                 вызывающий код не должен ретраить бездумно */
 } Gfx_JobState_t;
 
 /**
@@ -45,7 +51,10 @@ typedef enum {
  * @param fg_color   Цвет символов
  * @param bg_color   Цвет фона
  * @return GFX_JOB_BUSY при успешной постановке (или если уже есть незавершённое
- *         задание — новое отклоняется), GFX_JOB_ERROR при неверных аргументах
+ *         задание — новое отклоняется), GFX_JOB_ERROR_FATAL при неверных аргументах
+ *         (text/font NULL — не ретраить), GFX_JOB_ERROR_RETRY при транзиентном отказе
+ *         Display_SetWindow() на настройке окна стирания старого прямоугольника
+ *         (стоит повторить попытку позже теми же аргументами)
  */
 Gfx_JobState_t Gfx_DrawTextStart(uint16_t x, uint16_t y, const char *text,
                                   uint16_t prev_x, const char *prev_text,
@@ -91,7 +100,8 @@ Gfx_JobState_t Gfx_Process(void);
  *
  * После вызова состояние — GFX_JOB_IDLE: следующий Gfx_DrawTextStart()
  * гарантированно не будет отклонён из-за "предыдущее задание ещё
- * выполняется". Если задания и не было (IDLE/DONE/ERROR) — no-op.
+ * выполняется". Если задания и не было (IDLE/DONE/ERROR_RETRY/ERROR_FATAL) —
+ * no-op.
  */
 void Gfx_CancelJob(void);
 
