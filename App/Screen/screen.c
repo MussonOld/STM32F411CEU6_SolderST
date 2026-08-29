@@ -486,14 +486,11 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
     } else if (!enabled) {
         /* Канал выключен коротким UP+DN (см. fsm.c) — число текущей
          * температуры показывать бессмысленно (нагрев не идёт, значение
-         * не поддерживается). "--" выводим ЧЕРЕЗ ТО ЖЕ поле fault_msg
-         * (AntiquaB_18_uni), что и текст неисправности выше — дефис у
-         * этого шрифта есть (в отличие от Comic_60_dig, где рисуется
-         * число), и путь уже проверен: скрыть number, показать текст на
-         * том же месте. Приоритет у fault_msg (реальная неисправность
-         * важнее статуса "выключено вручную"). */
-        TextField_PrintfCentered(line_current, center_x, "");
-        TextField_PrintfCentered(line_fault_msg, center_x, "--");
+         * не поддерживается). "--" выводим через поле line_current
+         * (Comic_60_dig) — в наборе _dig теперь есть дефис (см. bdf2c_TFT.py),
+         * так что крупный шрифт совпадает с обычным выводом числа. */
+        TextField_PrintfCentered(line_current, center_x, "--");
+        TextField_PrintfCentered(line_fault_msg, center_x, "");
     } else {
         fixed_t cur = State_GetCurrentTemp(ch);
         int32_t cur_int = FIXED_TO_INT(cur);
