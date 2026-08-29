@@ -579,7 +579,16 @@ SettingsLoadStatus_t Settings_Load(void)
      * вызывающего кода, а не потеряться за успешным восстановлением. */
     Settings_Init();
     erase_eeprom();
-    Settings_Save();
+    if (!Settings_Save()) {
+        /* Запись дефолтов не удалась (транзиентный отказ шины/чипа).
+         * Settings_Init() выше уже сбросил s_dirty в false, а сам
+         * Settings_Save() не трогает s_dirty при ошибке — значит, без
+         * этого явного взвода Settings_Poll() никогда не повторит
+         * попытку, и устройство застрянет в SETTINGS_LOAD_INVALID
+         * навсегда. Взводим вручную, как и в ветке any_clamped выше. */
+        s_dirty = true;
+        s_last_change_tick = HAL_GetTick();
+    }
     return SETTINGS_LOAD_INVALID;
 }
 
