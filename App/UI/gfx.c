@@ -104,6 +104,12 @@ static int find_glyph_index(const font_t *font, uint32_t codepoint)
  * обработка задания останавливается на стороне вызывающего кода (см.
  * Gfx_Process()), не отправляем новые транши поверх уже неисправной шины.
  *
+ * Та же модель (переход в GFX_JOB_ERROR при отказе) вручную повторена на
+ * каждом вызове Display_SetWindow() ниже — исторически её отказ везде
+ * молча проглатывался (символ просто не рисовался, курсор всё равно
+ * двигался дальше, будто всё в порядке), пока это не поправили; отдельного
+ * хелпера под неё нет — мест немного, инлайн-проверка нагляднее.
+ *
  * @return true — DMA запущен, false — отказ (s_job.state уже выставлен)
  */
 static bool write_pixels_or_fail(const display_color_t *data, uint32_t count)
@@ -147,9 +153,11 @@ static void draw_glyph_overflow_marker(uint16_t x, uint16_t y, uint16_t advance,
     for (uint32_t i = 0; i < px_count; i++) {
         s_glyph_buffer[i] = fg; /* сплошной маркер — не пытаемся имитировать форму символа */
     }
-    if (Display_SetWindow(x, y, x + w - 1, y + h - 1) == DISPLAY_OK) {
-        write_pixels_or_fail(s_glyph_buffer, px_count);
+    if (Display_SetWindow(x, y, x + w - 1, y + h - 1) != DISPLAY_OK) {
+        s_job.state = GFX_JOB_ERROR;
+        return; /* отказ — не рисуем; состояние увидит Gfx_Process() у вызывающего submit_glyph() */
     }
+    write_pixels_or_fail(s_glyph_buffer, px_count);
 }
 
 static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx,
@@ -179,9 +187,11 @@ static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx
         for (uint32_t i = 0; i < px_count; i++) {
             s_glyph_buffer[i] = bg;
         }
-        if (Display_SetWindow(x, y, x + advance - 1, y + font->height - 1) == DISPLAY_OK) {
-            write_pixels_or_fail(s_glyph_buffer, px_count);
+        if (Display_SetWindow(x, y, x + advance - 1, y + font->height - 1) != DISPLAY_OK) {
+            s_job.state = GFX_JOB_ERROR;
+            return advance; /* курсор всё равно двигаем; Gfx_Process() проверит состояние сразу после возврата */
         }
+        write_pixels_or_fail(s_glyph_buffer, px_count);
         return advance;
     }
 
@@ -243,7 +253,8 @@ static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx
     uint16_t draw_y = y;
 
     if (Display_SetWindow(draw_x, draw_y, draw_x + cell_width - 1, draw_y + font->height - 1) != DISPLAY_OK) {
-        return advance;
+        s_job.state = GFX_JOB_ERROR;
+        return advance; /* курсор всё равно двигаем; Gfx_Process() проверит состояние сразу после возврата */
     }
     write_pixels_or_fail(s_glyph_buffer, pixel_count); /* асинхронно, не ждём; отказ запуска — см. write_pixels_or_fail() */
 
@@ -383,13 +394,15 @@ Gfx_JobState_t Gfx_DrawTextStart(uint16_t x, uint16_t y, const char *text,
              * старого и нового прямоугольников часть пикселей стирается и
              * тут же перерисовывается заново) — цена за простоту и
              * корректность во всех случаях сразу. */
-            if (Display_SetWindow(prev_x, y, prev_x + old_w - 1, y + font->height - 1) == DISPLAY_OK) {
+            if (Display_SetWindow(prev_x, y, prev_x + old_w - 1, y + font->height - 1) != DISPLAY_OK) {
+                s_job.state = GFX_JOB_ERROR; /* раньше здесь молча пропускалось стирание и функция всё равно возвращала GFX_JOB_BUSY */
+            } else {
                 s_job.erase_remaining_px = (uint32_t)old_w * font->height;
             }
         }
     }
 
-    return GFX_JOB_BUSY;
+    return s_job.state; /* GFX_JOB_BUSY, либо GFX_JOB_ERROR при отказе SetWindow выше */
 }
 
 Gfx_JobState_t Gfx_Process(void)
