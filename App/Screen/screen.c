@@ -476,12 +476,24 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
     uint8_t line_target    = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_TARGET   : LINE_DESOLDER_TARGET;
 
     const char *fault_msg = Error_GetChannelFaultMessage(ch); /* не NULL только для RTD_OPEN/HEATER_OPEN */
+    bool enabled = State_IsEnabled(ch);
 
     if (fault_msg != NULL) {
         /* Текущая температура НЕ выводится вообще — на её месте сообщение
          * в отдельном поле (Comic_60_dig кириллицу не содержит) */
         TextField_PrintfCentered(line_current, center_x, "");
         TextField_PrintfCentered(line_fault_msg, center_x, "%s", fault_msg);
+    } else if (!enabled) {
+        /* Канал выключен коротким UP+DN (см. fsm.c) — число текущей
+         * температуры показывать бессмысленно (нагрев не идёт, значение
+         * не поддерживается). "--" выводим ЧЕРЕЗ ТО ЖЕ поле fault_msg
+         * (AntiquaB_18_uni), что и текст неисправности выше — дефис у
+         * этого шрифта есть (в отличие от Comic_60_dig, где рисуется
+         * число), и путь уже проверен: скрыть number, показать текст на
+         * том же месте. Приоритет у fault_msg (реальная неисправность
+         * важнее статуса "выключено вручную"). */
+        TextField_PrintfCentered(line_current, center_x, "");
+        TextField_PrintfCentered(line_fault_msg, center_x, "--");
     } else {
         fixed_t cur = State_GetCurrentTemp(ch);
         int32_t cur_int = FIXED_TO_INT(cur);
@@ -531,12 +543,22 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
  */
 static void update_sleep_status(channel_id_t ch, uint8_t line, uint16_t right_edge_x)
 {
-    sleep_mode_t mode = Sleep_GetMode(ch);
-    uint32_t remaining = Sleep_GetRemainingSeconds(ch);
+    bool enabled = State_IsEnabled(ch);
+    sleep_mode_t mode = enabled ? Sleep_GetMode(ch) : SLEEP_MODE_AWAKE;
+    uint32_t remaining = enabled ? Sleep_GetRemainingSeconds(ch) : 0;
     uint32_t min = remaining / 60U;
     uint32_t sec = remaining % 60U;
     bool timer_visible = true;
     char buf[16];
+
+    /* Канал выключен коротким UP+DN — таймеру сна нечего отсчитывать
+     * (физически не греет и так, "уснуть" ему не с чего): ведём себя как
+     * AWAKE без простоя (mode/remaining уже принудительно приведены выше),
+     * дальше switch отработает штатной веткой SLEEP_MODE_AWAKE/remaining==0
+     * — пусто, без иконки. Sleep_GetMode()/Sleep_GetRemainingSeconds() не
+     * зовём вовсе, когда выключено — модуль Sleep ничего не знает про
+     * State_IsEnabled() и продолжает свой отсчёт по физическому простою
+     * независимо от него, так что спрашивать его здесь бессмысленно. */
 
     switch (mode) {
         case SLEEP_MODE_AWAKE:
