@@ -24,8 +24,9 @@
  * cell_width расширилась и лимит стал слишком мал почти для всех цифр).
  * Если меняешь шрифты/формулу ячейки — пересчитай через
  * файлы .c в App/Fonts (widths, xoffset, dwidth, height) и подними константу,
- * иначе часть символов будет молча пропадать (см. assert() ниже —
- * он поймает это хотя бы в debug-сборке, а не только на экране). */
+ * иначе в release часть символов будет заменяться видимым маркером
+ * ошибки вместо реальной отрисовки, а в debug-сборке assert() уронит
+ * сборку сразу же — не дожидаясь, пока баг обнаружится на экране. */
 #define GFX_GLYPH_BUFFER_PIXELS (40 * 70)
 static display_color_t s_glyph_buffer[GFX_GLYPH_BUFFER_PIXELS];
 
@@ -84,6 +85,42 @@ static int find_glyph_index(const font_t *font, uint32_t codepoint)
 
 /* ---- Отрисовка одного символа: готовит буфер и ЗАПУСКАЕТ DMA (не ждёт) ---- */
 
+/* Размер аварийного маркера "символ не влез в буфер" (см. release-ветки
+ * в submit_glyph() ниже) — заведомо на порядки меньше GFX_GLYPH_BUFFER_PIXELS,
+ * чтобы влезать в буфер вообще при любых разумных значениях константы. */
+#define GFX_OVERFLOW_MARKER_SIZE_PX (6U)
+
+/**
+ * @brief Нарисовать маленький сплошной маркер вместо символа, который
+ *        физически не влез в s_glyph_buffer.
+ *
+ * Используется ТОЛЬКО в release-сборке (в debug соответствующая ветка
+ * роняет сборку через assert() раньше, чем доходит сюда) — как защита от
+ * будущего рассинхрона GFX_GLYPH_BUFFER_PIXELS с реальными требованиями
+ * шрифтов (см. историю бага в докстринге у GFX_GLYPH_BUFFER_PIXELS). Тихий
+ * пропуск символа выглядит как ПРАВДОПОДОБНОЕ, но неверное число (особенно
+ * опасно для Comic_60_dig — цифр температуры: "50" вместо "450" не похоже
+ * на поломку). Явный маркер вместо этого — видимый артефакт, который
+ * оператор не спутает с настоящим показанием.
+ */
+static void draw_glyph_overflow_marker(uint16_t x, uint16_t y, uint16_t advance,
+                                        uint16_t height, display_color_t fg)
+{
+    uint16_t w = (advance < GFX_OVERFLOW_MARKER_SIZE_PX) ? advance : GFX_OVERFLOW_MARKER_SIZE_PX;
+    uint16_t h = (height  < GFX_OVERFLOW_MARKER_SIZE_PX) ? height  : GFX_OVERFLOW_MARKER_SIZE_PX;
+    if (w == 0 || h == 0) {
+        return; /* нулевой advance/height — рисовать нечего, курсор всё равно сдвинется в вызывающем коде */
+    }
+
+    uint32_t px_count = (uint32_t)w * h; /* <= GFX_OVERFLOW_MARKER_SIZE_PX^2, заведомо << GFX_GLYPH_BUFFER_PIXELS */
+    for (uint32_t i = 0; i < px_count; i++) {
+        s_glyph_buffer[i] = fg; /* сплошной маркер — не пытаемся имитировать форму символа */
+    }
+    if (Display_SetWindow(x, y, x + w - 1, y + h - 1) == DISPLAY_OK) {
+        Display_WritePixelsDMA(s_glyph_buffer, px_count);
+    }
+}
+
 static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx,
                               display_color_t fg, display_color_t bg)
 {
@@ -103,6 +140,9 @@ static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx
         }
         uint32_t px_count = (uint32_t)advance * font->height;
         if (px_count > GFX_GLYPH_BUFFER_PIXELS) {
+            assert(px_count <= GFX_GLYPH_BUFFER_PIXELS &&
+                   "Glyph cell exceeds GFX_GLYPH_BUFFER_PIXELS - increase the buffer");
+            draw_glyph_overflow_marker(x, y, advance, font->height, fg);
             return advance;
         }
         for (uint32_t i = 0; i < px_count; i++) {
@@ -126,16 +166,19 @@ static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx
 
     uint32_t pixel_count = (uint32_t)cell_width * font->height;
     if (pixel_count > GFX_GLYPH_BUFFER_PIXELS) {
-        /* В release это по-прежнему тихий пропуск (курсор сдвигается,
-         * но глиф/ячейка не рисуется) — так проект собирается и без
-         * правки буфера, просто визуально теряет самые требовательные
-         * символы. В debug (DEBUG определён CubeIDE по умолчанию) роняем
-         * сборку сразу здесь — иначе баг обнаруживается только на экране,
+        /* В debug (DEBUG определён CubeIDE по умолчанию) роняем сборку
+         * сразу здесь — иначе баг обнаруживается только на экране,
          * произвольно поздно, как это уже дважды случалось с cell_width
-         * у Comic_60_dig. */
+         * у Comic_60_dig. В release assert отключён (NDEBUG) — раньше
+         * это был тихий пропуск (курсор сдвигается, глиф не рисуется),
+         * что для показаний температуры опасно: результат выглядит как
+         * ПРАВДОПОДОБНОЕ, но неверное число ("50" вместо "450"), а не
+         * как очевидная поломка. Вместо тихого пропуска — видимый
+         * маркер ошибки, заведомо укладывающийся в буфер. */
         assert(pixel_count <= GFX_GLYPH_BUFFER_PIXELS &&
                "Glyph cell exceeds GFX_GLYPH_BUFFER_PIXELS - increase the buffer");
-        return advance; /* Символ не влезает в буфер — пропускаем отрисовку, но сдвигаем курсор */
+        draw_glyph_overflow_marker(x, y, advance, font->height, fg);
+        return advance; /* курсор всё равно сдвигаем на advance, как и раньше */
     }
 
     for (uint32_t i = 0; i < pixel_count; i++) {
@@ -358,4 +401,14 @@ Gfx_JobState_t Gfx_Process(void)
     /* Символа нет в шрифте — просто пропускаем, курсор не двигаем */
 
     return GFX_JOB_BUSY; /* остались ещё символы (или узнаем на следующем вызове) */
+}
+
+void Gfx_CancelJob(void)
+{
+    if (s_job.state != GFX_JOB_BUSY) {
+        return; /* нечего отменять */
+    }
+    while (Display_IsBusy()) { } /* см. докстринг в gfx.h — не наступаем на буфер/шину DMA-в-полёте */
+    s_job.state = GFX_JOB_IDLE;
+    s_job.erase_remaining_px = 0;
 }
