@@ -142,6 +142,14 @@ static void finalize_episode(void)
             break;
 
         case EPISODE_PENDING_CHORD:
+            /* Кнопка отпущена раньше, чем истекло окно ожидания партнёра
+             * по аккорду (и раньше, чем сработал бы long-press) — партнёр
+             * так и не подошёл. Это обычное короткое одиночное нажатие
+             * UP или DN, и его нужно сгенерировать здесь, иначе оно
+             * теряется молча (баг: короткое UP/DN пропадает). */
+            push_event(BUTTON_EVENT_SHORT_PRESS, s_active_mask);
+            break;
+
         case EPISODE_NONE:
         default:
             break;
