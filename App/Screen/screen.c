@@ -384,6 +384,20 @@ static void clear_screen_for_mode_switch(screen_mode_t new_mode)
         s_sleep_icon_shown[CHANNEL_DESOLDER] = false;
     }
     TextField_InvalidateAll(); /* все строки (обоих экранов) забывают, что было на экране — перерисуются с нуля на чистом фоне */
+
+    if (new_mode == SCREEN_MODE_MAIN) {
+        /* Заголовки каналов ("Паяльник"/"Отсос") печатаются TextField_Printf()
+         * только один раз, в Screen_Init() — Screen_Update() дальше меняет
+         * только их ЦВЕТ (apply_channel_colors -> TextField_SetColors), не
+         * текст. TextField_InvalidateAll() выше стирает text у ВСЕХ строк,
+         * включая эти, а перепечатать их больше некому — без этого вызова
+         * заголовки исчезают насовсем после первого же переключения режима
+         * экрана (сервисное меню туда и обратно). Печатать нужно именно
+         * ЗДЕСЬ, после InvalidateAll(), а не в блоке выше — иначе
+         * InvalidateAll() тут же сотрёт то, что мы только что написали. */
+        TextField_Printf(LINE_SOLDER_TITLE, "Паяльник");
+        TextField_Printf(LINE_DESOLDER_TITLE, "Отсос");
+    }
 }
 
 void Screen_Init(void)
