@@ -102,11 +102,8 @@ int main(void)
   MX_DMA_Init();
   MX_I2C1_Init();
   MX_SPI1_Init();
-  MX_TIM2_Init();
   MX_TIM3_Init();
-  MX_TIM5_Init();
   MX_SPI2_Init();
-  MX_TIM10_Init();
   /* USER CODE BEGIN 2 */
   Display_Init();
   Display_SetWindow(0, 0, 319, 239);
