@@ -121,7 +121,7 @@ def main():
     print(f"\nBDF: {bdf_file}\nSelect mode:")
     
     if ask_yes_no("  Только цифры?"):
-        sel = [32] + list(range(48, 59)); suf = "_dig"
+        sel = [32, 45] + list(range(48, 59)); suf = "_dig"
     elif ask_yes_no("  Кириллица?"):
         sel = [32] + list(range(48, 59)) + list(range(1040, 1104)); suf = "_cyr"
     else:
