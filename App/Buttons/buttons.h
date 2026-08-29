@@ -40,7 +40,7 @@ extern "C" {
 /* ---- Тайминги (подбираются, значения по умолчанию — см. .c) ---- */
 #define BUTTONS_POLL_MS          10U   /* ожидаемый период вызова Buttons_Poll() */
 #define BUTTONS_DEBOUNCE_TICKS    3U   /* подряд стабильных опросов для подтверждения уровня */
-#define BUTTONS_CHORD_WINDOW_MS  40U   /* окно на "довесок" второй кнопки аккорда UP+DN */
+#define BUTTONS_CHORD_WINDOW_MS  100U   /* окно на "довесок" второй кнопки аккорда UP+DN */
 #define BUTTONS_LONG_PRESS_MS   600U   /* порог короткое/длинное */
 
 /**
