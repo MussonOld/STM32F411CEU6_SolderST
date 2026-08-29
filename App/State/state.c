@@ -34,6 +34,12 @@ void State_Init(void)
         s_channels[i].in_stand      = true;
         s_channels[i].enabled       = false;
     }
+
+    /* enabled не сохраняется в EEPROM и всегда стартует с фиксированных
+     * дефолтов: паяльник включён, отсос выключен. Пользователь переключает
+     * каждый канал вручную (UP+DN аккорд, см. FSM). */
+    s_channels[CHANNEL_SOLDER].enabled   = true;
+    s_channels[CHANNEL_DESOLDER].enabled = false;
 }
 
 void State_SetCurrentTemp(channel_id_t ch, fixed_t temp)

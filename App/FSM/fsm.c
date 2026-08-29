@@ -224,7 +224,7 @@ static void dispatch_event(const button_event_t *ev)
     /* --- UP+DN аккорд --- */
     if (ev->mask == BUTTONS_CHORD_UP_DN_MASK) {
         if (ev->type == BUTTON_EVENT_CHORD_SHORT) {
-            State_SetEnabled(s_active_channel, false);
+            State_SetEnabled(s_active_channel, !State_IsEnabled(s_active_channel));
         } else if (ev->type == BUTTON_EVENT_CHORD_LONG) {
             s_screen_mode = SCREEN_MODE_SERVICE;
             Menu_Init(); /* всегда с чистого состояния: уровень User, курсор на первом пункте */
