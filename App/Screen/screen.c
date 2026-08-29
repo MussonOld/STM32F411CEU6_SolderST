@@ -391,7 +391,7 @@ void Screen_Init(void)
     draw_divider();
 
     TextField_ConfigureLine(LINE_INFO, SCREEN_INFO_EEPROM_X, SCREEN_INFO_Y,
-                             &AntiquaB_16_uni, COLOR_INFO, COLOR_BG);
+                             &AntiquaB_18_uni, COLOR_INFO, COLOR_BG);
     TextField_ConfigureLine(LINE_INFO_SLEEP_SOLDER, SCREEN_INFO_SLEEP_SOLDER_TEXT_RIGHT_EDGE_X, SCREEN_INFO_Y,
                              &AntiquaB_18_uni, COLOR_SLEEP_AWAKE, COLOR_BG);
     TextField_ConfigureLine(LINE_INFO_SLEEP_DESOLDER, SCREEN_INFO_SLEEP_DESOLDER_TEXT_RIGHT_EDGE_X, SCREEN_INFO_Y,

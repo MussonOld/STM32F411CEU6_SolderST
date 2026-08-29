@@ -47,10 +47,8 @@ typedef struct {
 } font_t;
 
 // Объявления шрифтов
-extern const font_t AntiquaB_16_uni;
 extern const font_t AntiquaB_18_uni;
 extern const font_t AntiquaB_24_uni;
-extern const font_t Comic_36_dig;
 extern const font_t Comic_40_dig;
 extern const font_t Comic_60_dig;
 
