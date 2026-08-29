@@ -85,6 +85,37 @@ static int find_glyph_index(const font_t *font, uint32_t codepoint)
 
 /* ---- Отрисовка одного символа: готовит буфер и ЗАПУСКАЕТ DMA (не ждёт) ---- */
 
+/**
+ * @brief Отправить пиксели в Display_WritePixelsDMA() и учесть отказ запуска.
+ *
+ * DISPLAY_OK означает только то, что DMA-передача СТАРТОВАЛА (принята HAL) —
+ * не то, что она гарантированно завершится успешно; асинхронное завершение
+ * (успех/сбой) обрабатывает сам драйвер дисплея в HAL_SPI_TxCpltCallback()
+ * (см. st7789.c) — оттуда s_busy корректно сбрасывается и при ошибке, GFX
+ * этим не занимается и заниматься не должен.
+ *
+ * Проверяем "!= DISPLAY_OK", а не "== DISPLAY_ERROR": по контракту
+ * DISPLAY_BUSY сюда дойти не должен (перед каждым submit_glyph()/чанком
+ * стирания Gfx_Process() уже проверяет Display_IsBusy()), но если это
+ * предположение когда-нибудь нарушится, GFX не должен продолжать работу с
+ * ложным ощущением, что DMA запущен.
+ *
+ * При отказе переводит текущее задание в GFX_JOB_ERROR — дальнейшая
+ * обработка задания останавливается на стороне вызывающего кода (см.
+ * Gfx_Process()), не отправляем новые транши поверх уже неисправной шины.
+ *
+ * @return true — DMA запущен, false — отказ (s_job.state уже выставлен)
+ */
+static bool write_pixels_or_fail(const display_color_t *data, uint32_t count)
+{
+    Display_Status_t status = Display_WritePixelsDMA(data, count);
+    if (status != DISPLAY_OK) {
+        s_job.state = GFX_JOB_ERROR;
+        return false;
+    }
+    return true;
+}
+
 /* Размер аварийного маркера "символ не влез в буфер" (см. release-ветки
  * в submit_glyph() ниже) — заведомо на порядки меньше GFX_GLYPH_BUFFER_PIXELS,
  * чтобы влезать в буфер вообще при любых разумных значениях константы. */
@@ -117,7 +148,7 @@ static void draw_glyph_overflow_marker(uint16_t x, uint16_t y, uint16_t advance,
         s_glyph_buffer[i] = fg; /* сплошной маркер — не пытаемся имитировать форму символа */
     }
     if (Display_SetWindow(x, y, x + w - 1, y + h - 1) == DISPLAY_OK) {
-        Display_WritePixelsDMA(s_glyph_buffer, px_count);
+        write_pixels_or_fail(s_glyph_buffer, px_count);
     }
 }
 
@@ -149,7 +180,7 @@ static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx
             s_glyph_buffer[i] = bg;
         }
         if (Display_SetWindow(x, y, x + advance - 1, y + font->height - 1) == DISPLAY_OK) {
-            Display_WritePixelsDMA(s_glyph_buffer, px_count);
+            write_pixels_or_fail(s_glyph_buffer, px_count);
         }
         return advance;
     }
@@ -214,7 +245,7 @@ static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx
     if (Display_SetWindow(draw_x, draw_y, draw_x + cell_width - 1, draw_y + font->height - 1) != DISPLAY_OK) {
         return advance;
     }
-    Display_WritePixelsDMA(s_glyph_buffer, pixel_count); /* асинхронно, не ждём */
+    write_pixels_or_fail(s_glyph_buffer, pixel_count); /* асинхронно, не ждём; отказ запуска — см. write_pixels_or_fail() */
 
     return advance;
 }
@@ -383,7 +414,9 @@ Gfx_JobState_t Gfx_Process(void)
         for (uint32_t i = 0; i < chunk; i++) {
             s_glyph_buffer[i] = s_job.bg;
         }
-        Display_WritePixelsDMA(s_glyph_buffer, chunk);
+        if (!write_pixels_or_fail(s_glyph_buffer, chunk)) {
+            return GFX_JOB_ERROR; /* DMA не стартовал — remaining НЕ трогаем, задание уже помечено ERROR */
+        }
         s_job.erase_remaining_px -= chunk;
         return GFX_JOB_BUSY; /* даже когда дошли до 0 — следующий вызов уйдёт в посимвольный проход ниже */
     }
@@ -396,7 +429,11 @@ Gfx_JobState_t Gfx_Process(void)
 
     int idx = find_glyph_index(s_job.font, cp);
     if (idx >= 0) {
-        s_job.x += submit_glyph(s_job.x, s_job.y, s_job.font, idx, s_job.fg, s_job.bg);
+        uint16_t advance = submit_glyph(s_job.x, s_job.y, s_job.font, idx, s_job.fg, s_job.bg);
+        s_job.x += advance;
+        if (s_job.state == GFX_JOB_ERROR) {
+            return GFX_JOB_ERROR; /* DMA не стартовал внутри submit_glyph() — не продолжаем строку */
+        }
     }
     /* Символа нет в шрифте — просто пропускаем, курсор не двигаем */
 
