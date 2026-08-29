@@ -160,6 +160,26 @@ sleep_mode_t Sleep_GetMode(channel_id_t ch)
     return s_channels[ch].mode;
 }
 
+void Sleep_ForceAwake(channel_id_t ch)
+{
+    if (!channel_valid(ch)) return;
+    sleep_channel_t *c = &s_channels[ch];
+
+    c->mode = SLEEP_MODE_AWAKE;
+    if (c->debounced_idle) {
+        /* Сырой вход физически всё ещё "простой" (например, отсос
+         * включили аккордом, а помпа при этом не нажата) — обычный
+         * фронт занят->простаивает в poll_channel() тут не сработает,
+         * т.к. debounced_idle уже true и не меняется. Перезапускаем
+         * таймер вручную от текущего момента. */
+        c->idle_start_tick = HAL_GetTick();
+        if (c->idle_start_tick == 0) c->idle_start_tick = 1; /* см. комментарий в структуре */
+    } else {
+        /* Вход реально не простаивает — таймеру нечего считать. */
+        c->idle_start_tick = 0;
+    }
+}
+
 uint32_t Sleep_GetRemainingSeconds(channel_id_t ch)
 {
     if (!channel_valid(ch)) return 0;

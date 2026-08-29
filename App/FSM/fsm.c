@@ -11,6 +11,7 @@
 #include "state.h"
 #include "error.h"
 #include "menu.h"
+#include "sleep.h"
 #include "fixed_point.h"
 #include "stm32f4xx_hal.h" /* HAL_GetTick() — интервал авто-повтора UP/DN */
 
@@ -224,7 +225,14 @@ static void dispatch_event(const button_event_t *ev)
     /* --- UP+DN аккорд --- */
     if (ev->mask == BUTTONS_CHORD_UP_DN_MASK) {
         if (ev->type == BUTTON_EVENT_CHORD_SHORT) {
-            State_SetEnabled(s_active_channel, !State_IsEnabled(s_active_channel));
+            bool new_enabled = !State_IsEnabled(s_active_channel);
+            State_SetEnabled(s_active_channel, new_enabled);
+            if (new_enabled) {
+                /* Включение канала — считаем это активностью и для Sleep,
+                 * иначе включённый инструмент может тут же оказаться в
+                 * PRESLEEP/SLEEP, если простаивал ещё до включения. */
+                Sleep_ForceAwake(s_active_channel);
+            }
         } else if (ev->type == BUTTON_EVENT_CHORD_LONG) {
             s_screen_mode = SCREEN_MODE_SERVICE;
             Menu_Init(); /* всегда с чистого состояния: уровень User, курсор на первом пункте */
