@@ -42,7 +42,7 @@ static uint32_t s_last_change_tick = 0;
  *            записью, magic при следующей загрузке НЕ будет равен
  *            0xA55A, и Settings_Load() уйдёт в значения по умолчанию,
  *            а не прочитает половину нового + половину старого блока.
- * addr 2   : контрольная сумма (8-бит сумма всех байт данных)
+ * addr 2   : контрольная сумма (CRC-8, poly 0x07 — см. checksum8())
  * addr 3   : зарезервировано (не используется, пишется 0)
  * addr 4.. : данные — по CHANNEL_COUNT блоков по SETTINGS_EEPROM_BYTES_PER_CH
  *            байт (preset x3, target, presleep_temp, slope, bias,
@@ -423,13 +423,28 @@ static void unpack_data(const uint8_t *buf)
     s_flags = buf[offset];
 }
 
+/**
+ * @brief CRC-8 (poly 0x07, init 0x00, без рефлексии, побитово — без
+ *        таблицы: на ~50 байт данных и нечастых Settings_Save()/Load()
+ *        таблица (256 байт flash) не окупается, а цикл на Cortex-M4 на
+ *        этом объёме занимает считанные микросекунды).
+ *
+ * Заменяет собой 8-битную сумму: сумма не ловит компенсирующие ошибки
+ * (например, +1 в одном байте и -1 в другом — сумма не меняется), а
+ * CRC-8 ловит любую однобитовую ошибку и любой burst-искажение длиной
+ * до 8 бит — то есть именно те паттерны повреждения, которые типичны
+ * при потере питания/наводке на EEPROM.
+ */
 static uint8_t checksum8(const uint8_t *buf, uint16_t len)
 {
-    uint8_t sum = 0;
+    uint8_t crc = 0x00;
     for (uint16_t i = 0; i < len; i++) {
-        sum = (uint8_t)(sum + buf[i]);
+        crc ^= buf[i];
+        for (uint8_t bit = 0; bit < 8; bit++) {
+            crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07) : (uint8_t)(crc << 1);
+        }
     }
-    return sum;
+    return crc;
 }
 
 bool Settings_Save(void)
