@@ -34,19 +34,6 @@ typedef enum {
 } EEPROM_Status_t;
 
 /**
- * @brief Инициализировать драйвер и проверить присутствие микросхемы на шине
- *
- *        Сейчас нигде не вызывается: Settings_Load()/Settings_Save() читают
- *        и пишут через EEPROM_Read()/EEPROM_Write()/EEPROM_WriteByte()
- *        напрямую, без предварительного Init() — первая попытка
- *        чтения/записи в Settings_Load() и служит фактической проверкой
- *        присутствия чипа (её отказ отражается в SettingsLoadStatus_t,
- *        см. Settings.md).
- * @return EEPROM_OK при успехе, EEPROM_ERROR/EEPROM_TIMEOUT если микросхема не отвечает
- */
-EEPROM_Status_t EEPROM_Init(void);
-
-/**
  * @brief Записать один байт
  * @param addr Адрес ячейки внутри микросхемы (0 .. EEPROM_GetSize()-1)
  * @param data Значение для записи

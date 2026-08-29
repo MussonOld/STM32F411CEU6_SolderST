@@ -91,15 +91,6 @@ static EEPROM_Status_t read_chunk(uint16_t addr, uint8_t *data, uint16_t len)
 
 /* ---- Реализация контракта eeprom.h ---- */
 
-EEPROM_Status_t EEPROM_Init(void)
-{
-    if (HAL_I2C_IsDeviceReady(&hi2c1, EEPROM_HW_I2C_ADDR_BASE,
-                               2, EEPROM_I2C_TIMEOUT_MS) != HAL_OK) {
-        return EEPROM_TIMEOUT;
-    }
-    return EEPROM_OK;
-}
-
 uint16_t EEPROM_GetSize(void)
 {
     return EEPROM_HW_SIZE_BYTES;
