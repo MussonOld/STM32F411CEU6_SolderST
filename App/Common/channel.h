@@ -9,6 +9,8 @@
 #ifndef CHANNEL_H
 #define CHANNEL_H
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -18,6 +20,15 @@ typedef enum {
     CHANNEL_DESOLDER,
     CHANNEL_COUNT
 } channel_id_t;
+
+/**
+ * @brief Bounds-check идентификатора канала. Общая для всех модулей,
+ *        работающих с массивами по CHANNEL_COUNT (State/Settings/Error/Sleep).
+ */
+static inline bool channel_valid(channel_id_t ch)
+{
+    return (ch >= 0) && (ch < CHANNEL_COUNT);
+}
 
 #ifdef __cplusplus
 }

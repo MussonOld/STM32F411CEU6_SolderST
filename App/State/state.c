@@ -20,11 +20,6 @@ typedef struct {
 
 static channel_state_t s_channels[CHANNEL_COUNT];
 
-static inline bool channel_valid(channel_id_t ch)
-{
-    return (ch >= 0) && (ch < CHANNEL_COUNT);
-}
-
 void State_Init(void)
 {
     for (int i = 0; i < CHANNEL_COUNT; i++) {

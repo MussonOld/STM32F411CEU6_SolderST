@@ -78,11 +78,6 @@ static uint32_t s_last_change_tick = 0;
 #define SETTINGS_DEFAULT_KI                 (0U)
 #define SETTINGS_DEFAULT_KD                 (0U)
 
-static inline bool channel_valid(channel_id_t ch)
-{
-    return (ch >= 0) && (ch < CHANNEL_COUNT);
-}
-
 static inline bool preset_valid(preset_id_t preset)
 {
     return (preset >= 0) && (preset < PRESET_COUNT);

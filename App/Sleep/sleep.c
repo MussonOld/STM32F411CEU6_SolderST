@@ -37,11 +37,6 @@ typedef struct {
 
 static sleep_channel_t s_channels[CHANNEL_COUNT];
 
-static inline bool channel_valid(channel_id_t ch)
-{
-    return (ch >= 0) && (ch < CHANNEL_COUNT);
-}
-
 /** @brief Сырой (недебаунсенный) уровень "простаивает" для канала.
  *  Оба входа GPIO_PULLUP, но реальная полярность разная (проверено на
  *  железе — паяльник и отсос физически разные датчики, симметрии нет):

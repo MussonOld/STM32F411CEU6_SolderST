@@ -18,11 +18,6 @@ static bool         s_eeprom_transient_active;
 static uint32_t     s_eeprom_transient_start;
 static const char  *s_eeprom_transient_msg;
 
-static inline bool channel_valid(channel_id_t ch)
-{
-    return (ch >= 0) && (ch < CHANNEL_COUNT);
-}
-
 void Error_Init(void)
 {
     for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
