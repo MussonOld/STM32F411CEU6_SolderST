@@ -13,32 +13,13 @@
 #include "menu.h"
 #include "sleep.h"
 #include "fixed_point.h"
+#include "step_accel.h" /* авто-повтор UP/DN — общий с menu.c, см. App/Common */
 #include "stm32f4xx_hal.h" /* HAL_GetTick() — интервал авто-повтора UP/DN */
-
-/* ---- Тайминги/шаги авто-повтора UP/DN ----
- * Интервал между шагами при удержании — ВРЕМЕННЫЙ, не уточнялся, подобрать
- * по ощущениям на реальном железе. */
-#define FSM_ACCEL_REPEAT_MS         (150U)
-#define FSM_ACCEL_STEP1_ITERATIONS  (10U)
-#define FSM_ACCEL_STEP5_ITERATIONS  (5U)
-#define FSM_STEP_1   (1U)
-#define FSM_STEP_5   (5U)
-#define FSM_STEP_10  (10U)
-
-typedef enum {
-    ACCEL_PHASE_STEP1 = 0,
-    ACCEL_PHASE_STEP5,
-    ACCEL_PHASE_STEP10
-} accel_phase_t;
 
 static channel_id_t s_active_channel;
 static screen_mode_t s_screen_mode;
 
-static bool          s_accel_active;
-static button_id_t   s_accel_button;
-static accel_phase_t s_accel_phase;
-static uint8_t       s_accel_iteration;
-static uint32_t      s_accel_last_tick;
+static step_accel_t s_accel;
 
 /* ---- Внутренние примитивы ---- */
 
@@ -64,75 +45,23 @@ static void apply_target_and_sync(channel_id_t ch, int32_t requested_target)
     State_SetSetpointTemp(ch, FIXED_FROM_INT(clamped));
 }
 
-static uint16_t round_up_to_multiple(uint16_t value, uint16_t multiple)
+/* Колбэки для step_accel: читают/пишут target активного канала через
+ * apply_target_and_sync() (там же клампинг диапазона и синхронизация в State). */
+static uint16_t accel_get(void *ctx)
 {
-    if (multiple == 0) return value;
-    uint16_t remainder = (uint16_t)(value % multiple);
-    if (remainder == 0) return value;
-    return (uint16_t)(value - remainder + multiple);
+    (void)ctx;
+    return Settings_GetTarget(s_active_channel);
 }
 
-static uint16_t round_down_to_multiple(uint16_t value, uint16_t multiple)
+static void accel_set(void *ctx, uint16_t value)
 {
-    if (multiple == 0) return value;
-    uint16_t remainder = (uint16_t)(value % multiple);
-    return (uint16_t)(value - remainder); /* remainder==0 -> value без изменений */
-}
-
-/**
- * @brief Применить один шаг авто-повтора UP/DN, продвинуть фазу ускорения
- */
-static void accel_apply_step(void)
-{
-    int32_t sign = (s_accel_button == BUTTON_UP) ? 1 : -1;
-    uint16_t step;
-    uint16_t phase_limit;
-    uint16_t round_to;
-
-    switch (s_accel_phase) {
-        case ACCEL_PHASE_STEP1:
-            step = FSM_STEP_1;
-            phase_limit = FSM_ACCEL_STEP1_ITERATIONS;
-            round_to = 5;
-            break;
-        case ACCEL_PHASE_STEP5:
-            step = FSM_STEP_5;
-            phase_limit = FSM_ACCEL_STEP5_ITERATIONS;
-            round_to = 10;
-            break;
-        case ACCEL_PHASE_STEP10:
-        default:
-            step = FSM_STEP_10;
-            phase_limit = 0; /* без ограничения — держим шаг 10 до отпускания */
-            round_to = 0;
-            break;
-    }
-
-    uint16_t cur = Settings_GetTarget(s_active_channel);
-    apply_target_and_sync(s_active_channel, (int32_t)cur + sign * (int32_t)step);
-
-    if (phase_limit != 0) {
-        s_accel_iteration++;
-        if (s_accel_iteration >= phase_limit) {
-            uint16_t value_after = Settings_GetTarget(s_active_channel);
-            uint16_t rounded = (sign > 0) ? round_up_to_multiple(value_after, round_to)
-                                           : round_down_to_multiple(value_after, round_to);
-            apply_target_and_sync(s_active_channel, rounded);
-
-            s_accel_phase = (s_accel_phase == ACCEL_PHASE_STEP1) ? ACCEL_PHASE_STEP5 : ACCEL_PHASE_STEP10;
-            s_accel_iteration = 0;
-        }
-    }
+    (void)ctx;
+    apply_target_and_sync(s_active_channel, (int32_t)value);
 }
 
 static void accel_start(button_id_t btn)
 {
-    s_accel_active    = true;
-    s_accel_button     = btn;
-    s_accel_phase      = ACCEL_PHASE_STEP1;
-    s_accel_iteration  = 0;
-    s_accel_last_tick  = HAL_GetTick();
-    accel_apply_step(); /* первый шаг сразу, не дожидаясь интервала */
+    StepAccel_Start(&s_accel, btn, accel_get, accel_set, NULL, HAL_GetTick());
 }
 
 /**
@@ -152,7 +81,7 @@ static void dispatch_event(const button_event_t *ev)
         channel_id_t target = (s_active_channel == CHANNEL_SOLDER) ? CHANNEL_DESOLDER : CHANNEL_SOLDER;
         if (!Error_IsChannelBlocked(target) || Error_IsChannelBlocked(s_active_channel)) {
             s_active_channel = target;
-            s_accel_active = false; /* на всякий случай, физически невозможно при живом accel, но дёшево подстраховаться */
+            s_accel.active = false; /* на всякий случай, физически невозможно при живом accel, но дёшево подстраховаться */
         }
         return;
     }
@@ -214,8 +143,7 @@ static void dispatch_event(const button_event_t *ev)
         int32_t sign = (btn == BUTTON_UP) ? 1 : -1;
 
         if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
-            uint16_t cur = Settings_GetTarget(s_active_channel);
-            apply_target_and_sync(s_active_channel, (int32_t)cur + sign);
+            StepAccel_ApplyDelta(accel_get, accel_set, NULL, sign, 1);
         } else if (ev->type == BUTTON_EVENT_LONG_PRESS) {
             accel_start(btn);
         }
@@ -250,11 +178,7 @@ void InputFSM_Init(void)
     s_active_channel = CHANNEL_SOLDER;
     s_screen_mode = SCREEN_MODE_MAIN;
 
-    s_accel_active = false;
-    s_accel_button = BUTTON_UP;
-    s_accel_phase = ACCEL_PHASE_STEP1;
-    s_accel_iteration = 0;
-    s_accel_last_tick = 0;
+    StepAccel_Stop(&s_accel);
 }
 
 void InputFSM_SyncStateFromSettings(void)
@@ -277,15 +201,11 @@ void InputFSM_Poll(void)
         return; /* авто-повтор UP/DN главного экрана (ниже) не имеет смысла в меню */
     }
 
-    if (s_accel_active) {
-        if (!Buttons_IsHeld(s_accel_button) || Error_IsChannelBlocked(s_active_channel)) {
-            s_accel_active = false;
+    if (s_accel.active) {
+        if (!Buttons_IsHeld(s_accel.button) || Error_IsChannelBlocked(s_active_channel)) {
+            s_accel.active = false;
         } else {
-            uint32_t now = HAL_GetTick();
-            if ((now - s_accel_last_tick) >= FSM_ACCEL_REPEAT_MS) {
-                accel_apply_step();
-                s_accel_last_tick = now;
-            }
+            StepAccel_Tick(&s_accel, HAL_GetTick());
         }
     }
 }
