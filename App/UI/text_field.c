@@ -25,7 +25,7 @@ static int s_active_line = -1; /* индекс строки с незаверш�
  * буфер, который сюда передан, и растягивает его чтение на много вызовов
  * Gfx_Process() (по одному символу за вызов). Если в это время придёт
  * TextField_Printf() для ТОЙ ЖЕ строки (для температуры — реалистично,
- * State обновляется независимо от завершения DMA), printf_at() перепишет
+ * State обновляется независимо от завершения DMA), set_line_text() перепишет
  * s_lines[i].text прямо посреди чтения — s_job.cursor может уйти на уже
  * невалидную позицию (при укорачивании текста — досрочный '\0', обрезанный
  * рендер с "мусором" на экране, см. историю бага). Раз активна максимум
@@ -58,22 +58,18 @@ void TextField_ConfigureLine(uint8_t line, uint16_t x, uint16_t y,
 }
 
 /**
- * @brief Общая часть Printf/PrintfCentered/PrintfRightAligned: форматирует,
- *        при необходимости обновляет x, взводит dirty при реальном изменении.
+ * @brief Общая часть Printf/PrintfCentered/PrintfRightAligned: применяет уже
+ *        отформатированный текст — обновляет x, взводит dirty при реальном
+ *        изменении. Bounds-check строки — на стороне вызывающих публичных
+ *        функций (там же он нужен ДО форматирования/замера ширины, так что
+ *        повторять его здесь было бы избыточно).
  */
-static void printf_at(uint8_t line, uint16_t new_x, const char *fmt, va_list args)
+static void set_line_text(uint8_t line, uint16_t new_x, const char *text)
 {
-    if (line >= TEXTFIELD_MAX_LINES || !s_lines[line].used) {
-        return;
-    }
-
-    char buf[TEXTFIELD_LINE_TEXT_MAX];
-    vsnprintf(buf, sizeof(buf), fmt, args);
-
     s_lines[line].x = new_x; /* дёшево пересчитывать каждый раз, даже если текст не изменился */
 
-    if (strncmp(buf, s_lines[line].text, TEXTFIELD_LINE_TEXT_MAX) != 0) {
-        strncpy(s_lines[line].text, buf, TEXTFIELD_LINE_TEXT_MAX - 1);
+    if (strncmp(text, s_lines[line].text, TEXTFIELD_LINE_TEXT_MAX) != 0) {
+        strncpy(s_lines[line].text, text, TEXTFIELD_LINE_TEXT_MAX - 1);
         s_lines[line].text[TEXTFIELD_LINE_TEXT_MAX - 1] = '\0';
         s_lines[line].dirty = true;
         /* shown_text/shown_x НЕ трогаем здесь — это то, что реально ещё на
@@ -87,10 +83,14 @@ void TextField_Printf(uint8_t line, const char *fmt, ...)
     if (line >= TEXTFIELD_MAX_LINES || !s_lines[line].used) {
         return;
     }
+
+    char buf[TEXTFIELD_LINE_TEXT_MAX];
     va_list args;
     va_start(args, fmt);
-    printf_at(line, s_lines[line].x, fmt, args); /* x не меняется — обычное поведение */
+    vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
+
+    set_line_text(line, s_lines[line].x, buf); /* x не меняется — обычное поведение */
 }
 
 void TextField_PrintfCentered(uint8_t line, uint16_t center_x, const char *fmt, ...)
@@ -109,9 +109,7 @@ void TextField_PrintfCentered(uint8_t line, uint16_t center_x, const char *fmt, 
     uint16_t half = (uint16_t)(width / 2);
     uint16_t new_x = (center_x > half) ? (uint16_t)(center_x - half) : 0;
 
-    va_start(args, fmt);
-    printf_at(line, new_x, fmt, args);
-    va_end(args);
+    set_line_text(line, new_x, buf);
 }
 
 void TextField_PrintfRightAligned(uint8_t line, uint16_t right_edge_x, const char *fmt, ...)
@@ -129,9 +127,7 @@ void TextField_PrintfRightAligned(uint8_t line, uint16_t right_edge_x, const cha
     uint16_t width = Gfx_MeasureTextWidth(s_lines[line].font, buf);
     uint16_t new_x = (right_edge_x > width) ? (uint16_t)(right_edge_x - width) : 0;
 
-    va_start(args, fmt);
-    printf_at(line, new_x, fmt, args);
-    va_end(args);
+    set_line_text(line, new_x, buf);
 }
 
 uint16_t TextField_GetShownWidth(uint8_t line)
@@ -153,7 +149,7 @@ bool TextField_IsSettled(uint8_t line)
         return true; /* нет такой строки — трогать нечего, не блокируем вызывающий код */
     }
     /* Пока задание для строки не завершилось, text и shown_text различаются
-     * (см. TextField_Process()/printf_at()) — как только gfx.c доигрывает
+     * (см. TextField_Process()/set_line_text()) — как только gfx.c доигрывает
      * задание до конца, TextField_Process() копирует снапшот в shown_text
      * и они снова совпадают. Это тот же критерий, что использует сам
      * TextField_Process() (через сравнение при старте нового задания), так
@@ -248,7 +244,7 @@ void TextField_Process(void)
          * shown_x берём из СНАПШОТА (что реально ушло в gfx.c и физически
          * нарисовано), а не из s_lines[...].text/x — те могли уже
          * измениться за время рендера (см. комментарий у s_active_text
-         * выше). Если изменились — dirty уже выставлен printf_at(), эта же
+         * выше). Если изменились — dirty уже выставлен set_line_text(), эта же
          * строка переотрисуется на следующем заходе с уже новым значением. */
         strncpy(s_lines[s_active_line].shown_text, s_active_text, TEXTFIELD_LINE_TEXT_MAX - 1);
         s_lines[s_active_line].shown_text[TEXTFIELD_LINE_TEXT_MAX - 1] = '\0';
