@@ -56,15 +56,12 @@
 #define ILI9341_MADCTL_MY    0x80  /* Row address order    */
 #define ILI9341_MADCTL_MX    0x40  /* Column address order  */
 #define ILI9341_MADCTL_MV    0x20  /* Row/Column exchange   */
-#define ILI9341_MADCTL_RGB   0x00  /* Порядок цвета RGB (не BGR) */
-#define ILI9341_MADCTL_BGR   0x08  /* Порядок цвета BGR — ВРЕМЕННО: многие
-                                     * ILI9341-модули разведены как BGR, но
-                                     * не все; если после прошивки цвета
-                                     * красный/синий перепутаны местами —
-                                     * добавить этот бит в MADCTL в
-                                     * Display_SetRotation() (ili9341.c),
-                                     * проверить по факту на этой конкретной
-                                     * панели */
+#define ILI9341_MADCTL_RGB   0x00  /* Порядок цвета RGB (не BGR) — НЕ подошёл этой панели, см. BGR ниже */
+#define ILI9341_MADCTL_BGR   0x08  /* Порядок цвета BGR — подтверждено на
+                                     * этой панели (жёлтый выходил голубым на
+                                     * RGB — классический признак перепутанных
+                                     * R/B, см. Display_SetRotation() в
+                                     * ili9341.c, сейчас используется этот бит) */
 
 /* COLMOD: 0x55 = 16 бит/пиксель (RGB565) */
 #define ILI9341_COLMOD_16BPP 0x55

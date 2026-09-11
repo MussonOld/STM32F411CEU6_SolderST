@@ -270,7 +270,7 @@ Display_Status_t Display_SetRotation(Display_Rotation_t rotation)
      * (портретные, MV=0) сейчас нигде не используются и не проверялись
      * вообще — если потребуются, ориентация/зеркальность на них не
      * гарантирована, проверять на месте. */
-    uint8_t madctl = ILI9341_MADCTL_RGB; /* поменять на ILI9341_MADCTL_BGR, если R/B перепутаны на этой панели */
+    uint8_t madctl = ILI9341_MADCTL_BGR; /* было RGB — жёлтый выходил голубым (R и B перепутаны местами), см. ili9341.h */
 
     switch (rotation) {
         case DISPLAY_ROTATION_0:
