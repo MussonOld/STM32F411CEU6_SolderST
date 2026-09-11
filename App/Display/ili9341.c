@@ -1,18 +1,22 @@
 /**
- * @file st7789.c
- * @brief Реализация display.h для контроллера ST7789
+ * @file ili9341.c
+ * @brief Реализация display.h для контроллера ILI9341
  *
  * SPI1 (TX-only + DMA2_Stream2), CS — аппаратно на GND (не управляется программно).
- * DC = PA3 (Disp_DC), RST = PA4 (Disp_RST).
+ * DC = PA3 (Disp_DC), RST = PA4 (Disp_RST) — те же пины, что и у st7789.c
+ * (одна и та же плата, сменилась только панель).
  *
- * ВАЖНО: этот файл и ili9341.c реализуют один и тот же контракт (display.h)
+ * ВАЖНО: этот файл и st7789.c реализуют один и тот же контракт (display.h)
  * и оба переопределяют HAL_SPI_TxCpltCallback() — собирать в проект нужно
  * ТОЛЬКО ОДИН из них одновременно (выбор контроллера на этапе компиляции,
- * см. докстринг display.h/Display.md).
+ * см. докстринг display.h/Display.md). В CubeIDE: правой кнопкой на
+ * неиспользуемый файл -> Resource Configurations -> Exclude from Build...
+ * для всех конфигураций, либо просто убрать его из проекта/переместить вне
+ * дерева исходников.
  */
 
 #include "display.h"
-#include "st7789.h"
+#include "ili9341.h"
 #include "stm32f4xx_hal.h"
 #include "main.h"
 #include <string.h>
@@ -60,12 +64,12 @@ static inline void dc_data(void)    { HAL_GPIO_WritePin(Disp_DC_GPIO_Port, Disp_
 /**
  * @brief Развернуть байты 16-бит цвета для передачи по SPI
  *
- * ST7789 в режиме RAMWR/16bpp ждёт каждый пиксель СТАРШИМ байтом вперёд
- * (см. datasheet, "65K-Colors" write format). STM32 — little-endian,
- * поэтому display_color_t в памяти лежит младшим байтом первым; передача
- * "как есть" (прямым приведением к uint8_t*) отправляет байты в обратном
- * порядке — R и B частично переставляются местами (например, чистый жёлтый
- * 0xFE80 доходит до контроллера как приглушённый синий).
+ * ILI9341 в режиме RAMWR/16bpp, как и ST7789, ждёт каждый пиксель СТАРШИМ
+ * байтом вперёд. STM32 — little-endian, поэтому display_color_t в памяти
+ * лежит младшим байтом первым; передача "как есть" (прямым приведением к
+ * uint8_t*) отправляет байты в обратном порядке — R и B частично
+ * переставляются местами (например, чистый жёлтый 0xFE80 доходит до
+ * контроллера как приглушённый синий).
  */
 static inline display_color_t byte_swap16(display_color_t v)
 {
@@ -94,7 +98,7 @@ static void write_data_u8(uint8_t value)
  *        (s_write_ptr, const, НЕ мутируется) в собственный scratch-буфер
  *        драйвера и запустить его передачу по DMA. Продвигает s_write_ptr/
  *        s_write_remaining. Вызывается и из Display_WritePixelsDMA() (первый
- *        чанк), и из ST7789_OnDmaTxComplete() (продолжение).
+ *        чанк), и из ILI9341_OnDmaTxComplete() (продолжение).
  */
 static Display_Status_t start_write_chunk(void)
 {
@@ -116,7 +120,7 @@ static Display_Status_t start_write_chunk(void)
 
 /* ---- Обработчик завершения DMA (вызывается из HAL_SPI_TxCpltCallback) ---- */
 
-void ST7789_OnDmaTxComplete(void)
+void ILI9341_OnDmaTxComplete(void)
 {
     if (s_fill_remaining > 0) {
         uint32_t chunk = (s_fill_remaining > FILL_LINE_PIXELS) ? FILL_LINE_PIXELS : s_fill_remaining;
@@ -145,7 +149,7 @@ void ST7789_OnDmaTxComplete(void)
 void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
 {
     if (hspi->Instance == SPI1) {
-        ST7789_OnDmaTxComplete();
+        ILI9341_OnDmaTxComplete();
     }
 }
 
@@ -154,21 +158,79 @@ void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
 Display_Status_t Display_Init(void)
 {
     HAL_GPIO_WritePin(Disp_RST_GPIO_Port, Disp_RST_Pin, GPIO_PIN_RESET);
-    HAL_Delay(ST7789_DELAY_RESET_MS);
+    HAL_Delay(ILI9341_DELAY_RESET_MS);
     HAL_GPIO_WritePin(Disp_RST_GPIO_Port, Disp_RST_Pin, GPIO_PIN_SET);
-    HAL_Delay(ST7789_DELAY_AFTER_RST_MS);
+    HAL_Delay(ILI9341_DELAY_AFTER_RST_MS);
 
-    write_command(ST7789_CMD_SLPOUT);
-    HAL_Delay(ST7789_DELAY_SLPOUT_MS);
+    /* Полная init-последовательность (типовая для модулей на ILI9341 —
+     * Power Control/VCOM/Gamma; см. комментарий в ili9341.h про то, почему
+     * ST7789-драйвер с одним SLPOUT+COLMOD запускал эту панель лишь
+     * "иногда"). Значения — стандартные заводские из применяемых на таких
+     * модулях референсных init-последовательностей; если после прошивки
+     * контраст/цвета выглядят не оптимально — подбирается по месту,
+     * контроллер от неверных (в разумных пределах) значений не "залипает". */
+    write_command(ILI9341_CMD_PWCTRB);
+    { uint8_t d[3] = {0x00, 0xC1, 0x30}; write_data(d, sizeof(d)); }
 
-    write_command(ST7789_CMD_COLMOD);
-    write_data_u8(ST7789_COLMOD_16BPP);
+    write_command(ILI9341_CMD_POSC);
+    { uint8_t d[4] = {0x64, 0x03, 0x12, 0x81}; write_data(d, sizeof(d)); }
+
+    write_command(ILI9341_CMD_DRVTIMA);
+    { uint8_t d[3] = {0x85, 0x00, 0x78}; write_data(d, sizeof(d)); }
+
+    write_command(ILI9341_CMD_PWSEQCTRL);
+    write_data_u8(0x20);
+
+    write_command(ILI9341_CMD_DRVTIMB);
+    { uint8_t d[2] = {0x00, 0x00}; write_data(d, sizeof(d)); }
+
+    write_command(ILI9341_CMD_PWCTR1);
+    write_data_u8(0x23); /* GVDD ~4.6V */
+
+    write_command(ILI9341_CMD_PWCTR2);
+    write_data_u8(0x10); /* Step-up factor */
+
+    write_command(ILI9341_CMD_VMCTR1);
+    { uint8_t d[2] = {0x3E, 0x28}; write_data(d, sizeof(d)); } /* VCOMH/VCOML */
+
+    write_command(ILI9341_CMD_VMCTR2);
+    write_data_u8(0x86); /* VCOM offset */
+
+    write_command(ILI9341_CMD_FRMCTR1);
+    { uint8_t d[2] = {0x00, 0x18}; write_data(d, sizeof(d)); } /* ~79Hz, диапазон по умолчанию */
+
+    write_command(ILI9341_CMD_DFUNCTR);
+    { uint8_t d[3] = {0x08, 0x82, 0x27}; write_data(d, sizeof(d)); }
+
+    write_command(ILI9341_CMD_EN3GAM);
+    write_data_u8(0x00); /* 3G (доп. гамма-режим) выключен */
+
+    write_command(ILI9341_CMD_GAMSET);
+    write_data_u8(0x01); /* гамма-кривая 1 */
+
+    write_command(ILI9341_CMD_GMCTRP1);
+    { uint8_t d[15] = {0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E,
+                        0xF1, 0x37, 0x07, 0x10, 0x03, 0x0E, 0x09, 0x00};
+      write_data(d, sizeof(d)); }
+
+    write_command(ILI9341_CMD_GMCTRN1);
+    { uint8_t d[15] = {0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31,
+                        0xC1, 0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36, 0x0F};
+      write_data(d, sizeof(d)); }
+
+    write_command(ILI9341_CMD_COLMOD);
+    write_data_u8(ILI9341_COLMOD_16BPP);
+
+    write_command(ILI9341_CMD_SLPOUT);
+    HAL_Delay(ILI9341_DELAY_SLPOUT_MS);
 
     Display_SetRotation(DISPLAY_ROTATION_0);
 
-    write_command(ST7789_CMD_INVON);
-    write_command(ST7789_CMD_NORON);
-    write_command(ST7789_CMD_DISPON);
+    write_command(ILI9341_CMD_INVOFF); /* ILI9341, в отличие от ST7789, обычно НЕ требует INVON —
+                                         * если цвета выглядят инвертированными на этой конкретной
+                                         * панели, заменить на ILI9341_CMD_INVON по месту */
+    write_command(ILI9341_CMD_NORON);
+    write_command(ILI9341_CMD_DISPON);
 
     s_busy = false;
     s_fill_remaining = 0;
@@ -193,34 +255,34 @@ Display_Status_t Display_SetRotation(Display_Rotation_t rotation)
         return DISPLAY_BUSY;
     }
 
-    uint8_t madctl = ST7789_MADCTL_RGB;
+    uint8_t madctl = ILI9341_MADCTL_RGB; /* поменять на ILI9341_MADCTL_BGR, если R/B перепутаны на этой панели */
 
     switch (rotation) {
         case DISPLAY_ROTATION_0:
-            madctl |= ST7789_MADCTL_MX | ST7789_MADCTL_MV;
-            s_width  = ST7789_RAM_HEIGHT;
-            s_height = ST7789_RAM_WIDTH;
+            madctl |= ILI9341_MADCTL_MX | ILI9341_MADCTL_MV;
+            s_width  = ILI9341_RAM_HEIGHT;
+            s_height = ILI9341_RAM_WIDTH;
             break;
         case DISPLAY_ROTATION_90:
             madctl |= 0x00;
-            s_width  = ST7789_RAM_WIDTH;
-            s_height = ST7789_RAM_HEIGHT;
+            s_width  = ILI9341_RAM_WIDTH;
+            s_height = ILI9341_RAM_HEIGHT;
             break;
         case DISPLAY_ROTATION_180:
-            madctl |= ST7789_MADCTL_MY | ST7789_MADCTL_MV;
-            s_width  = ST7789_RAM_HEIGHT;
-            s_height = ST7789_RAM_WIDTH;
+            madctl |= ILI9341_MADCTL_MY | ILI9341_MADCTL_MV;
+            s_width  = ILI9341_RAM_HEIGHT;
+            s_height = ILI9341_RAM_WIDTH;
             break;
         case DISPLAY_ROTATION_270:
-            madctl |= ST7789_MADCTL_MX | ST7789_MADCTL_MY;
-            s_width  = ST7789_RAM_WIDTH;
-            s_height = ST7789_RAM_HEIGHT;
+            madctl |= ILI9341_MADCTL_MX | ILI9341_MADCTL_MY;
+            s_width  = ILI9341_RAM_WIDTH;
+            s_height = ILI9341_RAM_HEIGHT;
             break;
         default:
             return DISPLAY_ERROR;
     }
 
-    write_command(ST7789_CMD_MADCTL);
+    write_command(ILI9341_CMD_MADCTL);
     write_data_u8(madctl);
 
     s_rotation = rotation;
@@ -247,13 +309,13 @@ Display_Status_t Display_SetWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16
     uint8_t raset[4] = { (uint8_t)(y0 >> 8), (uint8_t)(y0 & 0xFF),
                          (uint8_t)(y1 >> 8), (uint8_t)(y1 & 0xFF) };
 
-    write_command(ST7789_CMD_CASET);
+    write_command(ILI9341_CMD_CASET);
     write_data(caset, sizeof(caset));
 
-    write_command(ST7789_CMD_RASET);
+    write_command(ILI9341_CMD_RASET);
     write_data(raset, sizeof(raset));
 
-    write_command(ST7789_CMD_RAMWR);
+    write_command(ILI9341_CMD_RAMWR);
     return DISPLAY_OK;
 }
 
@@ -315,7 +377,7 @@ Display_Status_t Display_SleepIn(void)
     if (s_busy) {
         return DISPLAY_BUSY;
     }
-    write_command(ST7789_CMD_SLPIN);
+    write_command(ILI9341_CMD_SLPIN);
     return DISPLAY_OK;
 }
 
@@ -324,7 +386,7 @@ Display_Status_t Display_SleepOut(void)
     if (s_busy) {
         return DISPLAY_BUSY;
     }
-    write_command(ST7789_CMD_SLPOUT);
-    HAL_Delay(ST7789_DELAY_SLPOUT_MS);
+    write_command(ILI9341_CMD_SLPOUT);
+    HAL_Delay(ILI9341_DELAY_SLPOUT_MS);
     return DISPLAY_OK;
 }
