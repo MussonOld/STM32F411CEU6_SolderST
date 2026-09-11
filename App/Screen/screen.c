@@ -222,7 +222,7 @@ enum {
 static channel_id_t s_last_active_channel;
 static bool s_last_fault[CHANNEL_COUNT]; /* чтобы перекрашивать title/current только при реальном изменении неисправности */
 static screen_mode_t s_last_screen_mode; /* чтобы очищать экран только при реальной смене режима, не каждый кадр */
-static sleep_mode_t s_last_sleep_mode[CHANNEL_COUNT]; /* чтобы перекрашивать таймер сна только при реальной смене режима */
+static display_color_t s_last_sleep_color[CHANNEL_COUNT]; /* чтобы перекрашивать таймер сна только при реальной смене цвета (не режима — один и тот же mode может значить разный цвет, см. update_sleep_status()) */
 static uint16_t s_sleep_icon_x[CHANNEL_COUNT]; /* x, по которому иконка РЕАЛЬНО сейчас нарисована на экране (актуален только пока s_sleep_icon_shown[ch]==true) — пересчитывается в update_sleep_status() */
 static bool s_sleep_icon_shown[CHANNEL_COUNT]; /* сейчас ли иконка реально нарисована на экране (скрыта, когда таймер не отображается) */
 
@@ -470,7 +470,7 @@ void Screen_Init(void)
 
     for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
         s_last_fault[ch] = false; /* Error_Init() тоже гарантирует "нет неисправности" по умолчанию */
-        s_last_sleep_mode[ch] = SLEEP_MODE_AWAKE; /* Sleep_Init() тоже гарантирует AWAKE по умолчанию; совпадает с COLOR_SLEEP_AWAKE выше */
+        s_last_sleep_color[ch] = COLOR_SLEEP_AWAKE; /* Sleep_Init() тоже гарантирует AWAKE/remaining=0 по умолчанию -> пусто, цвет не виден, но белый — нейтральный старт */
     }
     /* Solder активен по умолчанию при старте (см. InputFSM_Init()) —
      * начальные цвета выше уже расставлены соответственно. */
@@ -527,13 +527,18 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
  * @brief Обновить поле таймера сна одного канала в инфозоне (текст, цвет
  *        И иконку циферблата)
  *
- * AWAKE (простаивает, до PRESLEEP)       -> "MM:SS" + иконка, белый
- * AWAKE (не простаивает / выключено)     -> "" (пусто), без иконки, белый
- * PRESLEEP (до SLEEP)                    -> "MM:SS" + иконка, жёлтый
- * PRESLEEP (SleepTimeout выключен)       -> "Предсон" + иконка (без времени — бессрочно), жёлтый
- * SLEEP                                   -> "Спит" + иконка (физического
- *                                            снижения нагрева при входе в
- *                                            SLEEP пока нет — см. ниже), красный
+ * Цвет зависит не от `mode` напрямую, а от того, КАКОЙ порог сейчас
+ * отсчитывается (таймеры независимы, см. sleep.c/Sleep.md) — один и тот же
+ * mode может значить разный цвет:
+ *
+ * AWAKE, remaining==0 (не простаивает)               -> "" (пусто), без иконки, цвет не виден
+ * AWAKE, remaining>0, PreSleepTimeout включён          -> "MM:SS" + иконка, жёлтый  — отсчёт ДО первого (PreSleep)
+ * AWAKE, remaining>0, PreSleepTimeout ВЫКЛЮЧЕН         -> "MM:SS" + иконка, красный — первый выключен, это уже "второй" (Sleep) таймер, стартует сразу по простою вместо первого
+ * PRESLEEP, remaining==0 (SleepTimeout выключен)       -> "Предсон" + иконка (бессрочно, второго таймера нет), жёлтый
+ * PRESLEEP, remaining>0 (первый уже сработал)          -> "MM:SS" + иконка, красный — отсчёт "второго" (Sleep) таймера, а не статичная "Предсон"
+ * SLEEP                                                 -> "Спит" + иконка (физического
+ *                                                          снижения нагрева при входе в
+ *                                                          SLEEP пока нет — см. ниже), красный
  *
  * Текст всегда выравнивается по правому краю right_edge_x. Иконка
  * циферблата ставится СЛЕВА от него вплотную (зазор SLEEP_ICON_GAP_X),
@@ -636,15 +641,35 @@ static void update_sleep_status(channel_id_t ch, uint8_t line, uint16_t right_ed
         }
     }
 
-    if (mode != s_last_sleep_mode[ch]) {
-        display_color_t color;
-        switch (mode) {
-            case SLEEP_MODE_PRESLEEP: color = COLOR_SLEEP_PRESLEEP; break;
-            case SLEEP_MODE_SLEEP:    color = COLOR_SLEEP_SLEEP;    break;
-            default:                  color = COLOR_SLEEP_AWAKE;   break;
-        }
+    display_color_t color = COLOR_SLEEP_AWAKE;
+    switch (mode) {
+        case SLEEP_MODE_AWAKE:
+            /* remaining==0 -> не простаивает, ничего не считаем, цвет не важен
+             * (buf пуст). remaining>0 -> если PreSleepTimeout включён, это
+             * отсчёт ДО НЕГО (жёлтый, "первый" таймер); если выключен,
+             * Sleep_GetRemainingSeconds() в AWAKE уже считает от простоя
+             * напрямую до SLEEP (см. sleep.c) — фактически "второй" таймер,
+             * красный, стартует сразу по простою вместо первого. */
+            if (remaining != 0) {
+                color = (Settings_GetPreSleepTimeout(ch) > 0) ? COLOR_SLEEP_PRESLEEP : COLOR_SLEEP_SLEEP;
+            }
+            break;
+        case SLEEP_MODE_PRESLEEP:
+            /* remaining==0 -> SleepTimeout выключен, PRESLEEP бессрочно,
+             * "второго" таймера нет — жёлтый статичный "Предсон". remaining>0
+             * -> первый (PreSleep) уже сработал, это отсчёт "второго"
+             * (Sleep) таймера — красный, а не жёлтая "Предсон". */
+            color = (remaining == 0) ? COLOR_SLEEP_PRESLEEP : COLOR_SLEEP_SLEEP;
+            break;
+        case SLEEP_MODE_SLEEP:
+            color = COLOR_SLEEP_SLEEP;
+            break;
+        default:
+            break;
+    }
+    if (color != s_last_sleep_color[ch]) {
         TextField_SetColors(line, color, COLOR_BG);
-        s_last_sleep_mode[ch] = mode;
+        s_last_sleep_color[ch] = color;
     }
 }
 
