@@ -255,26 +255,34 @@ Display_Status_t Display_SetRotation(Display_Rotation_t rotation)
         return DISPLAY_BUSY;
     }
 
+    /* MX/MY здесь ЗЕРКАЛЬНО по отношению к тому, что было в st7789.c: на
+     * ILI9341 при том же MV (row/col exchange) картинка выходила зеркальной
+     * по горизонтали при исходной паре MX|MV/MY|MV — поменял местами MX<->MY
+     * во всех четырёх ориентациях. Проверено вживую только для ROTATION_0
+     * (единственная, которую реально использует Display_Init()); 90/180/270
+     * сейчас не задействуются нигде в коде — если потребуются, картинка от
+     * них может оказаться зеркальной или повёрнутой не в ту сторону,
+     * проверять на месте. */
     uint8_t madctl = ILI9341_MADCTL_RGB; /* поменять на ILI9341_MADCTL_BGR, если R/B перепутаны на этой панели */
 
     switch (rotation) {
         case DISPLAY_ROTATION_0:
-            madctl |= ILI9341_MADCTL_MX | ILI9341_MADCTL_MV;
-            s_width  = ILI9341_RAM_HEIGHT;
-            s_height = ILI9341_RAM_WIDTH;
-            break;
-        case DISPLAY_ROTATION_90:
-            madctl |= 0x00;
-            s_width  = ILI9341_RAM_WIDTH;
-            s_height = ILI9341_RAM_HEIGHT;
-            break;
-        case DISPLAY_ROTATION_180:
             madctl |= ILI9341_MADCTL_MY | ILI9341_MADCTL_MV;
             s_width  = ILI9341_RAM_HEIGHT;
             s_height = ILI9341_RAM_WIDTH;
             break;
-        case DISPLAY_ROTATION_270:
+        case DISPLAY_ROTATION_90:
             madctl |= ILI9341_MADCTL_MX | ILI9341_MADCTL_MY;
+            s_width  = ILI9341_RAM_WIDTH;
+            s_height = ILI9341_RAM_HEIGHT;
+            break;
+        case DISPLAY_ROTATION_180:
+            madctl |= ILI9341_MADCTL_MX | ILI9341_MADCTL_MV;
+            s_width  = ILI9341_RAM_HEIGHT;
+            s_height = ILI9341_RAM_WIDTH;
+            break;
+        case DISPLAY_ROTATION_270:
+            madctl |= 0x00;
             s_width  = ILI9341_RAM_WIDTH;
             s_height = ILI9341_RAM_HEIGHT;
             break;
