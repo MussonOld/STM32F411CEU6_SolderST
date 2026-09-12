@@ -67,12 +67,11 @@ void Error_Handler(void);
 #define Disp_RST_GPIO_Port GPIOA
 #define DRDY_Desolder_Pin GPIO_PIN_6
 #define DRDY_Desolder_GPIO_Port GPIOA
-#define Dock_Pin GPIO_PIN_0
-#define Dock_GPIO_Port GPIOB
-#define Dock_EXTI_IRQn EXTI0_IRQn
+#define Dock_Pin GPIO_PIN_1
+#define Dock_GPIO_Port GPIOA
 #define Desolder_Test_Pin GPIO_PIN_1
 #define Desolder_Test_GPIO_Port GPIOB
-#define Solder_Test_Pin GPIO_PIN_2
+#define Solder_Test_Pin GPIO_PIN_0
 #define Solder_Test_GPIO_Port GPIOB
 #define Btn_Pump_Pin GPIO_PIN_12
 #define Btn_Pump_GPIO_Port GPIOB
@@ -90,8 +89,10 @@ void Error_Handler(void);
 #define UP_GPIO_Port GPIOA
 #define TOOLS_Pin GPIO_PIN_15
 #define TOOLS_GPIO_Port GPIOA
-#define BEEP_Pin GPIO_PIN_3
+#define BEEP_Pin GPIO_PIN_2
 #define BEEP_GPIO_Port GPIOB
+#define Pok_Pin GPIO_PIN_3
+#define Pok_GPIO_Port GPIOB
 #define Solder_On_Pin GPIO_PIN_4
 #define Solder_On_GPIO_Port GPIOB
 #define Desolder_On_Pin GPIO_PIN_5
