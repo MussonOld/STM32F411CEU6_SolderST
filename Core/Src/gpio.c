@@ -97,7 +97,9 @@ void MX_GPIO_Init(void)
   /*Configure GPIO pin : Pok_Pin */
   GPIO_InitStruct.Pin = Pok_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL; /* назначение/полярность сигнала не уточнены — см. чат, подобрать по месту */
+  GPIO_InitStruct.Pull = GPIO_PULLUP; /* Power OK от блока питания, активный низкий (см. чат) —
+                                        * подтяжка на случай открытого стока на стороне БП; если
+                                        * там push-pull, лишней подтяжка не мешает */
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pins : Pump_On_Pin BEEP_Pin Solder_On_Pin Desolder_On_Pin
