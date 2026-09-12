@@ -57,7 +57,15 @@ void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOA, Disp_DC_Pin|Disp_RST_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, Pump_On_Pin|BEEP_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, Pump_On_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, BEEP_Pin, GPIO_PIN_SET); /* ПРЕДПОЛОЖЕНИЕ: зуммер активный низкий (орал постоянно на
+                                                       * дефолтном LOW, см. чат) — если после прошивки молчит и
+                                                       * дальше НИКОГДА не пищит (никакого кода, который бы им
+                                                       * управлял, в прошивке всё ещё нет — только этот дефолт),
+                                                       * то полярность угадана верно; если наоборот запищал —
+                                                       * значит активный высокий, вернуть на GPIO_PIN_RESET */
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, Solder_On_Pin|Desolder_On_Pin|ADS1220_Solder_CS_Pin|ADS1220_Desolder_CS_Pin, GPIO_PIN_SET);
