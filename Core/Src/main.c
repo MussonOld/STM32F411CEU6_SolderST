@@ -116,6 +116,7 @@ int main(void)
   Settings_Init();   /* дефолты в RAM на случай сбоя чтения ниже */
   Error_Init();
   Error_ReportEepromStatus(Settings_Load()); /* поверх дефолтов — то, что реально сохранено в EEPROM (или ошибка/стёртый чип, см. settings.c); статус — в Error, для сообщения в инфозоне */
+  Error_ReportPsuStatus(HAL_GPIO_ReadPin(Pok_GPIO_Port, Pok_Pin) == GPIO_PIN_RESET); /* разовое чтение сразу — иначе фейл-сейф Error_Init() мигнёт "БП не исправен" в первые ~10мс, даже если питание в норме, см. error.h */
   InputFSM_SyncStateFromSettings(); /* без этого State.setpoint_temp==0 до первого нажатия SET/UP/DN — см. fsm.h */
 
   Buttons_Init();
@@ -156,6 +157,7 @@ int main(void)
         poll10ms_last_tick += BUTTONS_POLL_MS;
         Buttons_Poll();
         Sleep_Poll(); /* тот же гейт 10мс — BUTTONS_POLL_MS == SLEEP_POLL_MS, см. sleep.h */
+        Error_ReportPsuStatus(HAL_GPIO_ReadPin(Pok_GPIO_Port, Pok_Pin) == GPIO_PIN_RESET); /* Pok активный низкий; без дебаунса — см. чат, если на реальном железе окажется дребезг, добавить по образцу sleep.c */
     }
 
     InputFSM_Poll();

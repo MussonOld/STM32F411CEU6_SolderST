@@ -18,6 +18,8 @@ static bool         s_eeprom_transient_active;
 static uint32_t     s_eeprom_transient_start;
 static const char  *s_eeprom_transient_msg;
 
+static bool         s_psu_fault;                /* true = БП неисправен (Pok высокий) — НЕ защёлкивается, снимается само по возврату Pok в норму, см. Error_ReportPsuStatus() */
+
 void Error_Init(void)
 {
     for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
@@ -28,6 +30,7 @@ void Error_Init(void)
     s_eeprom_transient_active = false;
     s_eeprom_transient_start = 0;
     s_eeprom_transient_msg = NULL;
+    s_psu_fault = true; /* фейл-сейф до первого реального Error_ReportPsuStatus() из главного цикла (см. main.c) — считаем БП неисправным, пока не подтверждено обратное */
 }
 
 void Error_ReportEepromStatus(SettingsLoadStatus_t status)
@@ -58,6 +61,9 @@ bool Error_IsEepromAlarmActive(void)
 
 const char *Error_GetInfoZoneMessage(void)
 {
+    if (s_psu_fault) {
+        return "БП не исправен"; /* высший приоритет — даже над аварией EEPROM: без исправного питания EEPROM всё равно не имеет значения */
+    }
     if (s_eeprom_alarm) {
         return "АВАРИЯ EEPROM"; /* приоритет выше транзитного сообщения */
     }
@@ -65,6 +71,16 @@ const char *Error_GetInfoZoneMessage(void)
         return s_eeprom_transient_msg;
     }
     return NULL;
+}
+
+void Error_ReportPsuStatus(bool ok)
+{
+    s_psu_fault = !ok;
+}
+
+bool Error_IsPsuFaultActive(void)
+{
+    return s_psu_fault;
 }
 
 void Error_Poll(void)
@@ -102,6 +118,7 @@ tool_fault_t Error_GetToolFault(channel_id_t ch)
 
 bool Error_IsChannelBlocked(channel_id_t ch)
 {
+    if (s_psu_fault) return true; /* глобально, оба канала — БП неисправен, нагрев/диагностику не имеет смысла делать без исправного питания */
     return Error_GetToolFault(ch) != TOOL_FAULT_NONE;
 }
 
