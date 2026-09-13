@@ -111,6 +111,9 @@ int main(void)
       HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
   }
 
+  /* Диагностика: пауза на прогрев питания панели — теперь ПОСЛЕ того, как
+   * RST уже прижат к земле выше, а не до. Подобрать/убрать по месту. */
+  HAL_Delay(250);
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -128,14 +131,6 @@ int main(void)
   MX_TIM3_Init();
   MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
-  /* Тест по просьбе пользователя: дёрнуть Display_RST после ВСЕХ
-   * MX_*_Init() (а не сразу после раннего assert-low) — RST/DC держатся в
-   * низком уровне с момента до SystemClock_Config() в любом случае, так
-   * что это изолированный тест одной переменной (длина паузы, 250→500 мс)
-   * поверх последнего известно-рабочего состояния (fd8c0e6), а не смесь с
-   * Pok/500мс-регрессией. */
-#define COLD_BOOT_TEST_DELAY_MS 500U
-  HAL_Delay(COLD_BOOT_TEST_DELAY_MS);
   Display_Init();
   Display_SetWindow(0, 0, 319, 239);
   Display_FillColorDMA(DISPLAY_RGB565(0, 0, 0), 320 * 240);
