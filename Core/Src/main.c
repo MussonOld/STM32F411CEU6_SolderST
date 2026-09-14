@@ -37,6 +37,7 @@
 #include "settings.h"
 #include "state.h"
 #include "error.h"
+#include "ads1220.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -170,6 +171,8 @@ int main(void)
   Error_ReportPsuStatus(HAL_GPIO_ReadPin(Pok_GPIO_Port, Pok_Pin) == GPIO_PIN_RESET); /* разовое чтение сразу — иначе фейл-сейф Error_Init() мигнёт "БП не исправен" в первые ~10мс, даже если питание в норме, см. error.h */
   InputFSM_SyncStateFromSettings(); /* без этого State.setpoint_temp==0 до первого нажатия SET/UP/DN — см. fsm.h */
 
+  ADS1220_Init(); /* оба канала (Solder/Desolder), см. ads1220.h по схеме/регистрам */
+
   Buttons_Init();
   Sleep_Init();
   InputFSM_Init();
@@ -221,6 +224,7 @@ int main(void)
         poll10ms_last_tick += BUTTONS_POLL_MS;
         Buttons_Poll();
         Sleep_Poll(); /* тот же гейт 10мс — BUTTONS_POLL_MS == SLEEP_POLL_MS, см. sleep.h */
+        ADS1220_Poll(); /* тот же гейт 10мс — ADS1220_POLL_MS тоже 10, см. ads1220.h (сам DRDY на 20SPS обновляется раз в ~50мс, опрос чаще — просто чтение GPIO, дёшево) */
         Error_ReportPsuStatus(HAL_GPIO_ReadPin(Pok_GPIO_Port, Pok_Pin) == GPIO_PIN_RESET); /* Pok активный низкий; без дебаунса — см. чат, если на реальном железе окажется дребезг, добавить по образцу sleep.c */
     }
 
