@@ -31,6 +31,7 @@ extern SPI_HandleTypeDef hspi1;
 
 /* ---- Внутреннее состояние драйвера ---- */
 static volatile bool s_busy = false;
+static volatile bool s_last_transfer_truncated = false;
 static Display_TxCpltCallback_t s_tx_cplt_cb = NULL;
 static Display_Rotation_t s_rotation = DISPLAY_ROTATION_0;
 static uint16_t s_width  = 320;
@@ -120,13 +121,29 @@ static Display_Status_t start_write_chunk(void)
 
 /* ---- Обработчик завершения DMA (вызывается из HAL_SPI_TxCpltCallback) ---- */
 
+/* До скольких раз подряд пробуем перезапустить continuation-чанк, если
+ * HAL_SPI_Transmit_DMA() отказал (см. чат: подозрение на редкий сбой SPI/DMA
+ * без программатора — граница "дорисовано/шум GRAM" на реальном экране
+ * ровно там, где цепочка тихо сдавалась с первой попытки). Без задержки
+ * между попытками — мы уже в контексте прерывания (приоритет DMA2_Stream2
+ * выше SysTick), HAL_Delay() здесь просто завис бы. */
+#define DMA_CONTINUE_RETRY_COUNT 3
+
 void ILI9341_OnDmaTxComplete(void)
 {
     if (s_fill_remaining > 0) {
         uint32_t chunk = (s_fill_remaining > FILL_LINE_PIXELS) ? FILL_LINE_PIXELS : s_fill_remaining;
         dc_data();
-        if (HAL_SPI_Transmit_DMA(&hspi1, (uint8_t *)s_fill_line, chunk * sizeof(display_color_t)) != HAL_OK) {
-            s_busy = false; /* DMA не смогла продолжить передачу — останавливаемся, не зависаем в busy навсегда */
+        bool started = false;
+        for (int attempt = 0; attempt < DMA_CONTINUE_RETRY_COUNT; attempt++) {
+            if (HAL_SPI_Transmit_DMA(&hspi1, (uint8_t *)s_fill_line, chunk * sizeof(display_color_t)) == HAL_OK) {
+                started = true;
+                break;
+            }
+        }
+        if (!started) {
+            s_busy = false; /* все попытки отказали — останавливаемся, не зависаем в busy навсегда */
+            s_last_transfer_truncated = true; /* см. Display_LastTransferTruncated() — видимость обрыва вместо тишины */
             return;
         }
         s_fill_remaining -= chunk; /* декремент только при подтверждённом старте DMA */
@@ -134,8 +151,16 @@ void ILI9341_OnDmaTxComplete(void)
     }
 
     if (s_write_remaining > 0) {
-        if (start_write_chunk() != DISPLAY_OK) {
-            s_busy = false; /* DMA не смогла продолжить передачу — останавливаемся, не зависаем в busy навсегда */
+        bool started = false;
+        for (int attempt = 0; attempt < DMA_CONTINUE_RETRY_COUNT; attempt++) {
+            if (start_write_chunk() == DISPLAY_OK) {
+                started = true;
+                break;
+            }
+        }
+        if (!started) {
+            s_busy = false; /* см. выше */
+            s_last_transfer_truncated = true;
         }
         return;
     }
@@ -261,6 +286,11 @@ bool Display_IsBusy(void)
     return s_busy;
 }
 
+bool Display_LastTransferTruncated(void)
+{
+    return s_last_transfer_truncated;
+}
+
 void Display_RegisterTxCpltCallback(Display_TxCpltCallback_t callback)
 {
     s_tx_cplt_cb = callback;
@@ -363,6 +393,7 @@ Display_Status_t Display_WritePixelsDMA(const display_color_t *pixels, uint32_t 
     s_fill_remaining  = 0;
     s_write_ptr       = pixels;
     s_write_remaining = count;
+    s_last_transfer_truncated = false;
 
     s_busy = true;
     if (start_write_chunk() != DISPLAY_OK) { /* байт-свап первого чанка в scratch + запуск DMA; pixels не трогается */
@@ -389,6 +420,7 @@ Display_Status_t Display_FillColorDMA(display_color_t color, uint32_t count)
     }
     s_fill_color = color;
     s_write_remaining = 0;
+    s_last_transfer_truncated = false;
 
     uint32_t chunk = (count > FILL_LINE_PIXELS) ? FILL_LINE_PIXELS : count;
     s_fill_remaining = count - chunk;
