@@ -37,7 +37,6 @@
 #include "settings.h"
 #include "state.h"
 #include "error.h"
-#include "ads1220.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -129,35 +128,8 @@ int main(void)
 
   /* Пауза на прогрев питания панели — после раннего assert-low RST/DC.
    * 250 мс работает после тёплого ресета (см. чат) — оставлена как есть,
-   * так как это уже не единственная защита от cold-boot (см. выше).
-   *
-   * ВРЕМЕННАЯ ДИАГНОСТИКА (см. чат): проверяем гипотезу, что PORRST/BORRST
-   * взводится не только при истинном power-on, но и от нажатия физической
-   * кнопки ресета — если так, каждое нажатие кнопки теперь неожиданно
-   * получает лишний самосброс поверх себя (см. was_power_on_reset ниже),
-   * что и может объяснять регрессию "кнопка перестала стартовать дисплей".
-   * ПОДТВЕРЖДЕНО (см. чат, gpio.c): зуммер активный ВЫСОКИЙ — "выкл" это
-   * GPIO_PIN_RESET, не SET, как было тут изначально по неверному
-   * предположению. */
-  __HAL_RCC_GPIOB_CLK_ENABLE();
-  {
-      GPIO_InitTypeDef GPIO_InitStruct = {0};
-      GPIO_InitStruct.Pin   = BEEP_Pin;
-      GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
-      GPIO_InitStruct.Pull  = GPIO_NOPULL;
-      GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-      HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-  }
-  HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_RESET); /* дефолт "выкл", активный высокий, см. gpio.c */
-  if (was_power_on_reset) {
-      for (int i = 0; i < 5; i++) {
-          HAL_GPIO_TogglePin(BEEP_GPIO_Port, BEEP_Pin);
-          HAL_Delay(25);
-      }
-      HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_RESET); /* вернуть в "выкл" перед основным init */
-  } else {
-      HAL_Delay(250);
-  }
+   * так как это уже не единственная защита от cold-boot (см. выше). */
+  HAL_Delay(250);
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -198,15 +170,6 @@ int main(void)
   Error_ReportPsuStatus(HAL_GPIO_ReadPin(Pok_GPIO_Port, Pok_Pin) == GPIO_PIN_RESET); /* разовое чтение сразу — иначе фейл-сейф Error_Init() мигнёт "БП не исправен" в первые ~10мс, даже если питание в норме, см. error.h */
   InputFSM_SyncStateFromSettings(); /* без этого State.setpoint_temp==0 до первого нажатия SET/UP/DN — см. fsm.h */
 
-  /* ВРЕМЕННО ОТКЛЮЧЕНО (см. чат): тест гипотезы — SPI2-трафик ADS1220_Init()
-   * (наводка на вечно слушающую SPI1-шину дисплея, CS которой аппаратно на
-   * GND) ломает уже проинициализированный ILI9341 (экран становится белым
-   * после ресета кнопкой, героику после Display_Init()+FillColorDMA
-   * МК не виснет — подтверждено heartbeat). Если после этой правки дисплей
-   * снова стартует на ресете кнопкой — причина локализована, возвращаем
-   * вызов и разбираемся с разводкой/наводкой отдельно. */
-  /* ADS1220_Init(); */
-
   Buttons_Init();
   Sleep_Init();
   InputFSM_Init();
@@ -232,16 +195,11 @@ int main(void)
    * ниже. */
   uint32_t screen_update_last_tick = HAL_GetTick();
 
-  /* ВРЕМЕННО ВОЗВРАЩЕНО (см. чат): после добавления ADS1220_Init() между
-   * Display_Init() и главным циклом появилась регрессия — ресет кнопкой
-   * (PORRST/BORRST не взводится, подтверждено диагностикой выше) перестал
-   * стартовать дисплей. Без heartbeat не отличить "МК завис в новом коде
-   * (например, в блокирующих SPI-транзакциях ADS1220_Init(), если чипы ещё
-   * не распаяны/не отвечают)" от "дошли до главного цикла, но именно
-   * дисплей не ожил". Если мигает — МК точно добрался до while(1), ищем
-   * дальше именно в дисплее; если НЕТ — зависание где-то между
-   * Display_Init() и этой точкой, первый подозреваемый — ADS1220_Init().
-   * Убрать вместе с остальной диагностикой ILI9341, когда разберёмся. */
+  /* Диагностика: heartbeat на BEEP_Pin (PB2, физически сейчас LED вместо
+   * зуммера) — переключение с полупериодом 250 мс даёт 2 Гц, чтобы визуально
+   * подтвердить, что МК живой и цикл while(1) крутится, независимо от
+   * состояния дисплея. Убрать вместе с веткой ниже в USER CODE BEGIN 3,
+   * когда диагностика ILI9341 закрыта. */
   uint32_t heartbeat_last_tick = HAL_GetTick();
 #define HEARTBEAT_HALF_PERIOD_MS 250U
 
@@ -263,20 +221,6 @@ int main(void)
         poll10ms_last_tick += BUTTONS_POLL_MS;
         Buttons_Poll();
         Sleep_Poll(); /* тот же гейт 10мс — BUTTONS_POLL_MS == SLEEP_POLL_MS, см. sleep.h */
-        ADS1220_Poll(); /* тот же гейт 10мс — ADS1220_POLL_MS тоже 10, см. ads1220.h (сам DRDY на 20SPS обновляется раз в ~50мс, опрос чаще — просто чтение GPIO, дёшево) */
-
-        /* Мостик ADS1220 -> State (временно здесь, пока нет отдельного Control-слоя —
-         * PID/обработка ошибок ещё впереди, см. чат). ADS1220_IsDataValid(ch) достаточно
-         * как гейта: он не может стать true без успешного init_ok (см. ADS1220_Poll()),
-         * так что отдельно проверять ADS1220_IsChannelOk() здесь не нужно. Пока нет ни
-         * одного валидного отсчёта — State.current_temp остаётся дефолтным (0 от
-         * State_Init()), Screen просто покажет 0, это ожидаемо на первых ~50мс после старта. */
-        for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
-            if (ADS1220_IsDataValid((channel_id_t)ch)) {
-                State_SetCurrentTemp((channel_id_t)ch, ADS1220_GetTemperatureC((channel_id_t)ch));
-            }
-        }
-
         Error_ReportPsuStatus(HAL_GPIO_ReadPin(Pok_GPIO_Port, Pok_Pin) == GPIO_PIN_RESET); /* Pok активный низкий; без дебаунса — см. чат, если на реальном железе окажется дребезг, добавить по образцу sleep.c */
     }
 
