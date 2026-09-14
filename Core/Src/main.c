@@ -136,9 +136,9 @@ int main(void)
    * кнопки ресета — если так, каждое нажатие кнопки теперь неожиданно
    * получает лишний самосброс поверх себя (см. was_power_on_reset ниже),
    * что и может объяснять регрессию "кнопка перестала стартовать дисплей".
-   * Мигаем BEEP 5 раз по 25мс (=те же 250мс, без доп. задержки), если флаг
-   * true; если false — просто держим паузу молча, как было. Убрать вместе
-   * с остальной диагностикой ILI9341, когда разберёмся. */
+   * ПОДТВЕРЖДЕНО (см. чат, gpio.c): зуммер активный ВЫСОКИЙ — "выкл" это
+   * GPIO_PIN_RESET, не SET, как было тут изначально по неверному
+   * предположению. */
   __HAL_RCC_GPIOB_CLK_ENABLE();
   {
       GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -148,13 +148,13 @@ int main(void)
       GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
       HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
   }
-  HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_SET); /* дефолт "выкл", см. 748269c */
+  HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_RESET); /* дефолт "выкл", активный высокий, см. gpio.c */
   if (was_power_on_reset) {
       for (int i = 0; i < 5; i++) {
           HAL_GPIO_TogglePin(BEEP_GPIO_Port, BEEP_Pin);
           HAL_Delay(25);
       }
-      HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_SET); /* вернуть в "выкл" перед основным init */
+      HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_RESET); /* вернуть в "выкл" перед основным init */
   } else {
       HAL_Delay(250);
   }
