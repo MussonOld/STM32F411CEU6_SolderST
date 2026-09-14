@@ -225,6 +225,19 @@ int main(void)
    * ниже. */
   uint32_t screen_update_last_tick = HAL_GetTick();
 
+  /* ВРЕМЕННО ВОЗВРАЩЕНО (см. чат): после добавления ADS1220_Init() между
+   * Display_Init() и главным циклом появилась регрессия — ресет кнопкой
+   * (PORRST/BORRST не взводится, подтверждено диагностикой выше) перестал
+   * стартовать дисплей. Без heartbeat не отличить "МК завис в новом коде
+   * (например, в блокирующих SPI-транзакциях ADS1220_Init(), если чипы ещё
+   * не распаяны/не отвечают)" от "дошли до главного цикла, но именно
+   * дисплей не ожил". Если мигает — МК точно добрался до while(1), ищем
+   * дальше именно в дисплее; если НЕТ — зависание где-то между
+   * Display_Init() и этой точкой, первый подозреваемый — ADS1220_Init().
+   * Убрать вместе с остальной диагностикой ILI9341, когда разберёмся. */
+  uint32_t heartbeat_last_tick = HAL_GetTick();
+#define HEARTBEAT_HALF_PERIOD_MS 250U
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -234,6 +247,11 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    if (HAL_GetTick() - heartbeat_last_tick >= HEARTBEAT_HALF_PERIOD_MS) {
+        heartbeat_last_tick += HEARTBEAT_HALF_PERIOD_MS;
+        HAL_GPIO_TogglePin(BEEP_GPIO_Port, BEEP_Pin); /* диагностика, см. USER CODE BEGIN 2 */
+    }
+
     if (HAL_GetTick() - poll10ms_last_tick >= BUTTONS_POLL_MS) {
         poll10ms_last_tick += BUTTONS_POLL_MS;
         Buttons_Poll();
