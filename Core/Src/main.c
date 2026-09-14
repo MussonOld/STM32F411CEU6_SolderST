@@ -37,6 +37,7 @@
 #include "settings.h"
 #include "state.h"
 #include "error.h"
+#include "ads1220.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -128,8 +129,35 @@ int main(void)
 
   /* Пауза на прогрев питания панели — после раннего assert-low RST/DC.
    * 250 мс работает после тёплого ресета (см. чат) — оставлена как есть,
-   * так как это уже не единственная защита от cold-boot (см. выше). */
-  HAL_Delay(250);
+   * так как это уже не единственная защита от cold-boot (см. выше).
+   *
+   * ВРЕМЕННАЯ ДИАГНОСТИКА (см. чат): проверяем гипотезу, что PORRST/BORRST
+   * взводится не только при истинном power-on, но и от нажатия физической
+   * кнопки ресета — если так, каждое нажатие кнопки теперь неожиданно
+   * получает лишний самосброс поверх себя (см. was_power_on_reset ниже),
+   * что и может объяснять регрессию "кнопка перестала стартовать дисплей".
+   * ПОДТВЕРЖДЕНО (см. чат, gpio.c): зуммер активный ВЫСОКИЙ — "выкл" это
+   * GPIO_PIN_RESET, не SET, как было тут изначально по неверному
+   * предположению. */
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  {
+      GPIO_InitTypeDef GPIO_InitStruct = {0};
+      GPIO_InitStruct.Pin   = BEEP_Pin;
+      GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+      GPIO_InitStruct.Pull  = GPIO_NOPULL;
+      GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+      HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  }
+  HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_RESET); /* дефолт "выкл", активный высокий, см. gpio.c */
+  if (was_power_on_reset) {
+      for (int i = 0; i < 5; i++) {
+          HAL_GPIO_TogglePin(BEEP_GPIO_Port, BEEP_Pin);
+          HAL_Delay(25);
+      }
+      HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_RESET); /* вернуть в "выкл" перед основным init */
+  } else {
+      HAL_Delay(250);
+  }
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -170,6 +198,8 @@ int main(void)
   Error_ReportPsuStatus(HAL_GPIO_ReadPin(Pok_GPIO_Port, Pok_Pin) == GPIO_PIN_RESET); /* разовое чтение сразу — иначе фейл-сейф Error_Init() мигнёт "БП не исправен" в первые ~10мс, даже если питание в норме, см. error.h */
   InputFSM_SyncStateFromSettings(); /* без этого State.setpoint_temp==0 до первого нажатия SET/UP/DN — см. fsm.h */
 
+  ADS1220_Init(); /* оба канала (Solder/Desolder), см. ads1220.h по схеме/регистрам */
+
   Buttons_Init();
   Sleep_Init();
   InputFSM_Init();
@@ -208,6 +238,20 @@ int main(void)
         poll10ms_last_tick += BUTTONS_POLL_MS;
         Buttons_Poll();
         Sleep_Poll(); /* тот же гейт 10мс — BUTTONS_POLL_MS == SLEEP_POLL_MS, см. sleep.h */
+        ADS1220_Poll(); /* тот же гейт 10мс — ADS1220_POLL_MS тоже 10, см. ads1220.h (сам DRDY на 20SPS обновляется раз в ~50мс, опрос чаще — просто чтение GPIO, дёшево) */
+
+        /* Мостик ADS1220 -> State (временно здесь, пока нет отдельного Control-слоя —
+         * PID/обработка ошибок ещё впереди, см. чат). ADS1220_IsDataValid(ch) достаточно
+         * как гейта: он не может стать true без успешного init_ok (см. ADS1220_Poll()),
+         * так что отдельно проверять ADS1220_IsChannelOk() здесь не нужно. Пока нет ни
+         * одного валидного отсчёта — State.current_temp остаётся дефолтным (0 от
+         * State_Init()), Screen просто покажет 0, это ожидаемо на первых ~50мс после старта. */
+        for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
+            if (ADS1220_IsDataValid((channel_id_t)ch)) {
+                State_SetCurrentTemp((channel_id_t)ch, ADS1220_GetTemperatureC((channel_id_t)ch));
+            }
+        }
+
         Error_ReportPsuStatus(HAL_GPIO_ReadPin(Pok_GPIO_Port, Pok_Pin) == GPIO_PIN_RESET); /* Pok активный низкий; без дебаунса — см. чат, если на реальном железе окажется дребезг, добавить по образцу sleep.c */
     }
 
