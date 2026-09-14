@@ -195,14 +195,6 @@ int main(void)
    * ниже. */
   uint32_t screen_update_last_tick = HAL_GetTick();
 
-  /* Диагностика: heartbeat на BEEP_Pin (PB2, физически сейчас LED вместо
-   * зуммера) — переключение с полупериодом 250 мс даёт 2 Гц, чтобы визуально
-   * подтвердить, что МК живой и цикл while(1) крутится, независимо от
-   * состояния дисплея. Убрать вместе с веткой ниже в USER CODE BEGIN 3,
-   * когда диагностика ILI9341 закрыта. */
-  uint32_t heartbeat_last_tick = HAL_GetTick();
-#define HEARTBEAT_HALF_PERIOD_MS 250U
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -212,11 +204,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if (HAL_GetTick() - heartbeat_last_tick >= HEARTBEAT_HALF_PERIOD_MS) {
-        heartbeat_last_tick += HEARTBEAT_HALF_PERIOD_MS;
-        HAL_GPIO_TogglePin(BEEP_GPIO_Port, BEEP_Pin); /* диагностика, см. USER CODE BEGIN 2 */
-    }
-
     if (HAL_GetTick() - poll10ms_last_tick >= BUTTONS_POLL_MS) {
         poll10ms_last_tick += BUTTONS_POLL_MS;
         Buttons_Poll();
