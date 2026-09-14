@@ -129,8 +129,35 @@ int main(void)
 
   /* Пауза на прогрев питания панели — после раннего assert-low RST/DC.
    * 250 мс работает после тёплого ресета (см. чат) — оставлена как есть,
-   * так как это уже не единственная защита от cold-boot (см. выше). */
-  HAL_Delay(250);
+   * так как это уже не единственная защита от cold-boot (см. выше).
+   *
+   * ВРЕМЕННАЯ ДИАГНОСТИКА (см. чат): проверяем гипотезу, что PORRST/BORRST
+   * взводится не только при истинном power-on, но и от нажатия физической
+   * кнопки ресета — если так, каждое нажатие кнопки теперь неожиданно
+   * получает лишний самосброс поверх себя (см. was_power_on_reset ниже),
+   * что и может объяснять регрессию "кнопка перестала стартовать дисплей".
+   * Мигаем BEEP 5 раз по 25мс (=те же 250мс, без доп. задержки), если флаг
+   * true; если false — просто держим паузу молча, как было. Убрать вместе
+   * с остальной диагностикой ILI9341, когда разберёмся. */
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  {
+      GPIO_InitTypeDef GPIO_InitStruct = {0};
+      GPIO_InitStruct.Pin   = BEEP_Pin;
+      GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+      GPIO_InitStruct.Pull  = GPIO_NOPULL;
+      GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+      HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  }
+  HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_SET); /* дефолт "выкл", см. 748269c */
+  if (was_power_on_reset) {
+      for (int i = 0; i < 5; i++) {
+          HAL_GPIO_TogglePin(BEEP_GPIO_Port, BEEP_Pin);
+          HAL_Delay(25);
+      }
+      HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_SET); /* вернуть в "выкл" перед основным init */
+  } else {
+      HAL_Delay(250);
+  }
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -198,14 +225,6 @@ int main(void)
    * ниже. */
   uint32_t screen_update_last_tick = HAL_GetTick();
 
-  /* Диагностика: heartbeat на BEEP_Pin (PB2, физически сейчас LED вместо
-   * зуммера) — переключение с полупериодом 250 мс даёт 2 Гц, чтобы визуально
-   * подтвердить, что МК живой и цикл while(1) крутится, независимо от
-   * состояния дисплея. Убрать вместе с веткой ниже в USER CODE BEGIN 3,
-   * когда диагностика ILI9341 закрыта. */
-  uint32_t heartbeat_last_tick = HAL_GetTick();
-#define HEARTBEAT_HALF_PERIOD_MS 250U
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -215,11 +234,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if (HAL_GetTick() - heartbeat_last_tick >= HEARTBEAT_HALF_PERIOD_MS) {
-        heartbeat_last_tick += HEARTBEAT_HALF_PERIOD_MS;
-        HAL_GPIO_TogglePin(BEEP_GPIO_Port, BEEP_Pin); /* диагностика, см. USER CODE BEGIN 2 */
-    }
-
     if (HAL_GetTick() - poll10ms_last_tick >= BUTTONS_POLL_MS) {
         poll10ms_last_tick += BUTTONS_POLL_MS;
         Buttons_Poll();
