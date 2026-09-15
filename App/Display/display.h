@@ -71,19 +71,6 @@ Display_Status_t Display_Init(void);
 bool Display_IsBusy(void);
 
 /**
- * @brief Проверить, завершилась ли последняя DMA-передача (Display_WritePixelsDMA/
- *        Display_FillColorDMA) ПОЛНОСТЬЮ, или была тихо оборвана на середине
- * @return true — последняя завершившаяся передача (Display_IsBusy()==false) реально
- *         дошла до конца; false — была оборвана раньше срока (см. чат: HAL_SPI_Transmit_DMA()
- *         отказал на продолжении чанка внутри TxCplt-callback'а — до трёх повторных попыток,
- *         но если все отказали, цепочка тихо останавливается, s_busy сбрасывается, чтобы не
- *         зависнуть НАВСЕГДА, а видимость обрыва — через этот геттер). Актуально только
- *         сразу после Display_IsBusy()==false — следующий вызов Display_WritePixelsDMA/
- *         Display_FillColorDMA сбрасывает флаг под новую передачу.
- */
-bool Display_LastTransferTruncated(void);
-
-/**
  * @brief Зарегистрировать callback на завершение DMA-передачи
  * @param callback Указатель на функцию, или NULL чтобы отключить уведомление
  */
