@@ -52,6 +52,14 @@
 #define ILI9341_CMD_GMCTRP1      0xE0 /* Positive Gamma Correction */
 #define ILI9341_CMD_GMCTRN1      0xE1 /* Negative Gamma Correction */
 
+/* ВРЕМЕННО (см. чат): команды чтения статусных регистров для диагностики
+ * через MISO (PA6, временно переброшен с DRDY_Desolder) — сравнить
+ * RDDPM/RDDSDR на первом (сейчас безусловно самосбрасываемом) и втором
+ * проходе double-pass, чтобы понять, готов ли контроллер физически к
+ * моменту команд на первом проходе, или дело в чём-то другом. */
+#define ILI9341_CMD_RDDPM        0x0A /* Read Display Power Mode */
+#define ILI9341_CMD_RDDSDR       0x0F /* Read Display Self-Diagnostic Result */
+
 /* MADCTL биты (Memory Access Control) — расположение как у ST7789, плюс BGR */
 #define ILI9341_MADCTL_MY    0x80  /* Row address order    */
 #define ILI9341_MADCTL_MX    0x40  /* Column address order  */

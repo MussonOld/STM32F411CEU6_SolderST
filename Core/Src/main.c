@@ -38,6 +38,14 @@
 #include "state.h"
 #include "error.h"
 #include "ads1220.h"
+#include "eeprom.h"
+#include <stdio.h>
+
+/* ВРЕМЕННО (см. чат): ili9341.h приватный (инклюдится только ili9341.c),
+ * так что для одноразовой MISO-диагностики просто forward-декларируем
+ * саму функцию, не вытягивая весь приватный заголовок сюда. Убрать вместе
+ * с остальным диагностическим кодом ниже, когда разберёмся. */
+void ILI9341_ReadDiagRegisters(uint8_t *rx4);
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -47,7 +55,11 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+/* ВРЕМЕННО (см. чат): скретч под MISO-диагностику, далеко от области
+ * Settings (адреса 4..52, см. settings.c) — 512 байт всего в 24C04,
+ * места с запасом. Каждый — 4 байта: RDDPM[0..1], RDDSDR[0..1]. */
+#define EEPROM_DIAG_ADDR_PASS1 0x100U
+#define EEPROM_DIAG_ADDR_PASS2 0x108U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -139,6 +151,17 @@ int main(void)
   /* USER CODE BEGIN 2 */
   Display_Init();
 
+  /* ВРЕМЕННО (см. чат): диагностика MISO — читаем RDDPM/RDDSDR сразу после
+   * Display_Init(), пока состояние первого прохода ещё живо (до
+   * самосброса ниже), и складываем в EEPROM по разным адресам для первого
+   * и второго прохода, чтобы потом сравнить. EEPROM_DIAG_ADDR_* — см.
+   * define ниже (после includes). */
+  {
+      uint8_t diag[4];
+      ILI9341_ReadDiagRegisters(diag);
+      EEPROM_Write(is_second_pass ? EEPROM_DIAG_ADDR_PASS2 : EEPROM_DIAG_ADDR_PASS1, diag, sizeof(diag));
+  }
+
   /* Первый проход в этой power-сессии — самосброс, независимо от того, чем
    * был вызван вход (кнопка/питание/программатор), см. комментарий в
    * USER CODE BEGIN Init. */
@@ -169,6 +192,22 @@ int main(void)
   Screen_Update();   /* первое наполнение содержимым (только помечает строки грязными —
                        * реальная отрисовка стартует в первых итерациях главного цикла,
                        * через TextField_Process()) */
+
+  /* ВРЕМЕННО (см. чат): читаем оба сохранённых прохода MISO-диагностики
+   * обратно из EEPROM и показываем как hex — если это первый холодный
+   * старт после апгрейда, EEPROM_DIAG_ADDR_PASS1 будет мусором/нулями
+   * (первый проход этого power-цикла случился ДО того, как мы начали
+   * туда писать) — тогда просто перезагрузить ещё раз, чтобы увидеть
+   * пару свежую сразу от одного и того же power-цикла. */
+  {
+      uint8_t p1[4], p2[4];
+      char diag_text[48];
+      EEPROM_Read(EEPROM_DIAG_ADDR_PASS1, p1, sizeof(p1));
+      EEPROM_Read(EEPROM_DIAG_ADDR_PASS2, p2, sizeof(p2));
+      snprintf(diag_text, sizeof(diag_text), "P1:%02X%02X%02X%02X P2:%02X%02X%02X%02X",
+               p1[0], p1[1], p1[2], p1[3], p2[0], p2[1], p2[2], p2[3]);
+      Screen_ShowDiagText(diag_text);
+  }
 
 
   /* Тайминг-гейт для модулей, чей дебаунс/таймеры считаются В ОПРОСАХ, а не

@@ -77,8 +77,8 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(nPS_ON_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : DRDY_Solder_Pin DRDY_Desolder_Pin */
-  GPIO_InitStruct.Pin = DRDY_Solder_Pin|DRDY_Desolder_Pin;
+  /*Configure GPIO pin : DRDY_Solder_Pin */
+  GPIO_InitStruct.Pin = DRDY_Solder_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);

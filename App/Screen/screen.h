@@ -47,6 +47,13 @@ void Screen_Init(void);
  */
 void Screen_Update(void);
 
+/**
+ * @brief ВРЕМЕННО (см. чат): показать произвольный текст диагностической
+ *        строкой MISO-эксперимента (RDDPM/RDDSDR). Убрать вместе с
+ *        остальным диагностическим кодом, когда разберёмся.
+ */
+void Screen_ShowDiagText(const char *text);
+
 #ifdef __cplusplus
 }
 #endif
