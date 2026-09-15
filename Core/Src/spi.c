@@ -108,15 +108,8 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* spiHandle)
     __HAL_RCC_GPIOA_CLK_ENABLE();
     /**SPI1 GPIO Configuration
     PA5     ------> SPI1_SCK
-    PA6     ------> SPI1_MISO
     PA7     ------> SPI1_MOSI
     */
-    /* ТЕСТ A (см. чат): PA6 временно убран из AF5/SPI1_MISO — провод физически
-     * остаётся подключен к SDO дисплея, но МК больше не настраивает эту ножку
-     * под альтернативную функцию (не участвует в SPI-транзакциях, входной
-     * буфер неактивен). Проверяем, дело в конфигурации ножки или в самом
-     * проводе — см. чат. Если стабильность вернётся — дело в конфигурации;
-     * если нет — дело в физике провода. */
     GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_7;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
