@@ -65,6 +65,8 @@ void Error_Handler(void);
 #define Disp_DC_GPIO_Port GPIOA
 #define Disp_RST_Pin GPIO_PIN_4
 #define Disp_RST_GPIO_Port GPIOA
+#define DRDY_Desolder_Pin GPIO_PIN_6
+#define DRDY_Desolder_GPIO_Port GPIOA
 #define Dock_Pin GPIO_PIN_1
 #define Dock_GPIO_Port GPIOA
 #define Desolder_Test_Pin GPIO_PIN_1

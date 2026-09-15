@@ -6,7 +6,7 @@
 
 #include "ads1220.h"
 #include "spi.h"   /* hspi2 */
-#include "main.h"  /* ADS1220_Solder_CS_*, ADS1220_Desolder_CS_*, DRDY_Solder_* (DRDY_Desolder_* временно нет, см. чат) */
+#include "main.h"  /* ADS1220_Solder_CS_*, ADS1220_Desolder_CS_*, DRDY_Solder_*, DRDY_Desolder_* */
 
 /* ---- Команды ADS1220 (datasheet, Table "Command Definitions") ---- */
 #define ADS1220_CMD_RESET      0x06U
@@ -38,14 +38,7 @@ static const ads1220_pins_t s_pins[CHANNEL_COUNT] = {
     [CHANNEL_SOLDER]   = { ADS1220_Solder_CS_GPIO_Port,   ADS1220_Solder_CS_Pin,
                             DRDY_Solder_GPIO_Port,         DRDY_Solder_Pin },
     [CHANNEL_DESOLDER] = { ADS1220_Desolder_CS_GPIO_Port, ADS1220_Desolder_CS_Pin,
-                            /* ВРЕМЕННО (см. чат): PA6/DRDY_Desolder физически отключён от
-                             * ADS1220 и переведён на SPI1_MISO дисплея для диагностики
-                             * RDDPM/RDDSDR. Плейсхолдер ниже не читается — канал Desolder
-                             * принудительно не инициализируется в ADS1220_Init() ниже, так
-                             * что до drdy_port/drdy_pin для него дело не доходит вообще.
-                             * Вернуть DRDY_Desolder_GPIO_Port/Pin, когда провод вернётся на
-                             * место. */
-                            DRDY_Solder_GPIO_Port,         DRDY_Solder_Pin },
+                            DRDY_Desolder_GPIO_Port,       DRDY_Desolder_Pin },
 };
 
 typedef struct {
@@ -151,12 +144,7 @@ void ADS1220_Init(void)
     for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
         s_state[ch].data_valid = false;
         s_state[ch].raw_code   = 0;
-        /* ВРЕМЕННО (см. чат): DRDY_Desolder физически отключён от ADS1220
-         * (провод сейчас на SPI1_MISO дисплея, диагностика RDDPM/RDDSDR) —
-         * канал Desolder принудительно не инициализируем, чтобы не читать
-         * мусор с чужого сигнала. Вернуть init_channel(ch) для обоих
-         * каналов, когда провод вернётся на место. */
-        s_state[ch].init_ok    = ((channel_id_t)ch == CHANNEL_DESOLDER) ? false : init_channel((channel_id_t)ch);
+        s_state[ch].init_ok    = init_channel((channel_id_t)ch);
     }
 }
 

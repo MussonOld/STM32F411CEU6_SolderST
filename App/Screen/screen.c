@@ -108,7 +108,6 @@ enum {
     LINE_MENU_ITEM_4,
     LINE_MENU_ITEM_5,
     LINE_MENU_ITEM_6,
-    LINE_DIAG_MISO, /* ВРЕМЕННО (см. чат): вывод RDDPM/RDDSDR из EEPROM после MISO-диагностики */
 };
 
 /* ---- Геометрия ---- */
@@ -411,10 +410,6 @@ void Screen_Init(void)
                              &AntiquaB_18_uni, COLOR_SLEEP_AWAKE, COLOR_BG);
     TextField_ConfigureLine(LINE_INFO_SLEEP_DESOLDER, SCREEN_INFO_SLEEP_DESOLDER_TEXT_RIGHT_EDGE_X, SCREEN_INFO_Y,
                              &AntiquaB_18_uni, COLOR_SLEEP_AWAKE, COLOR_BG);
-    /* ВРЕМЕННО (см. чат): диагностическая строка для MISO-эксперимента —
-     * позиция взята "как есть", без калибровки, временный код. */
-    TextField_ConfigureLine(LINE_DIAG_MISO, 4, SCREEN_INFO_Y + SCREEN_TITLE_HEIGHT + 2,
-                             &AntiquaB_18_uni, COLOR_INFO, COLOR_BG);
     /* x, переданный здесь для этих двух строк, — просто начальное значение,
      * реальная позиция пересчитывается по факту при первом же
      * TextField_PrintfRightAligned() в Screen_Update(), как и у CURRENT/TARGET/пресетов. */
@@ -789,11 +784,4 @@ void Screen_Update(void)
 
     update_sleep_status(CHANNEL_SOLDER, LINE_INFO_SLEEP_SOLDER, SCREEN_INFO_SLEEP_SOLDER_TEXT_RIGHT_EDGE_X);
     update_sleep_status(CHANNEL_DESOLDER, LINE_INFO_SLEEP_DESOLDER, SCREEN_INFO_SLEEP_DESOLDER_TEXT_RIGHT_EDGE_X);
-}
-
-/* ВРЕМЕННО (см. чат): показать произвольный текст диагностической строкой
- * MISO-эксперимента. Убрать вместе с остальным диагностическим кодом. */
-void Screen_ShowDiagText(const char *text)
-{
-    TextField_Printf(LINE_DIAG_MISO, "%s", text);
 }
