@@ -88,28 +88,6 @@ static void write_data(const uint8_t *data, uint16_t len)
     HAL_SPI_Transmit(&hspi1, (uint8_t *)data, len, HAL_MAX_DELAY);
 }
 
-/**
- * @brief ВРЕМЕННО (см. чат): прочитать RDDPM/RDDSDR через MISO (PA6)
- *
- * Читаем по 2 байта на каждый регистр — по датащиту ILI9341 не все команды
- * чтения по 4-wire SPI отдают полезный байт первым (у некоторых первый байт
- * dummy), так что берём с запасом и разбираемся какой байт какой уже по
- * факту снятых данных, а не угадываем заранее. rx должен быть буфером на
- * 4 байта: [0]=RDDPM byte0, [1]=RDDPM byte1, [2]=RDDSDR byte0, [3]=RDDSDR byte1.
- */
-void ILI9341_ReadDiagRegisters(uint8_t *rx4)
-{
-    uint8_t tx_dummy[2] = {0, 0};
-
-    write_command(ILI9341_CMD_RDDPM);
-    dc_data();
-    HAL_SPI_TransmitReceive(&hspi1, tx_dummy, &rx4[0], 2, HAL_MAX_DELAY);
-
-    write_command(ILI9341_CMD_RDDSDR);
-    dc_data();
-    HAL_SPI_TransmitReceive(&hspi1, tx_dummy, &rx4[2], 2, HAL_MAX_DELAY);
-}
-
 static void write_data_u8(uint8_t value)
 {
     write_data(&value, 1);
