@@ -88,6 +88,18 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+  /* "Двойной проход" (см. чат): первый проход в рамках power-сессии —
+   * всегда самосброс после Display_Init(), независимо от причины входа
+   * (кнопка/питание/программатор); второй проход — без самосброса. Маркер
+   * "уже был первый проход" — флаг SFTRST (software reset flag), взводится
+   * ТОЛЬКО нашим же NVIC_SystemReset() ниже, не внешней причиной сброса —
+   * не зацикливается. ИЗОЛИРОВАННЫЙ ТЕСТ: только эта часть воркэраунда,
+   * без fill-таймаута и без retry-цикла заливки (см. чат/тег
+   * display-workarounds-full) — проверяем, нужна ли она сама по себе для
+   * второго экземпляра панели. */
+  bool is_second_pass = __HAL_RCC_GET_FLAG(RCC_FLAG_SFTRST);
+  __HAL_RCC_CLEAR_RESET_FLAGS();
+
   /* Ранний захват RST/DC (PA4/PA3), до SystemClock_Config()/MX_GPIO_Init() —
    * см. чат: CS панели аппаратно на GND, то есть контроллер слушает шину
    * SPI ВСЕГДА, включая POR-окно, где RST/DC/SCK/MOSI ещё висят в воздухе
@@ -126,6 +138,14 @@ int main(void)
   MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
   Display_Init();
+
+  /* Первый проход в этой power-сессии — самосброс, независимо от того, чем
+   * был вызван вход (кнопка/питание/программатор), см. комментарий в
+   * USER CODE BEGIN Init. */
+  if (!is_second_pass) {
+      NVIC_SystemReset();
+  }
+
   Display_SetWindow(0, 0, 319, 239);
   Display_FillColorDMA(DISPLAY_RGB565(0, 0, 0), 320 * 240);
   while (Display_IsBusy()) { } /* Однократное ожидание при старте, до входа в главный цикл */
