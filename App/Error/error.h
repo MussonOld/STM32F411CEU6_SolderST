@@ -6,7 +6,7 @@
  *
  * Чистый интерпретатор — сам ничего не диагностирует, только принимает
  * готовые факты от других модулей (Settings_Load() → Error_ReportEepromStatus();
- * будущий модуль диагностики ADS1220/нагревателя → Error_SetRtdOpen/SetHeaterOpen)
+ * модуль диагностики Diag → Error_SetRtdState/SetHeaterOpen, см. diag.h)
  * и переводит их в состояние, которым пользуются Fsm (блокировка
  * фокуса/управления) и Screen (цвета/сообщения).
  *
@@ -29,31 +29,45 @@
  *    блокирует — просто EEPROM не персистит.
  *
  * ---- Инструменты (RTD/нагреватель) ----
- * ЗАГЛУШКА: реальный источник данных (диагностика через ADS1220 —
- * обрыв/КЗ RTD, обрыв цепи нагревателя) ещё не написан — плата не
- * распаяна. Error_SetRtdOpen()/Error_SetHeaterOpen() — точка входа,
- * которую будущий модуль диагностики будет дёргать каждый цикл опроса;
- * пока их никто не вызывает, оба флага по умолчанию false (обрыва нет).
+ * Источник данных — модуль Diag (App/Diag, см. diag.h): он читает
+ * Solder_Test/Desolder_Test и температуру с ADS1220 и каждый цикл опроса
+ * дёргает Error_SetRtdState()/Error_SetHeaterOpen(). Этот модуль остаётся
+ * чистым интерпретатором и сам ничего не читает.
  *
- * Solder_Test/Desolder_Test: высокий уровень = исправно (см. обсуждение).
+ * Solder_Test/Desolder_Test: высокий уровень = нагреватель исправен.
  *
- * Комбинация статусов:
- *  - RTD открыт + нагреватель открыт → TOOL_FAULT_DISCONNECTED
- *    ("инструмент не подключен"). Заголовок и текущая температура —
- *    красным. Текстового сообщения нет (см. Error_GetChannelFaultMessage()).
- *  - Только RTD открыт → TOOL_FAULT_RTD_OPEN. Заголовок и температура —
- *    красным, плюс сообщение "Обрыв RTD" (выводится Screen на месте целевой
- *    температуры — Comic_60_dig, которым рисуется текущая температура, не
- *    содержит кириллицы физически, для текста нужен шрифт AntiquaB).
- *  - Только нагреватель открыт → TOOL_FAULT_HEATER_OPEN. Аналогично,
- *    сообщение "Обрыв нагревателя".
- *  - Ни того ни другого → TOOL_FAULT_NONE, канал работает как обычно.
+ * Состояние RTD определяется по измеренной температуре (см. diag.c):
+ *  - t <= 0                  → RTD_STATE_SHORT (КЗ)
+ *  - t >  SETTINGS_TEMP_MAX  → RTD_STATE_OPEN  (обрыв)
+ *  - иначе                   → RTD_STATE_OK
  *
- * Для ЛЮБОГО tool_fault_t != NONE: нагрев и управление (SET1/2/3, UP/DN)
- * заблокированы (Error_IsChannelBlocked()), фокус (TOOLS) на этот канал не
- * передаётся — обе проверки на стороне Fsm. Нагрев физически ещё не
- * реализован (Control-слой отложен до платы), Error_IsChannelBlocked()
- * заранее готов как точка интеграции для него.
+ * Таблица состояний канала (согласована в чате):
+ *
+ *   нагреватель | RTD    | результат
+ *   ------------+--------+-------------------------
+ *   OK          | OK     | TOOL_FAULT_NONE
+ *   OK          | КЗ     | TOOL_FAULT_RTD_SHORT
+ *   OK          | обрыв  | TOOL_FAULT_RTD_OPEN
+ *   неисправен  | OK     | TOOL_FAULT_HEATER_OPEN
+ *   неисправен  | обрыв  | TOOL_FAULT_DISCONNECTED
+ *   неисправен  | КЗ     | TOOL_FAULT_RTD_SHORT   (редкая комбинация)
+ *
+ * АВАРИЯ — это любой tool_fault_t, КРОМЕ NONE и DISCONNECTED:
+ *  - Авария: заголовок и текущая температура красным
+ *    (Error_IsChannelFaulted()) + текстовое сообщение на месте текущей
+ *    температуры (Comic_60_dig кириллицы физически не содержит, для
+ *    текста нужен AntiquaB) + однократный сигнал зуммера (5 импульсов
+ *    2 Гц, см. beep.h; латч "один раз за сеанс на канал" живёт в diag.c).
+ *  - DISCONNECTED ("инструмент не подключен") аварией НЕ считается:
+ *    красного нет, сообщения нет, зуммера нет — Screen просто рисует
+ *    двойное тире на месте текущей температуры (см. Error_IsChannelIdle()).
+ *
+ * Нагрев и управление (SET1/2/3, UP/DN) заблокированы для ЛЮБОГО
+ * tool_fault_t != NONE, включая DISCONNECTED (греть нечего), фокус
+ * (TOOLS) на такой канал не передаётся — обе проверки на стороне Fsm.
+ * Нагрев физически ещё не реализован (Control-слой отложен до платы),
+ * Error_IsChannelBlocked() заранее готов как точка интеграции для него.
+ * Авария одного канала другой канал не блокирует.
  *
  * ---- БП (Pok) ----
  * Pok_Pin (см. main.h/gpio.c) — Power OK от блока питания, активный
@@ -104,10 +118,20 @@ extern "C" {
  */
 typedef enum {
     TOOL_FAULT_NONE = 0,
+    TOOL_FAULT_RTD_SHORT,     /**< КЗ RTD (при любом состоянии нагревателя) */
     TOOL_FAULT_RTD_OPEN,      /**< Обрыв RTD, нагреватель цел */
     TOOL_FAULT_HEATER_OPEN,   /**< Обрыв нагревателя, RTD цел */
-    TOOL_FAULT_DISCONNECTED,  /**< Обрыв и RTD, и нагревателя — инструмент не подключен */
+    TOOL_FAULT_DISCONNECTED,  /**< Обрыв RTD + неисправный нагреватель — инструмент не подключен (НЕ авария) */
 } tool_fault_t;
+
+/**
+ * @brief Состояние RTD по результатам измерения температуры (см. diag.c)
+ */
+typedef enum {
+    RTD_STATE_OK = 0,
+    RTD_STATE_SHORT,          /**< t <= 0 */
+    RTD_STATE_OPEN,           /**< t >  SETTINGS_TEMP_MAX */
+} rtd_state_t;
 
 void Error_Init(void);
 
@@ -147,7 +171,7 @@ bool Error_IsPsuFaultActive(void);
 
 /* ---- Диагностика инструментов (см. докстринг файла — сейчас заглушка) ---- */
 
-void Error_SetRtdOpen(channel_id_t ch, bool open);
+void Error_SetRtdState(channel_id_t ch, rtd_state_t state);
 void Error_SetHeaterOpen(channel_id_t ch, bool open);
 
 /** @brief Текущая неисправность канала (комбинация RTD/heater open, см. докстринг) */
@@ -156,15 +180,20 @@ tool_fault_t Error_GetToolFault(channel_id_t ch);
 /** @brief true — нагрев и управление (SET/UP/DN) заблокированы, фокус не передаётся (авария БП — оба канала — либо неисправность именно этого канала) */
 bool Error_IsChannelBlocked(channel_id_t ch);
 
-/** @brief true — для Screen: заголовок и текущая температура канала красным */
+/** @brief true — для Screen: заголовок и текущая температура канала красным. Только АВАРИИ — DISCONNECTED сюда НЕ входит (см. докстринг файла) */
 bool Error_IsChannelFaulted(channel_id_t ch);
 
+/** @brief true — инструмент не подключен: Screen рисует двойное тире вместо текущей температуры, без красного и без зуммера */
+bool Error_IsChannelIdle(channel_id_t ch);
+
+/** @brief true — на канале АВАРИЯ (любой fault, кроме NONE и DISCONNECTED). Источник триггера для зуммера, см. diag.c */
+bool Error_IsChannelAlarm(channel_id_t ch);
+
 /**
- * @brief Текст сообщения об обрыве (заменяет собой целевую температуру на
+ * @brief Текст сообщения об аварии (заменяет собой текущую температуру на
  *        экране, см. докстринг файла) или NULL, если сообщения нет —
  *        либо неисправности нет (TOOL_FAULT_NONE), либо это
- *        TOOL_FAULT_DISCONNECTED (для него сообщения не предусмотрено,
- *        только цвет).
+ *        TOOL_FAULT_DISCONNECTED (не авария — Screen рисует "--").
  */
 const char *Error_GetChannelFaultMessage(channel_id_t ch);
 

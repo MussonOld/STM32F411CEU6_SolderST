@@ -489,10 +489,17 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
     uint8_t line_fault_msg = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_FAULT_MSG : LINE_DESOLDER_FAULT_MSG;
     uint8_t line_target    = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_TARGET   : LINE_DESOLDER_TARGET;
 
-    const char *fault_msg = Error_GetChannelFaultMessage(ch); /* не NULL только для RTD_OPEN/HEATER_OPEN */
+    const char *fault_msg = Error_GetChannelFaultMessage(ch); /* не NULL только для аварий: RTD_SHORT/RTD_OPEN/HEATER_OPEN */
     bool enabled = State_IsEnabled(ch);
+    bool idle    = Error_IsChannelIdle(ch); /* инструмент не подключен — не авария, только "--" */
 
-    if (fault_msg != NULL) {
+    if (idle) {
+        /* Инструмент не подключен: ни красного, ни сообщения, ни зуммера
+         * (см. error.h) — то же двойное тире, что и у выключенного
+         * канала, тем же Comic_60_dig. */
+        TextField_PrintfCentered(line_current, center_x, "--");
+        TextField_PrintfCentered(line_fault_msg, center_x, "");
+    } else if (fault_msg != NULL) {
         /* Текущая температура НЕ выводится вообще — на её месте сообщение
          * в отдельном поле (Comic_60_dig кириллицу не содержит) */
         TextField_PrintfCentered(line_current, center_x, "");

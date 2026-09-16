@@ -7,8 +7,8 @@
 #include "stm32f4xx_hal.h" /* HAL_GetTick() — таймер транзитного сообщения EEPROM */
 
 typedef struct {
-    bool rtd_open;
-    bool heater_open;
+    rtd_state_t rtd;
+    bool        heater_open;
 } tool_diag_t;
 
 static tool_diag_t s_tool[CHANNEL_COUNT];
@@ -23,7 +23,7 @@ static bool         s_psu_fault;                /* true = БП неисправ�
 void Error_Init(void)
 {
     for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
-        s_tool[ch].rtd_open = false;
+        s_tool[ch].rtd = RTD_STATE_OK;
         s_tool[ch].heater_open = false;
     }
     s_eeprom_alarm = false;
@@ -91,10 +91,10 @@ void Error_Poll(void)
     }
 }
 
-void Error_SetRtdOpen(channel_id_t ch, bool open)
+void Error_SetRtdState(channel_id_t ch, rtd_state_t state)
 {
     if (!channel_valid(ch)) return;
-    s_tool[ch].rtd_open = open;
+    s_tool[ch].rtd = state;
 }
 
 void Error_SetHeaterOpen(channel_id_t ch, bool open)
@@ -107,13 +107,19 @@ tool_fault_t Error_GetToolFault(channel_id_t ch)
 {
     if (!channel_valid(ch)) return TOOL_FAULT_NONE;
 
-    bool rtd = s_tool[ch].rtd_open;
-    bool heater = s_tool[ch].heater_open;
+    rtd_state_t rtd = s_tool[ch].rtd;
+    bool heater_bad = s_tool[ch].heater_open;
 
-    if (rtd && heater)  return TOOL_FAULT_DISCONNECTED;
-    if (rtd)             return TOOL_FAULT_RTD_OPEN;
-    if (heater)          return TOOL_FAULT_HEATER_OPEN;
-    return TOOL_FAULT_NONE;
+    /* КЗ RTD имеет приоритет над состоянием нагревателя — по таблице оно
+     * даёт TOOL_FAULT_RTD_SHORT независимо от того, цел нагреватель или
+     * нет (комбинация "неисправный нагреватель + КЗ RTD" редкая, но
+     * возможна; см. докстринг error.h). */
+    if (rtd == RTD_STATE_SHORT) return TOOL_FAULT_RTD_SHORT;
+
+    if (rtd == RTD_STATE_OPEN) {
+        return heater_bad ? TOOL_FAULT_DISCONNECTED : TOOL_FAULT_RTD_OPEN;
+    }
+    return heater_bad ? TOOL_FAULT_HEATER_OPEN : TOOL_FAULT_NONE;
 }
 
 bool Error_IsChannelBlocked(channel_id_t ch)
@@ -124,12 +130,26 @@ bool Error_IsChannelBlocked(channel_id_t ch)
 
 bool Error_IsChannelFaulted(channel_id_t ch)
 {
-    return Error_GetToolFault(ch) != TOOL_FAULT_NONE;
+    /* Только аварии — "инструмент не подключен" красным НЕ красим (см.
+     * докстринг error.h): это штатное состояние, а не отказ. */
+    return Error_IsChannelAlarm(ch);
+}
+
+bool Error_IsChannelIdle(channel_id_t ch)
+{
+    return Error_GetToolFault(ch) == TOOL_FAULT_DISCONNECTED;
+}
+
+bool Error_IsChannelAlarm(channel_id_t ch)
+{
+    tool_fault_t f = Error_GetToolFault(ch);
+    return (f != TOOL_FAULT_NONE) && (f != TOOL_FAULT_DISCONNECTED);
 }
 
 const char *Error_GetChannelFaultMessage(channel_id_t ch)
 {
     switch (Error_GetToolFault(ch)) {
+        case TOOL_FAULT_RTD_SHORT:   return "КЗ RTD";
         case TOOL_FAULT_RTD_OPEN:    return "Обрыв RTD";
         case TOOL_FAULT_HEATER_OPEN: return "Обрыв нагревателя";
         case TOOL_FAULT_DISCONNECTED:

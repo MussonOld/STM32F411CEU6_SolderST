@@ -38,6 +38,8 @@
 #include "state.h"
 #include "error.h"
 #include "ads1220.h"
+#include "beep.h"
+#include "diag.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -160,6 +162,8 @@ int main(void)
   InputFSM_SyncStateFromSettings(); /* без этого State.setpoint_temp==0 до первого нажатия SET/UP/DN — см. fsm.h */
 
   ADS1220_Init(); /* оба канала (Solder/Desolder), см. ads1220.h по схеме/регистрам */
+  Beep_Init();    /* после MX_GPIO_Init(), зуммер активный высокий — см. beep.h */
+  Diag_Init();    /* после Error_Init() и ADS1220_Init() — см. diag.h */
 
   Buttons_Init();
   Sleep_Init();
@@ -198,6 +202,8 @@ int main(void)
     if (HAL_GetTick() - poll10ms_last_tick >= BUTTONS_POLL_MS) {
         poll10ms_last_tick += BUTTONS_POLL_MS;
         Buttons_Poll();
+        Diag_Poll(); /* тот же гейт 10мс — DIAG_POLL_MS == 10, см. diag.h */
+        Beep_Poll(); /* тот же гейт 10мс — BEEP_POLL_MS == 10, полупериод меандра 250мс, запас ~25x */
         Sleep_Poll(); /* тот же гейт 10мс — BUTTONS_POLL_MS == SLEEP_POLL_MS, см. sleep.h */
         ADS1220_Poll(); /* тот же гейт 10мс — ADS1220_POLL_MS тоже 10, см. ads1220.h (сам DRDY на 20SPS обновляется раз в ~50мс, опрос чаще — просто чтение GPIO, дёшево) */
 
