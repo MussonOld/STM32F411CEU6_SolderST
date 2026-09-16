@@ -36,6 +36,17 @@
  *
  * Solder_Test/Desolder_Test: высокий уровень = нагреватель исправен.
  *
+ * ---- Неисправность самого АЦП ----
+ * Diag_Poll() отличает "ADS1220 не заработал вообще" (ADS1220_IsChannelOk()
+ * false — SPI-инициализация провалилась, чип не распаян/не отвечает) от
+ * "работал и перестал" (ADS1220_IsDataValid() true, но
+ * ADS1220_GetLastUpdateTick() не обновлялась дольше DIAG_ADC_STALE_MS) —
+ * оба случая дают TOOL_FAULT_ADC_FAULT. Приоритет ВЫШЕ всей RTD/heater-
+ * таблицы ниже: если сам АЦП не заслуживает доверия, судить по нему о
+ * состоянии RTD бессмысленно. Это авария (красный + сообщение "Авария
+ * АЦП" + зуммер), блокирует нагрев канала — без обратной связи по
+ * температуре греть нельзя.
+ *
  * Состояние RTD определяется по измеренной температуре (см. diag.c):
  *  - t <= 0                  → RTD_STATE_SHORT (КЗ)
  *  - t >  SETTINGS_TEMP_MAX  → RTD_STATE_OPEN  (обрыв)
@@ -52,7 +63,8 @@
  *   неисправен  | обрыв  | TOOL_FAULT_DISCONNECTED
  *   неисправен  | КЗ     | TOOL_FAULT_RTD_SHORT   (редкая комбинация)
  *
- * АВАРИЯ — это любой tool_fault_t, КРОМЕ NONE и DISCONNECTED:
+ * АВАРИЯ — это любой tool_fault_t, КРОМЕ NONE и DISCONNECTED (ADC_FAULT —
+ * авария):
  *  - Авария: заголовок и текущая температура красным
  *    (Error_IsChannelFaulted()) + текстовое сообщение на месте текущей
  *    температуры (Comic_60_dig кириллицы физически не содержит, для
@@ -118,6 +130,7 @@ extern "C" {
  */
 typedef enum {
     TOOL_FAULT_NONE = 0,
+    TOOL_FAULT_ADC_FAULT,     /**< Сам ADS1220 не отвечает (не с самого старта, либо перестал) — высший приоритет, RTD/нагреватель недостоверны */
     TOOL_FAULT_RTD_SHORT,     /**< КЗ RTD (при любом состоянии нагревателя) */
     TOOL_FAULT_RTD_OPEN,      /**< Обрыв RTD, нагреватель цел */
     TOOL_FAULT_HEATER_OPEN,   /**< Обрыв нагревателя, RTD цел */
@@ -171,6 +184,8 @@ bool Error_IsPsuFaultActive(void);
 
 /* ---- Диагностика инструментов (см. докстринг файла — сейчас заглушка) ---- */
 
+/** @brief Сообщить, отвечает ли сам АЦП канала (не путать с rtd_state_t — это неисправность ADS1220, а не RTD). Высший приоритет среди tool_fault_t. */
+void Error_SetAdcFault(channel_id_t ch, bool fault);
 void Error_SetRtdState(channel_id_t ch, rtd_state_t state);
 void Error_SetHeaterOpen(channel_id_t ch, bool open);
 

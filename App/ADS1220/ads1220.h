@@ -95,6 +95,14 @@ bool ADS1220_IsChannelOk(channel_id_t ch);
  *         последнее считанное значение (для отладки/диагностики). */
 int32_t ADS1220_GetRawCode(channel_id_t ch);
 
+/**
+ * @brief HAL_GetTick() момента последней УСПЕШНОЙ конверсии (RDATA), или 0,
+ *        если их ещё не было. Даёт отличить "канал живой, просто редкий
+ *        сбой SPI" от "перестал отвечать вообще" — см. Diag (diag.c),
+ *        который сравнивает это со свежим HAL_GetTick() против таймаута.
+ */
+uint32_t ADS1220_GetLastUpdateTick(channel_id_t ch);
+
 /** @brief Сопротивление RTD, Ом, Q16.16. */
 fixed_t ADS1220_GetResistanceOhm(channel_id_t ch);
 

@@ -42,9 +42,10 @@ static const ads1220_pins_t s_pins[CHANNEL_COUNT] = {
 };
 
 typedef struct {
-    bool    data_valid;
-    bool    init_ok;
-    int32_t raw_code;
+    bool     data_valid;
+    bool     init_ok;
+    int32_t  raw_code;
+    uint32_t last_update_tick; /* HAL_GetTick() последней успешной RDATA, см. ads1220.h */
 } ads1220_state_t;
 
 static ads1220_state_t s_state[CHANNEL_COUNT];
@@ -142,9 +143,10 @@ static bool init_channel(channel_id_t ch)
 void ADS1220_Init(void)
 {
     for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
-        s_state[ch].data_valid = false;
-        s_state[ch].raw_code   = 0;
-        s_state[ch].init_ok    = init_channel((channel_id_t)ch);
+        s_state[ch].data_valid       = false;
+        s_state[ch].raw_code         = 0;
+        s_state[ch].last_update_tick = 0;
+        s_state[ch].init_ok          = init_channel((channel_id_t)ch);
     }
 }
 
@@ -156,8 +158,9 @@ void ADS1220_Poll(void)
         }
         int32_t code;
         if (read_data((channel_id_t)ch, &code)) {
-            s_state[ch].raw_code   = code;
-            s_state[ch].data_valid = true;
+            s_state[ch].raw_code         = code;
+            s_state[ch].data_valid       = true;
+            s_state[ch].last_update_tick = HAL_GetTick();
         }
         /* При ok==false просто пропускаем этот цикл — следующий DRDY
          * придёт своим чередом (continuous mode), данные не теряются
@@ -187,6 +190,14 @@ int32_t ADS1220_GetRawCode(channel_id_t ch)
         return 0;
     }
     return s_state[ch].raw_code;
+}
+
+uint32_t ADS1220_GetLastUpdateTick(channel_id_t ch)
+{
+    if (!channel_valid(ch)) {
+        return 0;
+    }
+    return s_state[ch].last_update_tick;
 }
 
 fixed_t ADS1220_GetResistanceOhm(channel_id_t ch)

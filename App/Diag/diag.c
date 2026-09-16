@@ -32,6 +32,9 @@ static bool s_alarm_beeped[CHANNEL_COUNT];
 /** Последнее достоверно измеренное состояние нагревателя. */
 static bool s_heater_open[CHANNEL_COUNT];
 
+/** Момент Diag_Init() — точка отсчёта грейс-периода на старте АЦП, см. diag.h. */
+static uint32_t s_boot_tick;
+
 /** Нагреватель включается НИЗКИМ уровнем -> "неактивен" = высокий. */
 static bool heater_drive_inactive(channel_id_t ch)
 {
@@ -60,6 +63,7 @@ bool Diag_IsHeaterTestWindowOpen(void)
 
 void Diag_Init(void)
 {
+    s_boot_tick = HAL_GetTick();
     for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
         s_alarm_beeped[ch] = false;
         /* Фейл-сейф до первого достоверного замера: считаем нагреватель
@@ -68,7 +72,24 @@ void Diag_Init(void)
         s_heater_open[ch] = false;
         Error_SetHeaterOpen((channel_id_t)ch, false);
         Error_SetRtdState((channel_id_t)ch, RTD_STATE_OK);
+        Error_SetAdcFault((channel_id_t)ch, false);
     }
+}
+
+/** true — ADS1220 канала не заслуживает доверия, см. diag.h/error.h. */
+static bool adc_fault(channel_id_t ch)
+{
+    if (!ADS1220_IsChannelOk(ch)) {
+        return true; /* SPI-инициализация провалилась */
+    }
+
+    uint32_t since_ms;
+    if (ADS1220_IsDataValid(ch)) {
+        since_ms = HAL_GetTick() - ADS1220_GetLastUpdateTick(ch);
+    } else {
+        since_ms = HAL_GetTick() - s_boot_tick; /* грейс-период на старте */
+    }
+    return since_ms > DIAG_ADC_STALE_MS;
 }
 
 void Diag_Poll(void)
@@ -86,6 +107,9 @@ void Diag_Poll(void)
         }
         /* Окно закрыто — держим последнее достоверное значение. */
         Error_SetHeaterOpen(ch, s_heater_open[ch]);
+
+        /* ---- Неисправность самого АЦП (выше приоритетом, см. error.h) ---- */
+        Error_SetAdcFault(ch, adc_fault(ch));
 
         /* ---- RTD ---- */
         if (ADS1220_IsDataValid(ch)) {

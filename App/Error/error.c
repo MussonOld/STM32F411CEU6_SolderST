@@ -7,6 +7,7 @@
 #include "stm32f4xx_hal.h" /* HAL_GetTick() — таймер транзитного сообщения EEPROM */
 
 typedef struct {
+    bool        adc_fault;
     rtd_state_t rtd;
     bool        heater_open;
 } tool_diag_t;
@@ -23,6 +24,7 @@ static bool         s_psu_fault;                /* true = БП неисправ�
 void Error_Init(void)
 {
     for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
+        s_tool[ch].adc_fault = false;
         s_tool[ch].rtd = RTD_STATE_OK;
         s_tool[ch].heater_open = false;
     }
@@ -91,6 +93,12 @@ void Error_Poll(void)
     }
 }
 
+void Error_SetAdcFault(channel_id_t ch, bool fault)
+{
+    if (!channel_valid(ch)) return;
+    s_tool[ch].adc_fault = fault;
+}
+
 void Error_SetRtdState(channel_id_t ch, rtd_state_t state)
 {
     if (!channel_valid(ch)) return;
@@ -106,6 +114,10 @@ void Error_SetHeaterOpen(channel_id_t ch, bool open)
 tool_fault_t Error_GetToolFault(channel_id_t ch)
 {
     if (!channel_valid(ch)) return TOOL_FAULT_NONE;
+
+    /* Неисправность АЦП — высший приоритет, см. докстринг error.h: если
+     * сам АЦП не отвечает, RTD/нагреватель по его показаниям недостоверны. */
+    if (s_tool[ch].adc_fault) return TOOL_FAULT_ADC_FAULT;
 
     rtd_state_t rtd = s_tool[ch].rtd;
     bool heater_bad = s_tool[ch].heater_open;
@@ -149,6 +161,7 @@ bool Error_IsChannelAlarm(channel_id_t ch)
 const char *Error_GetChannelFaultMessage(channel_id_t ch)
 {
     switch (Error_GetToolFault(ch)) {
+        case TOOL_FAULT_ADC_FAULT:   return "Авария АЦП";
         case TOOL_FAULT_RTD_SHORT:   return "КЗ RTD";
         case TOOL_FAULT_RTD_OPEN:    return "Обрыв RTD";
         case TOOL_FAULT_HEATER_OPEN: return "Обрыв нагревателя";
