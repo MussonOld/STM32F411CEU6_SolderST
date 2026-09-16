@@ -72,24 +72,27 @@ void Diag_Init(void)
         s_heater_open[ch] = false;
         Error_SetHeaterOpen((channel_id_t)ch, false);
         Error_SetRtdState((channel_id_t)ch, RTD_STATE_OK);
-        Error_SetAdcFault((channel_id_t)ch, false);
+        Error_SetErrorCode((channel_id_t)ch, ERROR_CODE_NONE);
     }
 }
 
-/** true — ADS1220 канала не заслуживает доверия, см. diag.h/error.h. */
-static bool adc_fault(channel_id_t ch)
+/** ERROR_CODE_NONE, либо код неисправности без диагноза, см. diag.h/error.h. */
+static error_code_t adc_error_code(channel_id_t ch)
 {
-    if (!ADS1220_IsChannelOk(ch)) {
-        return true; /* SPI-инициализация провалилась */
-    }
+    bool no_conversion;
 
-    uint32_t since_ms;
-    if (ADS1220_IsDataValid(ch)) {
-        since_ms = HAL_GetTick() - ADS1220_GetLastUpdateTick(ch);
+    if (!ADS1220_IsChannelOk(ch)) {
+        no_conversion = true; /* SPI-инициализация провалилась */
     } else {
-        since_ms = HAL_GetTick() - s_boot_tick; /* грейс-период на старте */
+        uint32_t since_ms;
+        if (ADS1220_IsDataValid(ch)) {
+            since_ms = HAL_GetTick() - ADS1220_GetLastUpdateTick(ch);
+        } else {
+            since_ms = HAL_GetTick() - s_boot_tick; /* грейс-период на старте */
+        }
+        no_conversion = since_ms > DIAG_ADC_STALE_MS;
     }
-    return since_ms > DIAG_ADC_STALE_MS;
+    return no_conversion ? ERROR_CODE_E01_ADC_NO_CONVERSION : ERROR_CODE_NONE;
 }
 
 void Diag_Poll(void)
@@ -108,8 +111,8 @@ void Diag_Poll(void)
         /* Окно закрыто — держим последнее достоверное значение. */
         Error_SetHeaterOpen(ch, s_heater_open[ch]);
 
-        /* ---- Неисправность самого АЦП (выше приоритетом, см. error.h) ---- */
-        Error_SetAdcFault(ch, adc_fault(ch));
+        /* ---- Неисправность без диагноза (выше приоритетом, см. error.h) ---- */
+        Error_SetErrorCode(ch, adc_error_code(ch));
 
         /* ---- RTD ---- */
         if (ADS1220_IsDataValid(ch)) {

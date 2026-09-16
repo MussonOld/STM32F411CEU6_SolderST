@@ -7,9 +7,9 @@
 #include "stm32f4xx_hal.h" /* HAL_GetTick() — таймер транзитного сообщения EEPROM */
 
 typedef struct {
-    bool        adc_fault;
-    rtd_state_t rtd;
-    bool        heater_open;
+    error_code_t error_code;   /* ERROR_CODE_NONE = нет неисправности без диагноза, см. error.h */
+    rtd_state_t  rtd;
+    bool         heater_open;
 } tool_diag_t;
 
 static tool_diag_t s_tool[CHANNEL_COUNT];
@@ -24,7 +24,7 @@ static bool         s_psu_fault;                /* true = БП неисправ�
 void Error_Init(void)
 {
     for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
-        s_tool[ch].adc_fault = false;
+        s_tool[ch].error_code = ERROR_CODE_NONE;
         s_tool[ch].rtd = RTD_STATE_OK;
         s_tool[ch].heater_open = false;
     }
@@ -93,10 +93,22 @@ void Error_Poll(void)
     }
 }
 
-void Error_SetAdcFault(channel_id_t ch, bool fault)
+void Error_SetErrorCode(channel_id_t ch, error_code_t code)
 {
     if (!channel_valid(ch)) return;
-    s_tool[ch].adc_fault = fault;
+    s_tool[ch].error_code = code;
+}
+
+/** "E01" и т.д. — единственное место, где код превращается в текст на
+ *  экране; расшифровка СМЫСЛА кода — в пользовательском мануале, не
+ *  здесь (см. докстринг error.h). Новый код — одна строка сюда. */
+static const char *error_code_text(error_code_t code)
+{
+    switch (code) {
+        case ERROR_CODE_E01_ADC_NO_CONVERSION: return "E01";
+        case ERROR_CODE_NONE:
+        default: return NULL;
+    }
 }
 
 void Error_SetRtdState(channel_id_t ch, rtd_state_t state)
@@ -115,9 +127,10 @@ tool_fault_t Error_GetToolFault(channel_id_t ch)
 {
     if (!channel_valid(ch)) return TOOL_FAULT_NONE;
 
-    /* Неисправность АЦП — высший приоритет, см. докстринг error.h: если
-     * сам АЦП не отвечает, RTD/нагреватель по его показаниям недостоверны. */
-    if (s_tool[ch].adc_fault) return TOOL_FAULT_ADC_FAULT;
+    /* Неисправность без диагноза (код ошибки) — высший приоритет, см.
+     * докстринг error.h: если АЦП не даёт данных, RTD/нагреватель по его
+     * показаниям недостоверны. */
+    if (s_tool[ch].error_code != ERROR_CODE_NONE) return TOOL_FAULT_ADC_FAULT;
 
     rtd_state_t rtd = s_tool[ch].rtd;
     bool heater_bad = s_tool[ch].heater_open;
@@ -161,7 +174,7 @@ bool Error_IsChannelAlarm(channel_id_t ch)
 const char *Error_GetChannelFaultMessage(channel_id_t ch)
 {
     switch (Error_GetToolFault(ch)) {
-        case TOOL_FAULT_ADC_FAULT:   return "Авария АЦП";
+        case TOOL_FAULT_ADC_FAULT:   return error_code_text(s_tool[ch].error_code);
         case TOOL_FAULT_RTD_SHORT:   return "КЗ RTD";
         case TOOL_FAULT_RTD_OPEN:    return "Обрыв RTD";
         case TOOL_FAULT_HEATER_OPEN: return "Обрыв нагревателя";
