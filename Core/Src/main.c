@@ -40,6 +40,7 @@
 #include "ads1220.h"
 #include "beep.h"
 #include "diag.h"
+#include "control.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -169,6 +170,8 @@ int main(void)
   Sleep_Init();
   InputFSM_Init();
 
+  Control_Init(); /* после State/Settings/Error/ADS1220/Sleep — Control читает их все, см. control.h */
+
   Screen_Init();     /* статика (разделитель) + геометрия строк, после TextField_Init() */
   Screen_Update();   /* первое наполнение содержимым (только помечает строки грязными —
                        * реальная отрисовка стартует в первых итерациях главного цикла,
@@ -206,18 +209,9 @@ int main(void)
         Beep_Poll(); /* тот же гейт 10мс — BEEP_POLL_MS == 10, полупериод меандра 250мс, запас ~25x */
         Sleep_Poll(); /* тот же гейт 10мс — BUTTONS_POLL_MS == SLEEP_POLL_MS, см. sleep.h */
         ADS1220_Poll(); /* тот же гейт 10мс — ADS1220_POLL_MS тоже 10, см. ads1220.h (сам DRDY на 20SPS обновляется раз в ~50мс, опрос чаще — просто чтение GPIO, дёшево) */
-
-        /* Мостик ADS1220 -> State (временно здесь, пока нет отдельного Control-слоя —
-         * PID/обработка ошибок ещё впереди, см. чат). ADS1220_IsDataValid(ch) достаточно
-         * как гейта: он не может стать true без успешного init_ok (см. ADS1220_Poll()),
-         * так что отдельно проверять ADS1220_IsChannelOk() здесь не нужно. Пока нет ни
-         * одного валидного отсчёта — State.current_temp остаётся дефолтным (0 от
-         * State_Init()), Screen просто покажет 0, это ожидаемо на первых ~50мс после старта. */
-        for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
-            if (ADS1220_IsDataValid((channel_id_t)ch)) {
-                State_SetCurrentTemp((channel_id_t)ch, ADS1220_GetTemperatureC((channel_id_t)ch));
-            }
-        }
+        Control_Poll(); /* тот же гейт 10мс — CONTROL_POLL_MS тоже 10, см. control.h. Сам писатель
+                          * State.current_temp/heater_active (заменяет прежний временный мостик
+                          * ADS1220->State, который стоял здесь до появления этого модуля, см. чат) */
 
         Error_ReportPsuStatus(HAL_GPIO_ReadPin(Pok_GPIO_Port, Pok_Pin) == GPIO_PIN_RESET); /* Pok активный низкий; без дебаунса — см. чат, если на реальном железе окажется дребезг, добавить по образцу sleep.c */
     }
