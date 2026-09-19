@@ -78,6 +78,7 @@
 #include "error.h"
 #include "sleep.h"
 #include "menu.h"
+#include "control.h"
 #include <stddef.h>
 #include <stdio.h>
 #include "fixed_point.h"
@@ -638,6 +639,12 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
      * докстринг); физически не пересекается с CURRENT/FAULT_MSG областью
      * (см. SCREEN_TARGET_Y) — стадию гашения выше не ждёт. */
     uint16_t target = Settings_GetTarget(ch);
+    if (enabled && !Error_IsChannelBlocked(ch) && Sleep_GetMode(ch) == SLEEP_MODE_PRESLEEP) {
+        /* В PRESLEEP реально применяется min(уставка, PresleepTemp), см.
+         * Control_PresleepSetpoint() — для визуального контроля показываем именно её.
+         * При выходе из PRESLEEP (любая активность) снова возвращается уставка. */
+        target = (uint16_t)FIXED_TO_INT(Control_PresleepSetpoint(ch, FIXED_FROM_INT(target)));
+    }
     TextField_PrintfCentered(line_target, center_x, "%u", (unsigned)target);
 
     if (faulted != s_last_fault[ch]) {
@@ -718,12 +725,9 @@ static void update_sleep_status(channel_id_t ch, uint8_t line, uint16_t right_ed
             break;
         case SLEEP_MODE_SLEEP:
             snprintf(buf, sizeof(buf), "Спит");
-            /* timer_visible остаётся true: физического снижения нагрева при
-             * входе в SLEEP пока не реализовано (Sleep_GetMode() нигде,
-             * кроме отображения, не используется) — "инструмент уже спит"
-             * пока не факт, а просто истёкший таймер. Прятать иконку по
-             * этой причине преждевременно; вернуть вопрос, когда появится
-             * реальная логика снижения нагрева по Presleep/Sleep-температуре. */
+            /* timer_visible остаётся true: иконка циферблата в SLEEP остаётся
+             * рядом с "Спит" (нагрев при этом уже отключён Control'ом,
+             * см. control.c). */
             break;
         default:
             buf[0] = '\0';

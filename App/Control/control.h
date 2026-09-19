@@ -40,8 +40,10 @@
  * Sleep-интеграция — по контракту из sleep.h ("это решение уровня
  * Control"): SLEEP_MODE_SLEEP — нагрев принудительно выключен;
  * SLEEP_MODE_PRESLEEP — работаем как обычно, но эффективная уставка это
- * Settings_GetPresleepTemp(ch), а не State.setpoint_temp (который сам не
- * меняется, см. sleep.h). Плюс: State_IsEnabled(ch)==false (ручное
+ * min(State.setpoint_temp, Settings_GetPresleepTemp(ch)) (Control_PresleepSetpoint()),
+ * State.setpoint_temp при этом сам не меняется (см. sleep.h). min — чтобы
+ * режим ожидания НИКОГДА не грел выше заданной уставки: если уставка ниже
+ * PresleepTemp, остаётся уставка. Плюс: State_IsEnabled(ch)==false (ручное
  * отключение аккордом UP+DN, см. fsm.h) и Error_IsChannelBlocked(ch) —
  * тоже безусловный "выключено", с сбросом внутреннего состояния PID.
  *
@@ -58,6 +60,9 @@
 
 #ifndef CONTROL_H
 #define CONTROL_H
+
+#include "channel.h"
+#include "fixed_point.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -93,6 +98,15 @@ void Control_Init(void);
  *        ~CONTROL_POLL_MS. Неблокирующий.
  */
 void Control_Poll(void);
+
+/**
+ * @brief Уставка, до которой канал греется в PRESLEEP: меньшая из рабочей
+ *        уставки и Settings_GetPresleepTemp(ch). Единая точка правила — её же
+ *        использует Screen, чтобы поле уставки показывало то, что реально
+ *        применяется (см. Screen.md).
+ * @param setpoint рабочая уставка (State.setpoint_temp / Settings_GetTarget)
+ */
+fixed_t Control_PresleepSetpoint(channel_id_t ch, fixed_t setpoint);
 
 #ifdef __cplusplus
 }

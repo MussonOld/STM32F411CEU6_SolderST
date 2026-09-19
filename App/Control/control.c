@@ -75,6 +75,12 @@ void Control_Init(void)
     }
 }
 
+fixed_t Control_PresleepSetpoint(channel_id_t ch, fixed_t setpoint)
+{
+    fixed_t presleep = FIXED_FROM_INT(Settings_GetPresleepTemp(ch));
+    return (presleep < setpoint) ? presleep : setpoint;
+}
+
 static bool effective_setpoint(channel_id_t ch, fixed_t *out_setpoint)
 {
     if (!State_IsEnabled(ch)) {
@@ -88,8 +94,9 @@ static bool effective_setpoint(channel_id_t ch, fixed_t *out_setpoint)
 
     if (mode == SLEEP_MODE_PRESLEEP) {
         /* см. sleep.h: рабочая уставка (State) не меняется, эффективная —
-         * Settings_GetPresleepTemp(), это решение уровня Control. */
-        *out_setpoint = FIXED_FROM_INT(Settings_GetPresleepTemp(ch));
+         * min(уставка, Settings_GetPresleepTemp()), это решение уровня
+         * Control. min — режим ожидания не должен греть выше уставки. */
+        *out_setpoint = Control_PresleepSetpoint(ch, State_GetSetpointTemp(ch));
     } else {
         *out_setpoint = State_GetSetpointTemp(ch);
     }
