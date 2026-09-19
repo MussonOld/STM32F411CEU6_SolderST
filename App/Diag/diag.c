@@ -26,7 +26,7 @@ static const diag_pins_t s_pins[CHANNEL_COUNT] = {
                            Desolder_On_GPIO_Port,   Desolder_On_Pin },
 };
 
-/** Латч зуммера: один сигнал за сеанс на канал (см. diag.h). */
+/** Латч зуммера: один сигнал на ЭПИЗОД аварии, перевзводится при снятии (см. diag.h). */
 static bool s_alarm_beeped[CHANNEL_COUNT];
 
 /** Последнее достоверно измеренное состояние нагревателя. */
@@ -147,9 +147,16 @@ void Diag_Poll(void)
          * не прочитался как КЗ (см. diag.h). */
 
         /* ---- Зуммер ---- */
-        if (Error_IsChannelAlarm(ch) && !s_alarm_beeped[ch]) {
-            s_alarm_beeped[ch] = true; /* один раз за сеанс на канал */
-            Beep_Alarm();
+        if (Error_IsChannelAlarm(ch)) {
+            if (!s_alarm_beeped[ch]) {
+                s_alarm_beeped[ch] = true; /* один раз на ЭПИЗОД аварии — см. чат: пользователь хочет сигнал на
+                                             * КАЖДУЮ неисправность, не только на первую за сеанс */
+                Beep_Alarm();
+            }
+        } else {
+            /* Авария снята (в т.ч. через DISCONNECTED) — перевзводим: следующее
+             * появление аварии на этом канале снова даст сигнал. */
+            s_alarm_beeped[ch] = false;
         }
     }
 }
