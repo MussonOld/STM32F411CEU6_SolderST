@@ -34,7 +34,9 @@
  *   Config3 = I1MUX=100(AIN3/REFN1), I2MUX=000(выкл), DRDYM=0
  *
  * RTD нестандартный, формула по паспорту сенсора (см. чат):
- *   t[°C] = (R[Ом] - 21.7) / 0.072
+ *   t[°C] = (R[Ом] - bias) / slope
+ * номиналы bias=21.7 Ом, slope=0.072 Ом/°C, но реально берутся из Settings
+ * (Settings_GetBias/GetSlope, меню Expert) — калибровка канала.
  *
  * Использование:
  *   MX_SPI2_Init() должен быть вызван ДО ADS1220_Init() (см. main.c).

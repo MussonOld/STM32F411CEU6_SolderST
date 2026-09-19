@@ -7,6 +7,7 @@
 #include "ads1220.h"
 #include "spi.h"   /* hspi2 */
 #include "main.h"  /* ADS1220_Solder_CS_*, ADS1220_Desolder_CS_*, DRDY_Solder_*, DRDY_Desolder_* */
+#include "settings.h" /* Settings_GetBias/GetSlope — калибровка формулы температуры */
 
 /* ---- Команды ADS1220 (datasheet, Table "Command Definitions") ---- */
 #define ADS1220_CMD_RESET      0x06U
@@ -214,9 +215,18 @@ fixed_t ADS1220_GetResistanceOhm(channel_id_t ch)
 
 fixed_t ADS1220_GetTemperatureC(channel_id_t ch)
 {
-    /* t[°C] = (R - 21.7) / 0.072 — паспортная формула RTD, см. чат. */
-    static const fixed_t offset_ohm     = FIXED_FROM_FLOAT(21.7f);
-    static const fixed_t slope_ohm_degc = FIXED_FROM_FLOAT(0.072f);
+    if (!channel_valid(ch)) {
+        return 0; /* Settings_GetSlope() на неверном канале вернул бы 0 -> деление на ноль ниже */
+    }
+    /* t[°C] = (R - bias) / slope. Номиналы по паспорту RTD — bias=21.7 Ом,
+     * slope=0.072 Ом/°C (Settings по умолчанию: 217 и 72) — но реальные
+     * значения берутся из Settings (меню Expert), чтобы можно было
+     * откалибровать канал: Bias сдвигает прямую параллельно (больше Bias —
+     * ниже показание, шаг 1/SETTINGS_BIAS_SCALE Ом), Slope меняет наклон.
+     * Slope клампится Settings'ом до >= SETTINGS_SLOPE_MIN (>0), деления на
+     * ноль нет. int64 — чтобы умножение на FIXED_ONE не переполнилось. */
+    fixed_t offset_ohm = (fixed_t)(((int64_t)Settings_GetBias(ch) * FIXED_ONE) / SETTINGS_BIAS_SCALE);
+    fixed_t slope_ohm_degc = (fixed_t)(((int64_t)Settings_GetSlope(ch) * FIXED_ONE) / SETTINGS_SLOPE_SCALE);
 
     fixed_t r = ADS1220_GetResistanceOhm(ch);
     return fixed_div(r - offset_ohm, slope_ohm_degc);
