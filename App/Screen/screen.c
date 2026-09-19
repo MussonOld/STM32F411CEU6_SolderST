@@ -244,6 +244,19 @@ static screen_mode_t s_last_screen_mode; /* чтобы очищать экран
 static display_color_t s_last_sleep_color[CHANNEL_COUNT]; /* чтобы перекрашивать таймер сна только при реальной смене цвета (не режима — один и тот же mode может значить разный цвет, см. update_sleep_status()) */
 static uint16_t s_sleep_icon_x[CHANNEL_COUNT]; /* x, по которому иконка РЕАЛЬНО сейчас нарисована на экране (актуален только пока s_sleep_icon_shown[ch]==true) — пересчитывается в update_sleep_status() */
 static bool s_sleep_icon_shown[CHANNEL_COUNT]; /* сейчас ли иконка реально нарисована на экране (скрыта, когда таймер не отображается) */
+static int32_t s_temp_shown[CHANNEL_COUNT];      /* целое, которое сейчас показывает CURRENT (актуально только при s_temp_shown_valid) */
+static bool    s_temp_shown_valid[CHANNEL_COUNT]; /* false, пока CURRENT показывает не число ("--"/авария) — следующее число берётся без гистерезиса */
+
+/**
+ * @brief Гистерезис вывода текущей температуры, °C.
+ *
+ * Отображаемое целое S соответствует реальной t из [S, S+1) (FIXED_TO_INT —
+ * арифметический сдвиг, т.е. floor). Число меняется только когда t выходит
+ * из [S - H, S + 1 + H): на границе двух целых медленный дрейф/шум АЦП больше
+ * не даёт мельтешения S <-> S+1. Только для вывода — Control работает с
+ * нефильтрованной температурой из State.
+ */
+#define SCREEN_TEMP_HYST_C  FIXED_FROM_FLOAT(0.3f)
 
 /**
  * @brief Применить цвета title/current канала. Приоритет: неисправность
@@ -525,6 +538,23 @@ static void print_fault_message_2line(uint8_t line1, uint8_t line2, uint16_t cen
  *        одно из двух непусто), target (всегда число)
  * @param center_x Центр половины экрана этого канала
  */
+/**
+ * @brief Целое для вывода в CURRENT с гистерезисом (см. SCREEN_TEMP_HYST_C).
+ */
+static int32_t temp_for_display(channel_id_t ch, fixed_t cur)
+{
+    if (s_temp_shown_valid[ch]) {
+        fixed_t lo = FIXED_FROM_INT(s_temp_shown[ch]) - SCREEN_TEMP_HYST_C;
+        fixed_t hi = FIXED_FROM_INT(s_temp_shown[ch] + 1) + SCREEN_TEMP_HYST_C;
+        if (cur >= lo && cur < hi) {
+            return s_temp_shown[ch]; /* в пределах гистерезиса — не меняем */
+        }
+    }
+    s_temp_shown[ch] = FIXED_TO_INT(cur);
+    s_temp_shown_valid[ch] = true;
+    return s_temp_shown[ch];
+}
+
 static void update_channel_content(channel_id_t ch, uint16_t center_x)
 {
     uint8_t line_current    = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_CURRENT    : LINE_DESOLDER_CURRENT;
@@ -571,6 +601,9 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
     }
 
     if (!s_content_clearing[ch]) {
+        if (idle || fault_msg != NULL || !enabled) {
+            s_temp_shown_valid[ch] = false; /* число не показываем — при возврате начинаем без гистерезиса */
+        }
         if (idle) {
             /* Инструмент не подключен: ни красного, ни сообщения, ни зуммера
              * (см. error.h) — то же двойное тире, что и у выключенного
@@ -594,7 +627,7 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
             TextField_PrintfCentered(line_fault_msg2, center_x, "");
         } else {
             fixed_t cur = State_GetCurrentTemp(ch);
-            int32_t cur_int = FIXED_TO_INT(cur);
+            int32_t cur_int = temp_for_display(ch, cur);
             TextField_PrintfCentered(line_current, center_x, "%ld", (long)cur_int);
             TextField_PrintfCentered(line_fault_msg, center_x, "");
             TextField_PrintfCentered(line_fault_msg2, center_x, "");
