@@ -25,13 +25,15 @@
  *        красный (COLOR_FAULT), если Error_IsChannelFaulted(ch), иначе
  *        обычная активная/неактивная окраска
  *      - текущая температура (LINE_x_CURRENT), шрифт Comic_60_dig — И
- *        сообщение об обрыве (LINE_x_FAULT_MSG), шрифт AntiquaB_18_uni,
- *        НА ТОЙ ЖЕ позиции — это ДВА РАЗНЫХ поля (Comic_60_dig кириллицу
- *        физически не содержит, нельзя вывести текст тем же полем), но в
- *        любой момент содержимое имеет ровно одно из двух, второе пустое
- *        (см. update_channel_content()): обычный случай — число в CURRENT,
- *        FAULT_MSG пуст; RTD/нагреватель оборван — CURRENT пуст, в
- *        FAULT_MSG текст "Обрыв RTD"/"Обрыв нагревателя"
+ *        сообщение об обрыве (LINE_x_FAULT_MSG/LINE_x_FAULT_MSG2, 2 строки —
+ *        2 слова в 1 строку не помещаются, см. print_fault_message_2line()),
+ *        шрифт AntiquaB_18_uni, НА ТОЙ ЖЕ позиции — это ДВА РАЗНЫХ поля
+ *        (Comic_60_dig кириллицу физически не содержит, нельзя вывести
+ *        текст тем же полем), но в любой момент содержимое имеет ровно
+ *        одно из двух, второе пустое (см. update_channel_content()):
+ *        обычный случай — число в CURRENT, FAULT_MSG/FAULT_MSG2 пусты;
+ *        RTD/нагреватель оборван — CURRENT пуст, FAULT_MSG/FAULT_MSG2 —
+ *        текст по словам ("Обрыв"/"RTD", "Обрыв"/"нагревателя", "КЗ"/"RTD")
  *      - целевая температура прямо под ней, шрифт AntiquaB_18_uni, всегда
  *        числом независимо от неисправности (ВРЕМЕННО — по ТЗ будет
  *        убрана позже)
@@ -81,17 +83,21 @@
 #include "fixed_point.h"
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
+#include <string.h>
 
 /* ---- Индексы строк TextField ---- */
 enum {
     LINE_INFO = 0,
     LINE_SOLDER_TITLE,
     LINE_SOLDER_CURRENT,      /* число, шрифт Comic_60_dig — пусто, если неисправность с сообщением */
-    LINE_SOLDER_FAULT_MSG,    /* "Обрыв RTD"/"Обрыв нагревателя", шрифт AntiquaB_18_uni — пусто в норме */
+    LINE_SOLDER_FAULT_MSG,    /* 1-я строка "Обрыв"/"КЗ" и т.п., шрифт AntiquaB_18_uni — пусто в норме */
+    LINE_SOLDER_FAULT_MSG2,   /* 2-я строка ("RTD"/"нагревателя") — см. print_fault_message_2line() */
     LINE_SOLDER_TARGET,
     LINE_DESOLDER_TITLE,
     LINE_DESOLDER_CURRENT,
     LINE_DESOLDER_FAULT_MSG,
+    LINE_DESOLDER_FAULT_MSG2,
     LINE_DESOLDER_TARGET,
     LINE_PRESET_1,
     LINE_PRESET_2,
@@ -152,6 +158,15 @@ enum {
 #define SCREEN_CURRENT_Y ((uint16_t)(SCREEN_TEMP_BAND_TOP + \
     ((SCREEN_TEMP_BAND_BOTTOM - SCREEN_TEMP_BAND_TOP) - SCREEN_TEMP_BLOCK_HEIGHT) / 2U))
 #define SCREEN_TARGET_Y  ((uint16_t)(SCREEN_CURRENT_Y + SCREEN_CURRENT_HEIGHT + SCREEN_TEMP_GAP))
+
+/* Аварийное сообщение всегда в 2 строки (2 слова в одну не помещаются, см.
+ * чат) — FAULT_MSG остаётся на позиции SCREEN_CURRENT_Y (как и раньше),
+ * FAULT_MSG2 — сразу под ней. SCREEN_TITLE_HEIGHT — высота шрифта
+ * AntiquaB_18_uni (тем же шрифтом выводятся обе строки), небольшой зазор
+ * между ними. До SCREEN_TARGET_Y ещё много места (CURRENT-блок посчитан
+ * под 67px строку Comic_60_dig, а тут всего 2×18px) — не пересекается. */
+#define SCREEN_FAULT_MSG2_GAP (2U)
+#define SCREEN_FAULT_MSG2_Y ((uint16_t)(SCREEN_CURRENT_Y + SCREEN_TITLE_HEIGHT + SCREEN_FAULT_MSG2_GAP))
 
 #define SCREEN_INFO_X (10U)
 #define SCREEN_INFO_Y (6U)
@@ -431,6 +446,8 @@ void Screen_Init(void)
                              &Comic_60_dig, COLOR_ACTIVE_CURRENT, COLOR_BG);
     TextField_ConfigureLine(LINE_SOLDER_FAULT_MSG, SCREEN_HALF_CENTER_LEFT_X, SCREEN_CURRENT_Y,
                              &AntiquaB_18_uni, COLOR_FAULT, COLOR_BG);
+    TextField_ConfigureLine(LINE_SOLDER_FAULT_MSG2, SCREEN_HALF_CENTER_LEFT_X, SCREEN_FAULT_MSG2_Y,
+                             &AntiquaB_18_uni, COLOR_FAULT, COLOR_BG);
     TextField_ConfigureLine(LINE_SOLDER_TARGET, SCREEN_HALF_CENTER_LEFT_X, SCREEN_TARGET_Y,
                              &AntiquaB_18_uni, COLOR_ACTIVE_TARGET, COLOR_BG);
 
@@ -439,6 +456,8 @@ void Screen_Init(void)
     TextField_ConfigureLine(LINE_DESOLDER_CURRENT, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_CURRENT_Y,
                              &Comic_60_dig, COLOR_INACTIVE_CURRENT, COLOR_BG);
     TextField_ConfigureLine(LINE_DESOLDER_FAULT_MSG, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_CURRENT_Y,
+                             &AntiquaB_18_uni, COLOR_FAULT, COLOR_BG);
+    TextField_ConfigureLine(LINE_DESOLDER_FAULT_MSG2, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_FAULT_MSG2_Y,
                              &AntiquaB_18_uni, COLOR_FAULT, COLOR_BG);
     TextField_ConfigureLine(LINE_DESOLDER_TARGET, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_TARGET_Y,
                              &AntiquaB_18_uni, COLOR_INACTIVE_TARGET, COLOR_BG);
@@ -479,15 +498,35 @@ void Screen_Init(void)
 }
 
 /**
+ * @brief Аварийное сообщение всегда в 2 строки — 2 слова в одну строку не
+ *        помещаются (см. чат). Делит msg по первому пробелу: "Обрыв
+ *        нагревателя" -> "Обрыв"/"нагревателя", "КЗ RTD" -> "КЗ"/"RTD".
+ *        Однословных сообщений сейчас нет (см. error.c), но на случай
+ *        появления — целиком в line1, line2 пустая.
+ */
+static void print_fault_message_2line(uint8_t line1, uint8_t line2, uint16_t center_x, const char *msg)
+{
+    const char *space = strchr(msg, ' ');
+    if (space != NULL) {
+        TextField_PrintfCentered(line1, center_x, "%.*s", (int)(space - msg), msg);
+        TextField_PrintfCentered(line2, center_x, "%s", space + 1);
+    } else {
+        TextField_PrintfCentered(line1, center_x, "%s", msg);
+        TextField_PrintfCentered(line2, center_x, "");
+    }
+}
+
+/**
  * @brief Обновить содержимое канала: title-цвет, current/fault_msg (ровно
  *        одно из двух непусто), target (всегда число)
  * @param center_x Центр половины экрана этого канала
  */
 static void update_channel_content(channel_id_t ch, uint16_t center_x)
 {
-    uint8_t line_current   = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_CURRENT   : LINE_DESOLDER_CURRENT;
-    uint8_t line_fault_msg = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_FAULT_MSG : LINE_DESOLDER_FAULT_MSG;
-    uint8_t line_target    = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_TARGET   : LINE_DESOLDER_TARGET;
+    uint8_t line_current    = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_CURRENT    : LINE_DESOLDER_CURRENT;
+    uint8_t line_fault_msg  = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_FAULT_MSG  : LINE_DESOLDER_FAULT_MSG;
+    uint8_t line_fault_msg2 = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_FAULT_MSG2 : LINE_DESOLDER_FAULT_MSG2;
+    uint8_t line_target     = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_TARGET    : LINE_DESOLDER_TARGET;
 
     const char *fault_msg = Error_GetChannelFaultMessage(ch); /* не NULL только для аварий: RTD_SHORT/RTD_OPEN/HEATER_OPEN */
     bool enabled = State_IsEnabled(ch);
@@ -499,11 +538,12 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
          * канала, тем же Comic_60_dig. */
         TextField_PrintfCentered(line_current, center_x, "--");
         TextField_PrintfCentered(line_fault_msg, center_x, "");
+        TextField_PrintfCentered(line_fault_msg2, center_x, "");
     } else if (fault_msg != NULL) {
         /* Текущая температура НЕ выводится вообще — на её месте сообщение
-         * в отдельном поле (Comic_60_dig кириллицу не содержит) */
+         * в отдельном поле (Comic_60_dig кириллицу не содержит), в 2 строки. */
         TextField_PrintfCentered(line_current, center_x, "");
-        TextField_PrintfCentered(line_fault_msg, center_x, "%s", fault_msg);
+        print_fault_message_2line(line_fault_msg, line_fault_msg2, center_x, fault_msg);
     } else if (!enabled) {
         /* Канал выключен коротким UP+DN (см. fsm.c) — число текущей
          * температуры показывать бессмысленно (нагрев не идёт, значение
@@ -512,11 +552,13 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
          * так что крупный шрифт совпадает с обычным выводом числа. */
         TextField_PrintfCentered(line_current, center_x, "--");
         TextField_PrintfCentered(line_fault_msg, center_x, "");
+        TextField_PrintfCentered(line_fault_msg2, center_x, "");
     } else {
         fixed_t cur = State_GetCurrentTemp(ch);
         int32_t cur_int = FIXED_TO_INT(cur);
         TextField_PrintfCentered(line_current, center_x, "%ld", (long)cur_int);
         TextField_PrintfCentered(line_fault_msg, center_x, "");
+        TextField_PrintfCentered(line_fault_msg2, center_x, "");
     }
 
     /* Целевая — всегда числом, независимо от неисправности (ВРЕМЕННО, см. докстринг) */
