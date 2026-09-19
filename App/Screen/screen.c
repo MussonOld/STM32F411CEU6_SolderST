@@ -51,7 +51,7 @@
  *    Отсос" — Menu_GetTitle()) + до 7 строк списком друг под другом,
  *    шрифт AntiquaB_18_uni везде. Выбранный пункт подсвечивается цветом
  *    (жёлтый — выбран, красный — редактируется), не текстовым курсором.
- *    Те же 7 строк переиспользуются для трёх строк предупреждения Expert
+ *    Те же 7 строк переиспользуются для строк предупреждения Expert
  *    (Menu_IsShowingExpertWarning()), промта подтверждения сброса
  *    (Menu_IsShowingResetConfirm()) и сообщения о выполненном сбросе
  *    (Menu_IsShowingResetDone()) — отдельных полей под это не заведено.
@@ -773,7 +773,7 @@ static void render_menu(void)
     if (Menu_IsShowingExpertWarning()) {
         for (uint8_t i = 0; i < SCREEN_MENU_ITEM_ROWS; i++) {
             uint8_t line = (uint8_t)(LINE_MENU_ITEM_0 + i);
-            if (i < 3) {
+            if (i < 4) {
                 TextField_Printf(line, "%s", Menu_GetExpertWarningLine(i));
             } else {
                 TextField_Printf(line, "");

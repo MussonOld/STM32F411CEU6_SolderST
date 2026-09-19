@@ -125,7 +125,7 @@ bool Menu_IsEditing(void);
 /** @brief true — показывается предупреждение перед первым входом в Expert (см. докстринг файла) */
 bool Menu_IsShowingExpertWarning(void);
 
-/** @brief Строка предупреждения Expert, index 0..2 (три строки текста) */
+/** @brief Строка предупреждения Expert, index 0..3 (четыре строки текста; каждая должна влезать в экран по ширине от x=20) */
 const char *Menu_GetExpertWarningLine(uint8_t line_index);
 
 /** @brief true — показывается промт подтверждения пункта "Сброс" (см. докстринг файла) */

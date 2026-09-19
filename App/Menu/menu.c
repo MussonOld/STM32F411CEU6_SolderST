@@ -408,7 +408,8 @@ const char *Menu_GetExpertWarningLine(uint8_t line_index)
     switch (line_index) {
         case 0: return "Внимание!!!";
         case 1: return "Режим требует квалификации!";
-        case 2: return "Неверные настройки могут повредить инструмент.";
+        case 2: return "Неверные настройки могут";
+        case 3: return "повредить инструмент.";
         default: return "";
     }
 }
