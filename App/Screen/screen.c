@@ -236,6 +236,10 @@ enum {
 
 static channel_id_t s_last_active_channel;
 static bool s_last_fault[CHANNEL_COUNT]; /* чтобы перекрашивать title/current только при реальном изменении неисправности */
+static bool s_content_clearing[CHANNEL_COUNT]; /* см. update_channel_content() — гасим CURRENT/FAULT_MSG/FAULT_MSG2
+                                                 * перед сменой fault<->не-fault, чтобы стирание одного поля не
+                                                 * затёрло уже нарисованное содержимое другого (они физически
+                                                 * перекрываются по Y, см. докстринг файла) */
 static screen_mode_t s_last_screen_mode; /* чтобы очищать экран только при реальной смене режима, не каждый кадр */
 static display_color_t s_last_sleep_color[CHANNEL_COUNT]; /* чтобы перекрашивать таймер сна только при реальной смене цвета (не режима — один и тот же mode может значить разный цвет, см. update_sleep_status()) */
 static uint16_t s_sleep_icon_x[CHANNEL_COUNT]; /* x, по которому иконка РЕАЛЬНО сейчас нарисована на экране (актуален только пока s_sleep_icon_shown[ch]==true) — пересчитывается в update_sleep_status() */
@@ -531,41 +535,78 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
     const char *fault_msg = Error_GetChannelFaultMessage(ch); /* не NULL только для аварий: RTD_SHORT/RTD_OPEN/HEATER_OPEN */
     bool enabled = State_IsEnabled(ch);
     bool idle    = Error_IsChannelIdle(ch); /* инструмент не подключен — не авария, только "--" */
+    bool faulted = Error_IsChannelFaulted(ch); /* синоним fault_msg != NULL, см. error.h — считаем один раз,
+                                                 * нужно и для гейта ниже, и для перекраски в конце функции */
 
-    if (idle) {
-        /* Инструмент не подключен: ни красного, ни сообщения, ни зуммера
-         * (см. error.h) — то же двойное тире, что и у выключенного
-         * канала, тем же Comic_60_dig. */
-        TextField_PrintfCentered(line_current, center_x, "--");
-        TextField_PrintfCentered(line_fault_msg, center_x, "");
-        TextField_PrintfCentered(line_fault_msg2, center_x, "");
-    } else if (fault_msg != NULL) {
-        /* Текущая температура НЕ выводится вообще — на её месте сообщение
-         * в отдельном поле (Comic_60_dig кириллицу не содержит), в 2 строки. */
+    /* CURRENT (Comic_60_dig) и FAULT_MSG/FAULT_MSG2 (AntiquaB_18_uni)
+     * физически делят одну и ту же Y-полосу (см. докстринг файла) — в
+     * любой момент непусто ровно одно из трёх полей, остальные пустые.
+     * TextField_Process() отрисовывает по одной dirty-строке за вызов,
+     * начиная с САМОГО МЕЛКОГО индекса (см. text_field.c) — у CURRENT
+     * индекс меньше, чем у FAULT_MSG/FAULT_MSG2. Если писать новое
+     * содержимое напрямую на кадре смены fault<->не-fault, при появлении
+     * аварии порядок безопасен (CURRENT первым гасится на "", затем
+     * FAULT_MSG/2 рисуют текст — на уже пустом месте), а вот при СНЯТИИ
+     * аварии порядок ломается: CURRENT (меньший индекс) рисуется первым
+     * и получает число/прочерк, а FAULT_MSG/FAULT_MSG2 гасятся только
+     * ПОСЛЕ — и их стирание старого текста (та же Y-полоса!) затирает уже
+     * нарисованное число. Статичным порядком индексов это не решить (для
+     * противоположного перехода порядок снова стал бы неверным) — поэтому
+     * на самом переходе сначала гасим ВСЕ ТРИ поля и ждём, пока реально
+     * доиграет отрисовка (TextField_IsSettled()), и только потом на
+     * следующих вызовах рисуем настоящее новое содержимое (см. чат —
+     * "на месте записи остаётся незаполненное пространство"). */
+    if (!s_content_clearing[ch] && faulted != s_last_fault[ch]) {
         TextField_PrintfCentered(line_current, center_x, "");
-        print_fault_message_2line(line_fault_msg, line_fault_msg2, center_x, fault_msg);
-    } else if (!enabled) {
-        /* Канал выключен коротким UP+DN (см. fsm.c) — число текущей
-         * температуры показывать бессмысленно (нагрев не идёт, значение
-         * не поддерживается). "--" выводим через поле line_current
-         * (Comic_60_dig) — в наборе _dig теперь есть дефис (см. bdf2c_TFT.py),
-         * так что крупный шрифт совпадает с обычным выводом числа. */
-        TextField_PrintfCentered(line_current, center_x, "--");
         TextField_PrintfCentered(line_fault_msg, center_x, "");
         TextField_PrintfCentered(line_fault_msg2, center_x, "");
-    } else {
-        fixed_t cur = State_GetCurrentTemp(ch);
-        int32_t cur_int = FIXED_TO_INT(cur);
-        TextField_PrintfCentered(line_current, center_x, "%ld", (long)cur_int);
-        TextField_PrintfCentered(line_fault_msg, center_x, "");
-        TextField_PrintfCentered(line_fault_msg2, center_x, "");
+        s_content_clearing[ch] = true;
     }
 
-    /* Целевая — всегда числом, независимо от неисправности (ВРЕМЕННО, см. докстринг) */
+    if (s_content_clearing[ch]) {
+        if (TextField_IsSettled(line_current) && TextField_IsSettled(line_fault_msg)
+            && TextField_IsSettled(line_fault_msg2)) {
+            s_content_clearing[ch] = false;
+        }
+    }
+
+    if (!s_content_clearing[ch]) {
+        if (idle) {
+            /* Инструмент не подключен: ни красного, ни сообщения, ни зуммера
+             * (см. error.h) — то же двойное тире, что и у выключенного
+             * канала, тем же Comic_60_dig. */
+            TextField_PrintfCentered(line_current, center_x, "--");
+            TextField_PrintfCentered(line_fault_msg, center_x, "");
+            TextField_PrintfCentered(line_fault_msg2, center_x, "");
+        } else if (fault_msg != NULL) {
+            /* Текущая температура НЕ выводится вообще — на её месте сообщение
+             * в отдельном поле (Comic_60_dig кириллицу не содержит), в 2 строки. */
+            TextField_PrintfCentered(line_current, center_x, "");
+            print_fault_message_2line(line_fault_msg, line_fault_msg2, center_x, fault_msg);
+        } else if (!enabled) {
+            /* Канал выключен коротким UP+DN (см. fsm.c) — число текущей
+             * температуры показывать бессмысленно (нагрев не идёт, значение
+             * не поддерживается). "--" выводим через поле line_current
+             * (Comic_60_dig) — в наборе _dig теперь есть дефис (см. bdf2c_TFT.py),
+             * так что крупный шрифт совпадает с обычным выводом числа. */
+            TextField_PrintfCentered(line_current, center_x, "--");
+            TextField_PrintfCentered(line_fault_msg, center_x, "");
+            TextField_PrintfCentered(line_fault_msg2, center_x, "");
+        } else {
+            fixed_t cur = State_GetCurrentTemp(ch);
+            int32_t cur_int = FIXED_TO_INT(cur);
+            TextField_PrintfCentered(line_current, center_x, "%ld", (long)cur_int);
+            TextField_PrintfCentered(line_fault_msg, center_x, "");
+            TextField_PrintfCentered(line_fault_msg2, center_x, "");
+        }
+    }
+
+    /* Целевая — всегда числом, независимо от неисправности (ВРЕМЕННО, см.
+     * докстринг); физически не пересекается с CURRENT/FAULT_MSG областью
+     * (см. SCREEN_TARGET_Y) — стадию гашения выше не ждёт. */
     uint16_t target = Settings_GetTarget(ch);
     TextField_PrintfCentered(line_target, center_x, "%u", (unsigned)target);
 
-    bool faulted = Error_IsChannelFaulted(ch);
     if (faulted != s_last_fault[ch]) {
         apply_channel_colors(ch);
         s_last_fault[ch] = faulted;
