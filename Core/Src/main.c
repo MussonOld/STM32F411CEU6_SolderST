@@ -41,6 +41,7 @@
 #include "beep.h"
 #include "diag.h"
 #include "control.h"
+#include "pump.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -171,6 +172,7 @@ int main(void)
   InputFSM_Init();
 
   Control_Init(); /* после State/Settings/Error/ADS1220/Sleep — Control читает их все, см. control.h */
+  Pump_Init();    /* после MX_GPIO_Init(), Pump_On активный низкий — см. pump.h */
 
   Screen_Init();     /* статика (разделитель) + геометрия строк, после TextField_Init() */
   Screen_Update();   /* первое наполнение содержимым (только помечает строки грязными —
@@ -212,6 +214,8 @@ int main(void)
         Control_Poll(); /* тот же гейт 10мс — CONTROL_POLL_MS тоже 10, см. control.h. Сам писатель
                           * State.current_temp/heater_active (заменяет прежний временный мостик
                           * ADS1220->State, который стоял здесь до появления этого модуля, см. чат) */
+
+        Pump_Poll();    /* тот же гейт 10мс — PUMP_POLL_MS == 10, после Diag_Poll()/Control_Poll(): читает уже обновлённые Error/State, см. pump.h */
 
         Error_ReportPsuStatus(HAL_GPIO_ReadPin(Pok_GPIO_Port, Pok_Pin) == GPIO_PIN_RESET); /* Pok активный низкий; без дебаунса — см. чат, если на реальном железе окажется дребезг, добавить по образцу sleep.c */
     }
