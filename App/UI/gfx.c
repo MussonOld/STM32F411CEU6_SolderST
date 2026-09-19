@@ -160,6 +160,23 @@ static void draw_glyph_overflow_marker(uint16_t x, uint16_t y, uint16_t advance,
     write_pixels_or_fail(s_glyph_buffer, px_count);
 }
 
+/**
+ * @brief Помещается ли ячейка [left, left+w) по X в экран.
+ *
+ * Display_SetWindow() возвращает DISPLAY_ERROR (не BUSY) на окне за краем
+ * экрана — это не транзиентный отказ, а геометрия, повторять бессмысленно.
+ * Без этой проверки слишком длинная строка давала ERROR_RETRY на каждой
+ * попытке, TextField_Process() перезапускал её бесконечно (dirty снова true,
+ * строка с меньшим индексом всегда выбирается первой) и все строки с большим
+ * индексом больше никогда не рисовались и не стирались.
+ */
+static bool glyph_fits_on_screen(int32_t left, uint16_t w)
+{
+    uint16_t screen_w = 0;
+    Display_GetSize(&screen_w, NULL);
+    return (left >= 0) && ((left + (int32_t)w) <= (int32_t)screen_w);
+}
+
 static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx,
                               display_color_t fg, display_color_t bg)
 {
@@ -176,6 +193,9 @@ static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx
          * цифр остаётся "призрак" старого символа) — заливаем ячейку bg. */
         if (advance == 0) {
             return advance;
+        }
+        if (!glyph_fits_on_screen(x, advance)) {
+            return advance; /* за краем экрана — тихо пропускаем, курсор двигаем */
         }
         uint32_t px_count = (uint32_t)advance * font->height;
         if (px_count > GFX_GLYPH_BUFFER_PIXELS) {
@@ -204,6 +224,10 @@ static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx
     int16_t  cell_left  = (xoff < 0) ? xoff : 0;
     int16_t  cell_right = ((int16_t)xoff + width > advance) ? ((int16_t)xoff + width) : advance;
     uint16_t cell_width = (uint16_t)(cell_right - cell_left);
+
+    if (!glyph_fits_on_screen((int32_t)x + cell_left, cell_width)) {
+        return advance; /* за краем экрана — тихо пропускаем, курсор двигаем */
+    }
 
     uint32_t pixel_count = (uint32_t)cell_width * font->height;
     if (pixel_count > GFX_GLYPH_BUFFER_PIXELS) {
