@@ -162,7 +162,15 @@ static void poll_channel(channel_id_t ch)
         uint32_t dt_ms = update_tick - s_last_update_tick[ch];
         if (dt_ms > 0) {
             dt_s = fixed_div(FIXED_FROM_INT((int32_t)dt_ms), FIXED_FROM_INT(1000));
-            s_dTdt[ch] = fixed_div(temp - s_prev_temp[ch], dt_s); /* °C/с */
+            fixed_t raw = fixed_div(temp - s_prev_temp[ch], dt_s); /* °C/с */
+            if (!s_dTdt_valid[ch]) {
+                s_dTdt[ch] = raw; /* первый отсчёт после сброса — без сглаживания */
+            } else {
+                /* Экспоненциальный фильтр: alpha = dt / (tau + dt). */
+                fixed_t alpha = fixed_div(FIXED_FROM_INT((int32_t)dt_ms),
+                                          FIXED_FROM_INT((int32_t)(CONTROL_DTDT_FILTER_MS + dt_ms)));
+                s_dTdt[ch] += fixed_mul(alpha, raw - s_dTdt[ch]);
+            }
             s_dTdt_valid[ch] = true;
         }
     }
