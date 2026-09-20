@@ -72,11 +72,11 @@ static uint32_t s_last_change_tick = 0;
 #define SETTINGS_DEFAULT_PRESLEEP_TEMP      (150U)
 #define SETTINGS_DEFAULT_PRE_SLEEP_TIMEOUT  (10U)
 #define SETTINGS_DEFAULT_SLEEP_TIMEOUT      (10U)
-#define SETTINGS_DEFAULT_SLOPE              (72U)  /* номинал 0.072 * SETTINGS_SLOPE_SCALE */
-#define SETTINGS_DEFAULT_BIAS               (217U) /* номинал 21.7 * SETTINGS_BIAS_SCALE */
-#define SETTINGS_DEFAULT_KP                 (0U)
-#define SETTINGS_DEFAULT_KI                 (0U)
-#define SETTINGS_DEFAULT_KD                 (0U)
+#define SETTINGS_DEFAULT_SLOPE              (75U)  /* 0.075 Ом/°C * SETTINGS_SLOPE_SCALE — откалибровано по термопаре (номинал по формуле датчика 72) */
+#define SETTINGS_DEFAULT_BIAS               (208U) /* 20.8 Ом * SETTINGS_BIAS_SCALE — откалибровано по термопаре (номинал по формуле датчика 217) */
+#define SETTINGS_DEFAULT_KP                 (500U) /* 5 %/°C, подобрано на паяльнике (см. control.h) */
+#define SETTINGS_DEFAULT_KI                 (90U)  /* 0.9 %/(°C*с) */
+#define SETTINGS_DEFAULT_KD                 (300U) /* 3 %/(°C/с) */
 
 static inline bool preset_valid(preset_id_t preset)
 {
