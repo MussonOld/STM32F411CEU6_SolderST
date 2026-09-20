@@ -35,6 +35,12 @@ static fixed_t  s_prev_temp[CHANNEL_COUNT];
 static bool     s_prev_temp_valid[CHANNEL_COUNT];
 static uint32_t s_last_update_tick[CHANNEL_COUNT];
 
+/* Последняя посчитанная dT/dt, °C/с. Обновляется на КАЖДЫЙ новый отсчёт АЦП —
+ * и при нагреве (для выключения), и при выключенном нагревателе (для
+ * прогноза при включении, см. predicted_below_setpoint()). */
+static fixed_t  s_dTdt[CHANNEL_COUNT];
+static bool     s_dTdt_valid[CHANNEL_COUNT];
+
 /* Клампинг интеграла — величина сама по себе неважна, пока Ki=0; главное,
  * чтобы была КОНЕЧНОЙ, чтобы наладка Ki не унаследовала неограниченный
  * бэклог с прошлых прогонов. ВРЕМЕННО — подобрать вместе с Ki, см. чат. */
@@ -64,6 +70,7 @@ static void force_off(channel_id_t ch)
     heater_write(ch, false);
     s_integral[ch] = 0;
     s_prev_temp_valid[ch] = false;
+    s_dTdt_valid[ch] = false;
 }
 
 void Control_Init(void)
@@ -103,6 +110,24 @@ static bool effective_setpoint(channel_id_t ch, fixed_t *out_setpoint)
     return true;
 }
 
+/* Прогноз для ВКЛЮЧЕНИЯ: греть имеет смысл, только если T + (Kd/Kp)*dT/dt
+ * ещё ниже уставки — т.е. то же условие output > 0, что и на выключении
+ * (без интеграла: он в начале цикла нагрева и так 0). Без этого упреждающее
+ * выключение ниже порога гистерезиса тут же отменялось бы обратным
+ * включением на следующем опросе. Kp == 0 (PID не настроен) — прогноза нет,
+ * решает один гистерезис, как раньше. */
+static bool predicted_below_setpoint(channel_id_t ch, fixed_t setpoint, fixed_t temp)
+{
+    fixed_t kp = fixed_div(FIXED_FROM_INT(Settings_GetKp(ch)), FIXED_FROM_INT(CONTROL_PID_SCALE));
+    if (kp <= 0) {
+        return true;
+    }
+    fixed_t kd    = fixed_div(FIXED_FROM_INT(Settings_GetKd(ch)), FIXED_FROM_INT(CONTROL_PID_SCALE));
+    fixed_t dTdt  = s_dTdt_valid[ch] ? s_dTdt[ch] : 0;
+    fixed_t output = fixed_mul(kp, setpoint - temp) - fixed_mul(kd, dTdt);
+    return output > 0;
+}
+
 static void poll_channel(channel_id_t ch)
 {
     /* Нет валидного отсчёта АЦП — греть вслепую нельзя, fail-safe off. */
@@ -130,12 +155,25 @@ static void poll_channel(channel_id_t ch)
     uint32_t update_tick = ADS1220_GetLastUpdateTick(ch);
     bool has_new_sample = (update_tick != s_last_update_tick[ch]);
 
+    /* dT/dt на каждый новый отсчёт (нужна и при нагреве, и при выключенном
+     * нагревателе). dt_s == 0 — базы ещё нет, производной нет. */
+    fixed_t dt_s = 0;
+    if (has_new_sample && s_prev_temp_valid[ch]) {
+        uint32_t dt_ms = update_tick - s_last_update_tick[ch];
+        if (dt_ms > 0) {
+            dt_s = fixed_div(FIXED_FROM_INT((int32_t)dt_ms), FIXED_FROM_INT(1000));
+            s_dTdt[ch] = fixed_div(temp - s_prev_temp[ch], dt_s); /* °C/с */
+            s_dTdt_valid[ch] = true;
+        }
+    }
+
     bool heating = State_IsHeaterActive(ch);
 
     if (!heating) {
-        /* ВКЛЮЧЕНИЕ — простое сравнение с гистерезисом, PID не участвует. */
+        /* ВКЛЮЧЕНИЕ — гистерезис И прогноз (T + Kd/Kp*dT/dt < уставки), см.
+         * predicted_below_setpoint(). */
         fixed_t threshold = setpoint - FIXED_FROM_INT(CONTROL_HYSTERESIS_C);
-        if (temp <= threshold) {
+        if (temp <= threshold && predicted_below_setpoint(ch, setpoint, temp)) {
             heater_write(ch, true);
             s_integral[ch] = 0; /* новый цикл нагрева — без переноса интеграла, см. control.h */
             /* Базу производной не трогаем здесь: если есть валидная предыдущая
@@ -145,12 +183,9 @@ static void poll_channel(channel_id_t ch)
     } else if (has_new_sample) {
         /* ВЫКЛЮЧЕНИЕ — момент определяет PID, см. control.h. Пересчитываем
          * только на реально новый отсчёт АЦП (иначе dT=0 исказит dT/dt). */
-        uint32_t dt_ms = s_prev_temp_valid[ch] ? (update_tick - s_last_update_tick[ch]) : 0;
-
-        if (s_prev_temp_valid[ch] && dt_ms > 0) {
-            fixed_t dt_s  = fixed_div(FIXED_FROM_INT((int32_t)dt_ms), FIXED_FROM_INT(1000));
-            fixed_t dTdt  = fixed_div(temp - s_prev_temp[ch], dt_s); /* °C/с */
+        if (dt_s > 0) {
             fixed_t error = setpoint - temp;
+            fixed_t dTdt  = s_dTdt[ch];
 
             /* Анти-виндап: копим интеграл, только пока реально греем (сюда и
              * попадаем только пока heating==true); клампим независимо от Ki. */
