@@ -24,10 +24,8 @@ static const control_pins_t s_pins[CHANNEL_COUNT] = {
     [CHANNEL_DESOLDER] = { Desolder_On_GPIO_Port, Desolder_On_Pin },
 };
 
-/* Интеграл ошибки, накопленный за текущий цикл нагрева. Q16.16,
- * "градус*секунда". Обнуляется на каждом ВКЛЮЧЕНИИ (не переносится между
- * циклами) и клампится каждый пересчёт — см. control.h. Пока Ki=0 ни на
- * что не влияет, но должен считаться правильно уже сейчас. */
+/* Интеграл ошибки, Q16.16, "градус*секунда". Копится только в полосе
+ * CONTROL_INTEGRAL_BAND_C вокруг уставки, вне полосы — 0 (см. control.h). */
 static fixed_t  s_integral[CHANNEL_COUNT];
 
 /* База для производной — температура и тик предыдущего пересчёта. */
@@ -35,23 +33,13 @@ static fixed_t  s_prev_temp[CHANNEL_COUNT];
 static bool     s_prev_temp_valid[CHANNEL_COUNT];
 static uint32_t s_last_update_tick[CHANNEL_COUNT];
 
-/* Последняя посчитанная dT/dt, °C/с. Обновляется на КАЖДЫЙ новый отсчёт АЦП —
- * и при нагреве (для выключения), и при выключенном нагревателе (для
- * прогноза при включении, см. predicted_below_setpoint()). */
+/* Сглаженная dT/dt, °C/с (см. CONTROL_DTDT_FILTER_MS). */
 static fixed_t  s_dTdt[CHANNEL_COUNT];
 static bool     s_dTdt_valid[CHANNEL_COUNT];
 
-/* Клампинг интеграла — величина сама по себе неважна, пока Ki=0; главное,
- * чтобы была КОНЕЧНОЙ, чтобы наладка Ki не унаследовала неограниченный
- * бэклог с прошлых прогонов. ВРЕМЕННО — подобрать вместе с Ki, см. чат. */
-#define CONTROL_INTEGRAL_CLAMP FIXED_FROM_INT(1000)
-
-static fixed_t clamp_fixed(fixed_t v, fixed_t lo, fixed_t hi)
-{
-    if (v < lo) return lo;
-    if (v > hi) return hi;
-    return v;
-}
+/* Текущая мощность канала, %, 0..100 — выход PID, обновляется на новый
+ * отсчёт АЦП; фазу ШИМ выходная ступень пересчитывает на каждый опрос. */
+static uint8_t  s_duty_pct[CHANNEL_COUNT];
 
 static void heater_write(channel_id_t ch, bool on)
 {
@@ -61,12 +49,29 @@ static void heater_write(channel_id_t ch, bool on)
     State_SetHeaterActive(ch, on);
 }
 
+/* Программный ШИМ (time-proportional): включено первые duty% окна
+ * CONTROL_PWM_PERIOD_MS. Фаза второго канала сдвинута на полпериода — оба
+ * нагревателя не включаются одновременно. При переходе на аппаратный ШИМ
+ * меняется только эта функция. */
+static void pwm_stage(channel_id_t ch)
+{
+    uint32_t period = CONTROL_PWM_PERIOD_MS;
+    uint32_t phase  = (HAL_GetTick() + (uint32_t)ch * (period / 2U)) % period;
+    uint32_t on_ms  = ((uint32_t)s_duty_pct[ch] * period) / 100U;
+    bool on = (phase < on_ms);   /* duty=0 -> всегда off, duty=100 -> всегда on */
+
+    if (on != State_IsHeaterActive(ch)) {
+        heater_write(ch, on);
+    }
+}
+
 /* Принудительно выключить канал и сбросить состояние PID — общая точка
  * для всех "запрещающих нагрев" условий (fault/disabled/sleep/нет данных),
  * см. control.h. Идемпотентно — можно звать каждый опрос без разбора
  * переходов состояний. */
 static void force_off(channel_id_t ch)
 {
+    s_duty_pct[ch] = 0;
     heater_write(ch, false);
     s_integral[ch] = 0;
     s_prev_temp_valid[ch] = false;
@@ -110,22 +115,39 @@ static bool effective_setpoint(channel_id_t ch, fixed_t *out_setpoint)
     return true;
 }
 
-/* Прогноз для ВКЛЮЧЕНИЯ: греть имеет смысл, только если T + (Kd/Kp)*dT/dt
- * ещё ниже уставки — т.е. то же условие output > 0, что и на выключении
- * (без интеграла: он в начале цикла нагрева и так 0). Без этого упреждающее
- * выключение ниже порога гистерезиса тут же отменялось бы обратным
- * включением на следующем опросе. Kp == 0 (PID не настроен) — прогноза нет,
- * решает один гистерезис, как раньше. */
-static bool predicted_below_setpoint(channel_id_t ch, fixed_t setpoint, fixed_t temp)
+/* Один шаг PID на новый отсчёт АЦП: обновляет s_integral и s_duty_pct.
+ * dt_s > 0. Вычисления выхода — в int64: Kp до 100 %/°C при ошибке до
+ * сотен градусов в Q16.16 не помещается в int32. */
+static void pid_step(channel_id_t ch, fixed_t setpoint, fixed_t temp, fixed_t dt_s)
 {
+    fixed_t error = setpoint - temp;
+
     fixed_t kp = fixed_div(FIXED_FROM_INT(Settings_GetKp(ch)), FIXED_FROM_INT(CONTROL_PID_SCALE));
-    if (kp <= 0) {
-        return true;
+    fixed_t ki = fixed_div(FIXED_FROM_INT(Settings_GetKi(ch)), FIXED_FROM_INT(CONTROL_PID_SCALE));
+    fixed_t kd = fixed_div(FIXED_FROM_INT(Settings_GetKd(ch)), FIXED_FROM_INT(CONTROL_PID_SCALE));
+
+    /* Интеграл: только в полосе вокруг уставки (анти-виндап), иначе сброс.
+     * Клампится так, чтобы Ki*I лежало в [0, 100] %. */
+    fixed_t band = FIXED_FROM_INT(CONTROL_INTEGRAL_BAND_C);
+    if (ki > 0 && error <= band && error >= -band) {
+        fixed_t i_max = fixed_div(FIXED_FROM_INT(100), ki);
+        fixed_t i = s_integral[ch] + fixed_mul(error, dt_s);
+        if (i < 0)     i = 0;
+        if (i > i_max) i = i_max;
+        s_integral[ch] = i;
+    } else {
+        s_integral[ch] = 0;
     }
-    fixed_t kd    = fixed_div(FIXED_FROM_INT(Settings_GetKd(ch)), FIXED_FROM_INT(CONTROL_PID_SCALE));
-    fixed_t dTdt  = s_dTdt_valid[ch] ? s_dTdt[ch] : 0;
-    fixed_t output = fixed_mul(kp, setpoint - temp) - fixed_mul(kd, dTdt);
-    return output > 0;
+
+    int64_t out = (((int64_t)kp * error) >> FIXED_SHIFT)
+                + (((int64_t)ki * s_integral[ch]) >> FIXED_SHIFT)
+                - (((int64_t)kd * s_dTdt[ch]) >> FIXED_SHIFT);
+
+    int64_t max = (int64_t)FIXED_FROM_INT(100);
+    if (out < 0)   out = 0;
+    if (out > max) out = max;
+
+    s_duty_pct[ch] = (uint8_t)FIXED_TO_INT((fixed_t)out + (FIXED_ONE >> 1)); /* округление */
 }
 
 static void poll_channel(channel_id_t ch)
@@ -155,64 +177,35 @@ static void poll_channel(channel_id_t ch)
     uint32_t update_tick = ADS1220_GetLastUpdateTick(ch);
     bool has_new_sample = (update_tick != s_last_update_tick[ch]);
 
-    /* dT/dt на каждый новый отсчёт (нужна и при нагреве, и при выключенном
-     * нагревателе). dt_s == 0 — базы ещё нет, производной нет. */
-    fixed_t dt_s = 0;
-    if (has_new_sample && s_prev_temp_valid[ch]) {
-        uint32_t dt_ms = update_tick - s_last_update_tick[ch];
-        if (dt_ms > 0) {
-            dt_s = fixed_div(FIXED_FROM_INT((int32_t)dt_ms), FIXED_FROM_INT(1000));
-            s_dTdt[ch] = fixed_div(temp - s_prev_temp[ch], dt_s); /* °C/с */
-            s_dTdt_valid[ch] = true;
-        }
-    }
+    if (has_new_sample) {
+        /* Пересчитываем только на реально новый отсчёт АЦП (иначе dT=0
+         * исказит dT/dt). Первому отсчёту после сброса базы нет — ждём. */
+        if (s_prev_temp_valid[ch]) {
+            uint32_t dt_ms = update_tick - s_last_update_tick[ch];
+            if (dt_ms > 0) {
+                fixed_t dt_s = fixed_div(FIXED_FROM_INT((int32_t)dt_ms), FIXED_FROM_INT(1000));
+                fixed_t raw  = fixed_div(temp - s_prev_temp[ch], dt_s); /* °C/с */
 
-    bool heating = State_IsHeaterActive(ch);
+                if (!s_dTdt_valid[ch]) {
+                    s_dTdt[ch] = raw;
+                    s_dTdt_valid[ch] = true;
+                } else {
+                    /* Экспоненциальный фильтр: alpha = dt / (tau + dt). */
+                    fixed_t alpha = fixed_div(FIXED_FROM_INT((int32_t)dt_ms),
+                                              FIXED_FROM_INT((int32_t)(CONTROL_DTDT_FILTER_MS + dt_ms)));
+                    s_dTdt[ch] += fixed_mul(alpha, raw - s_dTdt[ch]);
+                }
 
-    if (!heating) {
-        /* ВКЛЮЧЕНИЕ — гистерезис И прогноз (T + Kd/Kp*dT/dt < уставки), см.
-         * predicted_below_setpoint(). */
-        fixed_t threshold = setpoint - FIXED_FROM_INT(CONTROL_HYSTERESIS_C);
-        if (temp <= threshold && predicted_below_setpoint(ch, setpoint, temp)) {
-            heater_write(ch, true);
-            s_integral[ch] = 0; /* новый цикл нагрева — без переноса интеграла, см. control.h */
-            /* Базу производной не трогаем здесь: если есть валидная предыдущая
-             * точка — она пригодится на следующем пересчёте; если нет — просто
-             * подождём один отсчёт (см. ветку ниже). */
-        }
-    } else if (has_new_sample) {
-        /* ВЫКЛЮЧЕНИЕ — момент определяет PID, см. control.h. Пересчитываем
-         * только на реально новый отсчёт АЦП (иначе dT=0 исказит dT/dt). */
-        if (dt_s > 0) {
-            fixed_t error = setpoint - temp;
-            fixed_t dTdt  = s_dTdt[ch];
-
-            /* Анти-виндап: копим интеграл, только пока реально греем (сюда и
-             * попадаем только пока heating==true); клампим независимо от Ki. */
-            s_integral[ch] = clamp_fixed(s_integral[ch] + fixed_mul(error, dt_s),
-                                          -CONTROL_INTEGRAL_CLAMP, CONTROL_INTEGRAL_CLAMP);
-
-            fixed_t kp = fixed_div(FIXED_FROM_INT(Settings_GetKp(ch)), FIXED_FROM_INT(CONTROL_PID_SCALE));
-            fixed_t ki = fixed_div(FIXED_FROM_INT(Settings_GetKi(ch)), FIXED_FROM_INT(CONTROL_PID_SCALE));
-            fixed_t kd = fixed_div(FIXED_FROM_INT(Settings_GetKd(ch)), FIXED_FROM_INT(CONTROL_PID_SCALE));
-
-            fixed_t output = fixed_mul(kp, error) + fixed_mul(ki, s_integral[ch]) - fixed_mul(kd, dTdt);
-
-            if (output <= 0) {
-                heater_write(ch, false);
-                /* s_integral намеренно не обнуляем здесь — обнуление только на
-                 * СЛЕДУЮЩЕМ включении (см. ветку выше), чтобы клампинг выше
-                 * оставался корректен, даже если output посчитан на самой
-                 * границе выключения. */
+                pid_step(ch, setpoint, temp, dt_s);
             }
         }
-    }
 
-    if (has_new_sample) {
-        s_prev_temp[ch]       = temp;
-        s_prev_temp_valid[ch] = true;
+        s_prev_temp[ch]        = temp;
+        s_prev_temp_valid[ch]  = true;
         s_last_update_tick[ch] = update_tick;
     }
+
+    pwm_stage(ch);
 }
 
 void Control_Poll(void)
