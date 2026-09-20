@@ -77,7 +77,7 @@ extern "C" {
 
 /** Гистерезис включения, °C (см. control.c шапку по выбору величины).
  *  ВРЕМЕННО — подобрать вместе с Kp/Kd на реальном железе, см. чат. */
-#define CONTROL_HYSTERESIS_C 2
+#define CONTROL_HYSTERESIS_C 1
 
 /** Масштаб хранимых в Settings сырых Kp/Ki/Kd (uint16_t) в реальные
  *  коэффициенты: real = raw / CONTROL_PID_SCALE. Единицы Kp/Kd — доля
