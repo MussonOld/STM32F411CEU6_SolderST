@@ -118,6 +118,15 @@ static void dispatch_event(const button_event_t *ev)
         return;
     }
 
+    /* Канал выключен вручную (аккорд UP+DN) - понимает ТОЛЬКО аккорд (включение):
+     * SET1/2/3 (и применение, и запись пресета) и UP/DN не действуют. Фокус на
+     * такой канал передавать МОЖНО (TOOLS обработан выше) - иначе его нельзя
+     * было бы снова включить. Неподключенный/неисправный канал отсечён блоком
+     * выше, там же TOOLS не передаёт на него фокус. */
+    if (!State_IsEnabled(s_active_channel) && ev->mask != BUTTONS_CHORD_UP_DN_MASK) {
+        return;
+    }
+
     /* --- SET1/SET2/SET3 --- */
     if (ev->mask == BUTTON_MASK(BUTTON_SET1) ||
         ev->mask == BUTTON_MASK(BUTTON_SET2) ||
@@ -126,16 +135,6 @@ static void dispatch_event(const button_event_t *ev)
         button_id_t btn = (ev->mask == BUTTON_MASK(BUTTON_SET1)) ? BUTTON_SET1 :
                            (ev->mask == BUTTON_MASK(BUTTON_SET2)) ? BUTTON_SET2 : BUTTON_SET3;
         preset_id_t preset = preset_for_button(btn);
-
-        /* Канал выключен вручную (аккорд UP+DN) - пресеты не работают вообще:
-         * ни применение (короткое), ни запись (долгое). Фокус на такой канал
-         * передавать МОЖНО (TOOLS выше не блокируется) - иначе его нельзя было
-         * бы снова включить аккордом. Неподключенный/неисправный канал сюда не
-         * доходит: отсечён Error_IsChannelBlocked() выше, там же TOOLS не
-         * передаёт на него фокус. */
-        if (!State_IsEnabled(s_active_channel)) {
-            return;
-        }
 
         if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
             apply_target_and_sync(s_active_channel, Settings_GetPreset(s_active_channel, preset));
@@ -219,7 +218,7 @@ void InputFSM_Poll(void)
     }
 
     if (s_accel.active) {
-        if (!Buttons_IsHeld(s_accel.button) || Error_IsChannelBlocked(s_active_channel)) {
+        if (!Buttons_IsHeld(s_accel.button) || Error_IsChannelBlocked(s_active_channel) || !State_IsEnabled(s_active_channel)) {
             s_accel.active = false;
         } else {
             StepAccel_Tick(&s_accel, HAL_GetTick());
