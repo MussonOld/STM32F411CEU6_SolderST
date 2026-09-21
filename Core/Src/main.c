@@ -73,6 +73,41 @@ void SystemClock_Config(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+/* Аппаратный сторожевой таймер IWDG. Без него зависание главного цикла (или
+ * бесконечный цикл в HardFault/Error_Handler) оставляет пины Solder_On/
+ * Desolder_On на последнем уровне — включённый нагреватель греет на полную
+ * до снятия питания. По сбросу IWDG пины возвращаются в выключенное состояние
+ * из MX_GPIO_Init().
+ *
+ * Настроен напрямую через регистры (не через HAL_IWDG и не через .ioc):
+ * не зависит от регенерации CubeMX (stm32f4xx_hal_conf.h/.ioc не трогаем).
+ * LSI ~32 кГц (разброс 17..47 кГц), делитель /32, RLR=2000: номинально ~2 с,
+ * в худшем случае не меньше ~1.4 с — заметно больше самого длинного
+ * блокирующего места в главном цикле (перерисовка экрана по DMA — сотни мс).
+ * Обновляется в 10мс-блоке главного цикла после Control_Poll() (см. ниже).
+ * В отладке (стоп на брейкпоинте) счётчик замораживается. IWDG нельзя
+ * остановить после запуска — запускается один раз, перед главным циклом,
+ * уже после двойного прохода (самосброса) запуска: сброс IWDG проходит
+ * запуск заново так же, как холодный старт. */
+#define WATCHDOG_PRESCALER_DIV32  3U
+#define WATCHDOG_RELOAD           2000U
+
+static void Watchdog_Start(void)
+{
+  __HAL_DBGMCU_FREEZE_IWDG();
+  IWDG->KR = 0xCCCCU;                     /* старт (LSI запускается автоматически) */
+  IWDG->KR = 0x5555U;                     /* разблокировать PR/RLR */
+  IWDG->PR  = WATCHDOG_PRESCALER_DIV32;
+  IWDG->RLR = WATCHDOG_RELOAD;
+  for (uint32_t i = 0; (IWDG->SR != 0U) && (i < 1000000U); i++) { } /* PVU/RVU */
+  IWDG->KR = 0xAAAAU;                     /* перезагрузить счётчик новыми параметрами */
+}
+
+static inline void Watchdog_Refresh(void)
+{
+  IWDG->KR = 0xAAAAU;
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -195,6 +230,10 @@ int main(void)
    * ниже. */
   uint32_t screen_update_last_tick = HAL_GetTick();
 
+  /* Сторожевой — последним перед главным циклом (после самосброса и всей
+   * блокирующей инициализации), см. комментарий у Watchdog_Start(). */
+  Watchdog_Start();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -218,6 +257,10 @@ int main(void)
         Pump_Poll();    /* тот же гейт 10мс — PUMP_POLL_MS == 10, после Diag_Poll()/Control_Poll(): читает уже обновлённые Error/State, см. pump.h */
 
         Error_ReportPsuStatus(HAL_GPIO_ReadPin(Pok_GPIO_Port, Pok_Pin) == GPIO_PIN_RESET); /* Pok активный низкий; без дебаунса — см. чат, если на реальном железе окажется дребезг, добавить по образцу sleep.c */
+
+        /* Сторожевой — ПОСЛЕ Control_Poll(): зависание любого опроса выше, как
+         * и остановка SysTick (гейт по HAL_GetTick), приводит к сбросу. */
+        Watchdog_Refresh();
     }
 
     InputFSM_Poll();
@@ -290,6 +333,14 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
+  /* Fail-safe: прежде чем встать — выключить нагреватели и насос (все три
+   * активным НИЗКИМ уровнем, высокий = выключено, см. gpio.c/pump.h). Иначе
+   * включённый нагреватель остался бы включённым навсегда. Сторожевой при
+   * этом продолжает работать: через ~2 с сброс и перезапуск (пины опять
+   * выключены), при устойчивой ошибке — цикл перезапусков, нагрев не включается. */
+  HAL_GPIO_WritePin(Solder_On_GPIO_Port,   Solder_On_Pin,   GPIO_PIN_SET);
+  HAL_GPIO_WritePin(Desolder_On_GPIO_Port, Desolder_On_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(Pump_On_GPIO_Port,     Pump_On_Pin,     GPIO_PIN_SET);
   __disable_irq();
   while (1)
   {
