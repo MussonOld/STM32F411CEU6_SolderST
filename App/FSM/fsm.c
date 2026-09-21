@@ -11,6 +11,7 @@
 #include "state.h"
 #include "error.h"
 #include "menu.h"
+#include "screen.h" /* Screen_GetShownTemp() - отображаемая температура для записи в пресет */
 #include "sleep.h"
 #include "fixed_point.h"
 #include "step_accel.h" /* авто-повтор UP/DN — общий с menu.c, см. App/Common */
@@ -129,10 +130,15 @@ static void dispatch_event(const button_event_t *ev)
         if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
             apply_target_and_sync(s_active_channel, Settings_GetPreset(s_active_channel, preset));
         } else if (ev->type == BUTTON_EVENT_LONG_PRESS) {
-            fixed_t cur = State_GetCurrentTemp(s_active_channel);
-            int32_t cur_int = FIXED_TO_INT(cur);
-            if (cur_int < 0) cur_int = 0; /* защита от аномального/отрицательного чтения датчика */
-            Settings_SetPreset(s_active_channel, preset, (uint16_t)cur_int); /* клампится 50..450 внутри */
+            /* Пресет наследует ОТОБРАЖАЕМУЮ температуру (после гистерезиса
+             * экрана), а не сырую State: иначе записанное число не совпало бы с
+             * тем, что пользователь видел на экране. Числа на экране нет
+             * (прочерк/авария/канал выключен) - сохранять нечего. */
+            int32_t shown_int;
+            if (Screen_GetShownTemp(s_active_channel, &shown_int)) {
+                if (shown_int < 0) shown_int = 0; /* защита от аномального/отрицательного чтения датчика */
+                Settings_SetPreset(s_active_channel, preset, (uint16_t)shown_int); /* клампится 50..450 внутри */
+            }
         }
         return;
     }

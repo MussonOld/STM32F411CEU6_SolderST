@@ -556,6 +556,15 @@ static int32_t temp_for_display(channel_id_t ch, fixed_t cur)
     return s_temp_shown[ch];
 }
 
+bool Screen_GetShownTemp(channel_id_t ch, int32_t *out_temp)
+{
+    if (!s_temp_shown_valid[ch]) {
+        return false;
+    }
+    *out_temp = s_temp_shown[ch];
+    return true;
+}
+
 static void update_channel_content(channel_id_t ch, uint16_t center_x)
 {
     uint8_t line_current    = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_CURRENT    : LINE_DESOLDER_CURRENT;

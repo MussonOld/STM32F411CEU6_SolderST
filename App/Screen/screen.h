@@ -21,6 +21,10 @@
 #ifndef SCREEN_H
 #define SCREEN_H
 
+#include <stdbool.h>
+#include <stdint.h>
+#include "channel.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -46,6 +50,21 @@ void Screen_Init(void);
  * TextField_Process() в основном цикле.
  */
 void Screen_Update(void);
+
+/**
+ * @brief Целое, которое СЕЙЧАС показывает CURRENT канала (после гистерезиса
+ *        экрана SCREEN_TEMP_HYST_C, поэтому может отличаться от
+ *        State_GetCurrentTemp() на доли градуса).
+ *
+ * Нужно там, где значение "с экрана" должно совпасть с тем, что увидел
+ * пользователь (долгое нажатие SETx записывает в пресет именно его, см.
+ * fsm.c).
+ *
+ * @param out_temp Куда записать значение (только при возврате true)
+ * @return true - на экране число; false - там "--"/авария/канал выключен
+ *         (числа нет, out_temp не трогается)
+ */
+bool Screen_GetShownTemp(channel_id_t ch, int32_t *out_temp);
 
 #ifdef __cplusplus
 }
