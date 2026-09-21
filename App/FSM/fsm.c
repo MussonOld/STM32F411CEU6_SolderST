@@ -127,13 +127,24 @@ static void dispatch_event(const button_event_t *ev)
                            (ev->mask == BUTTON_MASK(BUTTON_SET2)) ? BUTTON_SET2 : BUTTON_SET3;
         preset_id_t preset = preset_for_button(btn);
 
+        /* Канал выключен вручную (аккорд UP+DN) - пресеты не работают вообще:
+         * ни применение (короткое), ни запись (долгое). Фокус на такой канал
+         * передавать МОЖНО (TOOLS выше не блокируется) - иначе его нельзя было
+         * бы снова включить аккордом. Неподключенный/неисправный канал сюда не
+         * доходит: отсечён Error_IsChannelBlocked() выше, там же TOOLS не
+         * передаёт на него фокус. */
+        if (!State_IsEnabled(s_active_channel)) {
+            return;
+        }
+
         if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
             apply_target_and_sync(s_active_channel, Settings_GetPreset(s_active_channel, preset));
         } else if (ev->type == BUTTON_EVENT_LONG_PRESS) {
             /* Пресет наследует ОТОБРАЖАЕМУЮ температуру (после гистерезиса
              * экрана), а не сырую State: иначе записанное число не совпало бы с
-             * тем, что пользователь видел на экране. Числа на экране нет
-             * (прочерк/авария/канал выключен) - сохранять нечего. */
+             * тем, что пользователь видел на экране. Числа на экране нет -
+             * сохранять нечего (сюда не должно доходить: выключенный,
+             * неподключенный и неисправный каналы отсечены выше). */
             int32_t shown_int;
             if (Screen_GetShownTemp(s_active_channel, &shown_int)) {
                 if (shown_int < 0) shown_int = 0; /* защита от аномального/отрицательного чтения датчика */
