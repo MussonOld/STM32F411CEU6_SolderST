@@ -127,38 +127,6 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-  /* "Двойной проход" (см. чат): первый проход в рамках power-сессии —
-   * всегда самосброс после Display_Init(), независимо от причины входа
-   * (кнопка/питание/программатор); второй проход — без самосброса. Маркер
-   * "уже был первый проход" — флаг SFTRST (software reset flag), взводится
-   * ТОЛЬКО нашим же NVIC_SystemReset() ниже, не внешней причиной сброса —
-   * не зацикливается. ИЗОЛИРОВАННЫЙ ТЕСТ: только эта часть воркэраунда,
-   * без fill-таймаута и без retry-цикла заливки (см. чат/тег
-   * display-workarounds-full) — проверяем, нужна ли она сама по себе для
-   * второго экземпляра панели. */
-  bool is_second_pass = __HAL_RCC_GET_FLAG(RCC_FLAG_SFTRST);
-  __HAL_RCC_CLEAR_RESET_FLAGS();
-
-  /* Ранний захват RST/DC (PA4/PA3), до SystemClock_Config()/MX_GPIO_Init() —
-   * см. чат: CS панели аппаратно на GND, то есть контроллер слушает шину
-   * SPI ВСЕГДА, включая POR-окно, где RST/DC/SCK/MOSI ещё висят в воздухе
-   * (вход, без подтяжки) — случайный шум на линиях в этом окне мог
-   * восприняться как команда ещё до того, как прошивка вообще возьмёт
-   * пины под контроль. MX_GPIO_Init() ниже переинициализирует эти же пины
-   * теми же параметрами повторно — идемпотентно, не конфликтует. */
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  HAL_GPIO_WritePin(GPIOA, Disp_DC_Pin | Disp_RST_Pin, GPIO_PIN_RESET);
-  {
-      GPIO_InitTypeDef GPIO_InitStruct = {0};
-      GPIO_InitStruct.Pin   = Disp_DC_Pin | Disp_RST_Pin;
-      GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
-      GPIO_InitStruct.Pull  = GPIO_NOPULL;
-      GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-      HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-  }
-
-  /* Пауза на прогрев питания панели — после раннего assert-low RST/DC. */
-  HAL_Delay(250);
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -177,13 +145,6 @@ int main(void)
   MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
   Display_Init();
-
-  /* Первый проход в этой power-сессии — самосброс, независимо от того, чем
-   * был вызван вход (кнопка/питание/программатор), см. комментарий в
-   * USER CODE BEGIN Init. */
-  if (!is_second_pass) {
-      NVIC_SystemReset();
-  }
 
   Display_SetWindow(0, 0, 319, 239);
   Display_FillColorDMA(DISPLAY_RGB565(0, 0, 0), 320 * 240);
