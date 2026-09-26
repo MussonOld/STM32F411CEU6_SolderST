@@ -100,7 +100,7 @@ extern "C" {
  *  уставки, °C/с — см. шапку, "плавная уставка". ВРЕМЕННО, ЗАШИТО В КОДЕ:
  *  тестируем значение 10 перед тем, как заводить его в Settings/EEPROM/
  *  Expert-меню (см. чат). */
-#define CONTROL_SETPOINT_SLEW_C_PER_S 10
+#define CONTROL_SETPOINT_SLEW_C_PER_S 4
 
 /** Масштаб хранимых в Settings сырых Kp/Ki/Kd (uint16_t) в реальные
  *  коэффициенты: real = raw / CONTROL_PID_SCALE; выход — проценты мощности
