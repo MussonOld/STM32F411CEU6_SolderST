@@ -118,32 +118,43 @@ static bool effective_setpoint(channel_id_t ch, fixed_t *out_setpoint)
 /* Один шаг PID на новый отсчёт АЦП: обновляет s_integral и s_duty_pct.
  * dt_s > 0. Вычисления выхода — в int64: Kp до 100 %/°C при ошибке до
  * сотен градусов в Q16.16 не помещается в int32. */
-static void pid_step(channel_id_t ch, fixed_t setpoint, fixed_t temp, fixed_t dt_s)
+static void pid_step(channel_id_t ch, fixed_t setpoint, fixed_t true_setpoint, fixed_t temp, fixed_t dt_s)
 {
     fixed_t error = setpoint - temp;
+
+    /* Анти-виндап и гашение при перелёте считаем против НАСТОЯЩЕЙ уставки,
+     * а не against working setpoint текущей стадии. Иначе на стадии 1
+     * (см. "ДВУХСТАДИЙНАЯ УСТАВКА" в control.h) полоса CONTROL_INTEGRAL_BAND_C
+     * может открыться сразу на холодном старте, если комнатная температура
+     * уже близка к промежуточному рубежу (setpoint - CONTROL_APPROACH_OFFSET_C)
+     * — типичный случай при включении на невысокую уставку. Интеграл тогда
+     * успевает упереться в i_max ещё до перехода на стадию 2 и остаётся
+     * насыщенным весь последний отрезок подъёма, что и даёт перелёт. */
+    fixed_t true_error = true_setpoint - temp;
 
     fixed_t kp = fixed_div(FIXED_FROM_INT(Settings_GetKp(ch)), FIXED_FROM_INT(CONTROL_PID_SCALE));
     fixed_t ki = fixed_div(FIXED_FROM_INT(Settings_GetKi(ch)), FIXED_FROM_INT(CONTROL_PID_SCALE));
     fixed_t kd = fixed_div(FIXED_FROM_INT(Settings_GetKd(ch)), FIXED_FROM_INT(CONTROL_PID_SCALE));
 
-    /* Интеграл: только в полосе вокруг уставки (анти-виндап), иначе сброс.
-     * Клампится так, чтобы Ki*I лежало в [0, 100] %. */
+    /* Интеграл: только в полосе вокруг настоящей уставки (анти-виндап),
+     * иначе сброс. Клампится так, чтобы Ki*I лежало в [0, 100] %. */
     fixed_t band = FIXED_FROM_INT(CONTROL_INTEGRAL_BAND_C);
-    if (ki > 0 && error <= band && error >= -band) {
+    if (ki > 0 && true_error <= band && true_error >= -band) {
         fixed_t i_max = fixed_div(FIXED_FROM_INT(100), ki);
         fixed_t i = s_integral[ch] + fixed_mul(error, dt_s);
         if (i < 0)     i = 0;
         if (i > i_max) i = i_max;
 
         /* Асимметричное гашение при перелёте (идея из UniSolder PID_OVSGain):
-         * пока error>=0 копим/клампим как обычно; как только error<0 (уже
-         * перелетели), потолок интеграла падает пропорционально величине
-         * перелёта — на CONTROL_OVERSHOOT_GAIN процентов i_max за каждый
-         * градус перелёта. При overshoot >= i_max/CONTROL_OVERSHOOT_GAIN
-         * градусов потолок уходит в 0, интеграл гасится мгновенно, а не
-         * обычным темпом Ki*dt. Не влияет на поведение без перелёта. */
-        if (error < 0) {
-            fixed_t overshoot = -error; /* °C, >0 */
+         * пока true_error>=0 копим/клампим как обычно; как только
+         * true_error<0 (уже перелетели настоящую уставку), потолок интеграла
+         * падает пропорционально величине перелёта — на CONTROL_OVERSHOOT_GAIN
+         * процентов i_max за каждый градус перелёта. При overshoot >=
+         * i_max/CONTROL_OVERSHOOT_GAIN градусов потолок уходит в 0, интеграл
+         * гасится мгновенно, а не обычным темпом Ki*dt. Не влияет на
+         * поведение без перелёта. */
+        if (true_error < 0) {
+            fixed_t overshoot = -true_error; /* °C, >0 */
             fixed_t reduction = fixed_mul(overshoot, FIXED_FROM_INT(CONTROL_OVERSHOOT_GAIN));
             fixed_t ceiling = i_max - reduction;
             if (ceiling < 0) ceiling = 0;
@@ -219,7 +230,7 @@ static void poll_channel(channel_id_t ch)
                 fixed_t approach = setpoint - FIXED_FROM_INT(CONTROL_APPROACH_OFFSET_C);
                 fixed_t working_setpoint = (temp < approach) ? approach : setpoint;
 
-                pid_step(ch, working_setpoint, temp, dt_s);
+                pid_step(ch, working_setpoint, setpoint, temp, dt_s);
             }
         }
 
