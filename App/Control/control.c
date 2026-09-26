@@ -226,8 +226,29 @@ static void poll_channel(channel_id_t ch)
                 /* Двухстадийная уставка (см. control.h): пока температура
                  * ниже промежуточного рубежа, PID работает против него, а
                  * не против настоящей уставки — чистая функция (temp,
-                 * setpoint), без отдельного состояния. */
-                fixed_t approach = setpoint - FIXED_FROM_INT(CONTROL_APPROACH_OFFSET_C);
+                 * setpoint), без отдельного состояния.
+                 *
+                 * Величину отступа масштабируем по факту оставшегося пути
+                 * (setpoint - temp), а не берём фиксированным потолком
+                 * CONTROL_APPROACH_OFFSET_C напрямую: на большом прыжке
+                 * (остаток >> 2*OFFSET, напр. холодный старт на высокую
+                 * уставку) offset упирается в потолок — поведение как
+                 * раньше. На малом остатке (холодный старт на низкую
+                 * уставку, где offset — заметная доля всего пути) offset
+                 * сам уменьшается и гладко идёт к 0 по мере приближения
+                 * temp к setpoint. Без этого при фиксированном offset в
+                 * момент переключения стадии working_setpoint скачком
+                 * увеличивался на OFFSET (PID уже притормозил, подходя к
+                 * промежуточному рубежу, и тут же получал новый скачок
+                 * error) — на маленьких уставках это добавляло свежий
+                 * разгон почти у финиша и давало перелёт. */
+                fixed_t remaining   = setpoint - temp; /* >0, пока не долетели */
+                fixed_t offset_cap  = FIXED_FROM_INT(CONTROL_APPROACH_OFFSET_C);
+                fixed_t offset      = remaining >> 1;
+                if (offset > offset_cap) offset = offset_cap;
+                if (offset < 0)          offset = 0;
+
+                fixed_t approach = setpoint - offset;
                 fixed_t working_setpoint = (temp < approach) ? approach : setpoint;
 
                 pid_step(ch, working_setpoint, setpoint, temp, dt_s);
