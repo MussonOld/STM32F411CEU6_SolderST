@@ -42,11 +42,25 @@ static const ads1220_pins_t s_pins[CHANNEL_COUNT] = {
                             DRDY_Desolder_GPIO_Port,       DRDY_Desolder_Pin },
 };
 
+/* Сколько первых успешных отсчётов после (ре)инициализации отбрасывать, не
+ * помечая data_valid: у ADS1220 в схеме RTD+IDAC источник тока возбуждения и
+ * входной RC-фильтр не успевают выйти на рабочую точку за один цикл
+ * преобразования после смены конфигурации/RESET — первые 1-2 отсчёта после
+ * КАЖДОГО ADS1220_Init() (в т.ч. после NRST) занижены. Пока данные не valid,
+ * Control держит канал выключенным (force_off, см. control.c) — без этого
+ * regулятор на реальный горячий канал видел временно заниженную температуру,
+ * получал большую положительную ошибку и реально включал нагрев на
+ * несколько сотен мс на каждом сбросе (см. чат: 55->65->77->84 при быстрых
+ * повторных NRST). При 20SPS (~50мс/отсчёт) запас с большим отрывом. ВРЕМЕННО
+ * — подтвердить на железе, что settle-отсчётов действительно достаточно. */
+#define ADS1220_SETTLE_SAMPLES 5U
+
 typedef struct {
     bool     data_valid;
     bool     init_ok;
     int32_t  raw_code;
     uint32_t last_update_tick; /* HAL_GetTick() последней успешной RDATA, см. ads1220.h */
+    uint8_t  settle_left;      /* см. ADS1220_SETTLE_SAMPLES */
 } ads1220_state_t;
 
 static ads1220_state_t s_state[CHANNEL_COUNT];
@@ -147,6 +161,7 @@ void ADS1220_Init(void)
         s_state[ch].data_valid       = false;
         s_state[ch].raw_code         = 0;
         s_state[ch].last_update_tick = 0;
+        s_state[ch].settle_left      = ADS1220_SETTLE_SAMPLES;
         s_state[ch].init_ok          = init_channel((channel_id_t)ch);
     }
 }
@@ -159,9 +174,16 @@ void ADS1220_Poll(void)
         }
         int32_t code;
         if (read_data((channel_id_t)ch, &code)) {
-            s_state[ch].raw_code         = code;
-            s_state[ch].data_valid       = true;
-            s_state[ch].last_update_tick = HAL_GetTick();
+            if (s_state[ch].settle_left > 0) {
+                /* Отбрасываем — см. ADS1220_SETTLE_SAMPLES: не трогаем
+                 * raw_code/data_valid/last_update_tick, чтобы Control не
+                 * увидел этот заниженный отсчёт как реальный новый tick. */
+                s_state[ch].settle_left--;
+            } else {
+                s_state[ch].raw_code         = code;
+                s_state[ch].data_valid       = true;
+                s_state[ch].last_update_tick = HAL_GetTick();
+            }
         }
         /* При ok==false просто пропускаем этот цикл — следующий DRDY
          * придёт своим чередом (continuous mode), данные не теряются
