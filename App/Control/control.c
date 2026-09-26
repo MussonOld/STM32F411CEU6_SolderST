@@ -41,6 +41,11 @@ static bool     s_dTdt_valid[CHANNEL_COUNT];
  * отсчёт АЦП; фазу ШИМ выходная ступень пересчитывает на каждый опрос. */
 static uint8_t  s_duty_pct[CHANNEL_COUNT];
 
+/* Рабочая ("плавная") уставка PID — едет к State.setpoint_temp не быстрее
+ * CONTROL_SETPOINT_SLEW_C_PER_S, см. control.h ("ПЛАВНАЯ УСТАВКА"). */
+static fixed_t  s_ramped_setpoint[CHANNEL_COUNT];
+static bool     s_ramped_setpoint_valid[CHANNEL_COUNT];
+
 static void heater_write(channel_id_t ch, bool on)
 {
     /* Нагреватель включается НИЗКИМ уровнем (см. diag.c). */
@@ -76,6 +81,7 @@ static void force_off(channel_id_t ch)
     s_integral[ch] = 0;
     s_prev_temp_valid[ch] = false;
     s_dTdt_valid[ch] = false;
+    s_ramped_setpoint_valid[ch] = false; /* следующее включение стартует рампу с реальной температуры */
 }
 
 void Control_Init(void)
@@ -196,7 +202,19 @@ static void poll_channel(channel_id_t ch)
                     s_dTdt[ch] += fixed_mul(alpha, raw - s_dTdt[ch]);
                 }
 
-                pid_step(ch, setpoint, temp, dt_s);
+                /* Плавная уставка (см. control.h): рабочая цель для PID едет
+                 * к setpoint не быстрее CONTROL_SETPOINT_SLEW_C_PER_S. */
+                if (!s_ramped_setpoint_valid[ch]) {
+                    s_ramped_setpoint[ch] = temp; /* старт рампы с реальной температуры */
+                    s_ramped_setpoint_valid[ch] = true;
+                }
+                fixed_t max_step = fixed_mul(FIXED_FROM_INT(CONTROL_SETPOINT_SLEW_C_PER_S), dt_s);
+                fixed_t diff = setpoint - s_ramped_setpoint[ch];
+                if (diff >  max_step) diff =  max_step;
+                if (diff < -max_step) diff = -max_step;
+                s_ramped_setpoint[ch] += diff;
+
+                pid_step(ch, s_ramped_setpoint[ch], temp, dt_s);
             }
         }
 
