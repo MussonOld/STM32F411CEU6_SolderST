@@ -134,6 +134,22 @@ static void pid_step(channel_id_t ch, fixed_t setpoint, fixed_t temp, fixed_t dt
         fixed_t i = s_integral[ch] + fixed_mul(error, dt_s);
         if (i < 0)     i = 0;
         if (i > i_max) i = i_max;
+
+        /* Асимметричное гашение при перелёте (идея из UniSolder PID_OVSGain):
+         * пока error>=0 копим/клампим как обычно; как только error<0 (уже
+         * перелетели), потолок интеграла падает пропорционально величине
+         * перелёта — на CONTROL_OVERSHOOT_GAIN процентов i_max за каждый
+         * градус перелёта. При overshoot >= i_max/CONTROL_OVERSHOOT_GAIN
+         * градусов потолок уходит в 0, интеграл гасится мгновенно, а не
+         * обычным темпом Ki*dt. Не влияет на поведение без перелёта. */
+        if (error < 0) {
+            fixed_t overshoot = -error; /* °C, >0 */
+            fixed_t reduction = fixed_mul(overshoot, FIXED_FROM_INT(CONTROL_OVERSHOOT_GAIN));
+            fixed_t ceiling = i_max - reduction;
+            if (ceiling < 0) ceiling = 0;
+            if (i > ceiling) i = ceiling;
+        }
+
         s_integral[ch] = i;
     } else {
         s_integral[ch] = 0;
