@@ -109,7 +109,7 @@ extern "C" {
  *  CONTROL_INTEGRAL_BAND_C не случайно: как раз к моменту переключения на
  *  настоящую уставку ошибка входит и в полосу анти-виндапа. ВРЕМЕННО —
  *  подобрать. */
-#define CONTROL_APPROACH_OFFSET_C 15
+#define CONTROL_APPROACH_OFFSET_C 10
 
 /** Масштаб хранимых в Settings сырых Kp/Ki/Kd (uint16_t) в реальные
  *  коэффициенты: real = raw / CONTROL_PID_SCALE; выход — проценты мощности
