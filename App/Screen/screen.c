@@ -91,14 +91,16 @@
 enum {
     LINE_INFO = 0,
     LINE_SOLDER_TITLE,
-    LINE_SOLDER_CURRENT,      /* число, шрифт Comic_60_dig — пусто, если неисправность с сообщением */
-    LINE_SOLDER_FAULT_MSG,    /* 1-я строка "Обрыв"/"КЗ" и т.п., шрифт AntiquaB_18_uni — пусто в норме */
-    LINE_SOLDER_FAULT_MSG2,   /* 2-я строка ("RTD"/"нагревателя") — см. print_fault_message_2line() */
+    LINE_SOLDER_CURRENT,      /* число, шрифт Comic_60_dig — непусто в NORMAL и ASLEEP ("--") */
+    LINE_SOLDER_FAULT_MSG,    /* 1-я строка "Обрыв"/"КЗ"/"ERR", шрифт AntiquaB_18_uni — непусто только в CHANNEL_CONTENT_FAULT */
+    LINE_SOLDER_FAULT_MSG2,   /* 2-я строка ("RTD"/"нагревателя"/"AD1220") — см. print_fault_message_2line() */
+    LINE_SOLDER_DISABLED_MSG, /* "ВЫКЛ", шрифт AntiquaB_32_uni — непусто только в CHANNEL_CONTENT_DISABLED */
     LINE_SOLDER_TARGET,
     LINE_DESOLDER_TITLE,
     LINE_DESOLDER_CURRENT,
     LINE_DESOLDER_FAULT_MSG,
     LINE_DESOLDER_FAULT_MSG2,
+    LINE_DESOLDER_DISABLED_MSG,
     LINE_DESOLDER_TARGET,
     LINE_PRESET_1,
     LINE_PRESET_2,
@@ -169,6 +171,24 @@ enum {
 #define SCREEN_FAULT_MSG2_GAP (2U)
 #define SCREEN_FAULT_MSG2_Y ((uint16_t)(SCREEN_CURRENT_Y + SCREEN_TITLE_HEIGHT + SCREEN_FAULT_MSG2_GAP))
 
+/* "ВЫКЛ" (CHANNEL_CONTENT_DISABLED) — одна строка AntiquaB_32_uni,
+ * вертикально по центру той же 67px CURRENT-полосы (см. чат — ВРЕМЕННО,
+ * поправить по факту на экране: реальная высота глифов шрифта может не
+ * совпадать с номиналом 32px из его имени). */
+#define SCREEN_DISABLED_HEIGHT (32U)
+#define SCREEN_DISABLED_MSG_Y ((uint16_t)(SCREEN_CURRENT_Y + (SCREEN_CURRENT_HEIGHT - SCREEN_DISABLED_HEIGHT) / 2U))
+
+/* Крестик "инструмент не подключен" (CHANNEL_CONTENT_IDLE, см.
+ * draw_idle_cross()) — растр, вычисляется на лету (не хранится константой,
+ * в отличие от SLEEP_ICON_BITMAP — тут это просто тест "около диагонали",
+ * ручками эту сетку не набирали). Квадрат, вписанный в CURRENT-полосу
+ * (67px), с запасом по бокам для обеих половин экрана (~79px). ВРЕМЕННО —
+ * поправить размер/толщину по факту на экране. */
+#define SCREEN_IDLE_CROSS_SIZE      (48U)
+#define SCREEN_IDLE_CROSS_THICKNESS (4U)  /* полутолщина луча, см. draw_idle_cross() */
+#define SCREEN_IDLE_CROSS_Y ((uint16_t)(SCREEN_CURRENT_Y + (SCREEN_CURRENT_HEIGHT - SCREEN_IDLE_CROSS_SIZE) / 2U))
+#define COLOR_IDLE_CROSS DISPLAY_RGB565(120, 120, 120) /* см. чат — "пониженная контрастность, как и сейчас" (тусклее обычного текста) */
+
 #define SCREEN_INFO_X (10U)
 #define SCREEN_INFO_Y (6U)
 /* Инфозона разбита на три поля по x: сообщение EEPROM по центру,
@@ -188,10 +208,9 @@ enum {
  * SLEEP_ICON_GAP_X между иконкой и текстом всегда одинаковый, независимо
  * от длины текста. Работает независимо для каждого инструмента (своя
  * половина экрана, свои координаты — см. вызовы update_sleep_status()).
- * Если сообщение EEPROM длинное — может визуально наехать на таймер
- * паяльника (он теперь ближе к центру, чем раньше); это приближённый
- * первый вариант, поправить координаты по факту на экране. */
-#define SCREEN_INFO_EEPROM_X         (100U)
+ * Сообщение EEPROM выводится от самого левого края (SCREEN_INFO_X), а не
+ * от центра — см. чат: на SCREEN_INFO_EEPROM_X=100 оно визуально наезжало
+ * на таймер паяльника (см. TextField_ConfigureLine(LINE_INFO, ...) ниже). */
 #define SCREEN_INFO_SLEEP_SOLDER_TEXT_RIGHT_EDGE_X   (SCREEN_DIVIDER_X0 - 6U)
 #define SCREEN_INFO_SLEEP_DESOLDER_TEXT_RIGHT_EDGE_X (SCREEN_WIDTH - 10U)
 
@@ -236,11 +255,34 @@ enum {
 #define COLOR_MENU_EDITING  DISPLAY_RGB565(255, 80, 80)  /* выбранный пункт, редактируется прямо сейчас */
 
 static channel_id_t s_last_active_channel;
-static bool s_last_fault[CHANNEL_COUNT]; /* чтобы перекрашивать title/current только при реальном изменении неисправности */
-static bool s_content_clearing[CHANNEL_COUNT]; /* см. update_channel_content() — гасим CURRENT/FAULT_MSG/FAULT_MSG2
-                                                 * перед сменой fault<->не-fault, чтобы стирание одного поля не
-                                                 * затёрло уже нарисованное содержимое другого (они физически
-                                                 * перекрываются по Y, см. докстринг файла) */
+
+/**
+ * @brief Взаимоисключающие состояния содержимого CURRENT-блока канала
+ *        (см. update_channel_content()) — раньше отслеживался только один
+ *        bool (авария/не авария), теперь состояний пять, и переключение
+ *        между ЛЮБОЙ парой требует того же гашения-и-ожидания-settled, что
+ *        раньше делалось только для аварии (см. s_content_clearing ниже):
+ *        каждое состояние рисует CURRENT-блок по-своему (число, "--",
+ *        2-строчный текст аварии, "ВЫКЛ" отдельным полем, крестик отдельным
+ *        растром — см. ADS1220_SETTLE ниже про растр), и они физически
+ *        делят одну Y-полосу.
+ */
+typedef enum {
+    CHANNEL_CONTENT_NORMAL = 0, /* число текущей температуры (Comic_60_dig) */
+    CHANNEL_CONTENT_FAULT,      /* авария — 2-строчное сообщение (AntiquaB_18_uni) */
+    CHANNEL_CONTENT_IDLE,       /* инструмент не подключен — растровый крестик, без текста */
+    CHANNEL_CONTENT_DISABLED,   /* канал выключен аккордом — "ВЫКЛ" (AntiquaB_32_uni) */
+    CHANNEL_CONTENT_ASLEEP,     /* SLEEP_MODE_SLEEP — "--" (Comic_60_dig), как раньше у idle/disabled */
+} channel_content_t;
+
+static channel_content_t s_last_content[CHANNEL_COUNT]; /* чтобы перекрашивать title/current и гасить блок только при реальной смене состояния */
+static bool s_content_clearing[CHANNEL_COUNT]; /* см. update_channel_content() — гасим CURRENT/FAULT_MSG/FAULT_MSG2/DISABLED_MSG
+                                                 * (и крестик, отдельно, см. s_idle_icon_shown) перед сменой состояния, чтобы
+                                                 * стирание одного поля не затёрло уже нарисованное содержимое другого (они
+                                                 * физически перекрываются по Y, см. докстринг файла) */
+static bool s_idle_icon_shown[CHANNEL_COUNT]; /* крестик "инструмент не подключен" сейчас реально нарисован на экране (растр, см. draw_idle_cross()) —
+                                                * рисуется/стирается сырым Display_WritePixelsDMA в обход TextField, поэтому
+                                                * TextField не знает про эти пиксели и не сотрёт их сам при смене состояния (см. update_channel_content()) */
 static screen_mode_t s_last_screen_mode; /* чтобы очищать экран только при реальной смене режима, не каждый кадр */
 static display_color_t s_last_sleep_color[CHANNEL_COUNT]; /* чтобы перекрашивать таймер сна только при реальной смене цвета (не режима — один и тот же mode может значить разный цвет, см. update_sleep_status()) */
 static uint16_t s_sleep_icon_x[CHANNEL_COUNT]; /* x, по которому иконка РЕАЛЬНО сейчас нарисована на экране (актуален только пока s_sleep_icon_shown[ch]==true) — пересчитывается в update_sleep_status() */
@@ -267,16 +309,18 @@ static bool    s_temp_shown_valid[CHANNEL_COUNT]; /* false, пока CURRENT п�
  */
 static void apply_channel_colors(channel_id_t ch)
 {
-    uint8_t line_title, line_current;
+    uint8_t line_title, line_current, line_disabled_msg;
     bool active = (ch == InputFSM_GetActiveChannel());
     bool faulted = Error_IsChannelFaulted(ch);
 
     if (ch == CHANNEL_SOLDER) {
-        line_title   = LINE_SOLDER_TITLE;
-        line_current = LINE_SOLDER_CURRENT;
+        line_title        = LINE_SOLDER_TITLE;
+        line_current      = LINE_SOLDER_CURRENT;
+        line_disabled_msg = LINE_SOLDER_DISABLED_MSG;
     } else {
-        line_title   = LINE_DESOLDER_TITLE;
-        line_current = LINE_DESOLDER_CURRENT;
+        line_title        = LINE_DESOLDER_TITLE;
+        line_current      = LINE_DESOLDER_CURRENT;
+        line_disabled_msg = LINE_DESOLDER_DISABLED_MSG;
     }
 
     if (faulted) {
@@ -285,6 +329,10 @@ static void apply_channel_colors(channel_id_t ch)
     } else {
         TextField_SetColors(line_title,   active ? COLOR_ACTIVE_TITLE   : COLOR_INACTIVE_TITLE,   COLOR_BG);
         TextField_SetColors(line_current, active ? COLOR_ACTIVE_CURRENT : COLOR_INACTIVE_CURRENT, COLOR_BG);
+        /* CHANNEL_CONTENT_DISABLED ("ВЫКЛ") — та же активная/неактивная
+         * пара, что и у CURRENT (авария и disabled взаимоисключающие, см.
+         * update_channel_content(), так что faulted-ветку сюда заводить не нужно). */
+        TextField_SetColors(line_disabled_msg, active ? COLOR_ACTIVE_CURRENT : COLOR_INACTIVE_CURRENT, COLOR_BG);
     }
 }
 
@@ -391,6 +439,54 @@ static bool erase_sleep_icon(uint16_t x, uint16_t y)
 }
 
 /**
+ * @brief Крестик "инструмент не подключен" (CHANNEL_CONTENT_IDLE) —
+ *        квадрат SCREEN_IDLE_CROSS_SIZE, две диагонали толщиной
+ *        2*SCREEN_IDLE_CROSS_THICKNESS+1. В отличие от циферблата (см.
+ *        s_sleep_icon_bitmap), тут нет готовой битовой сетки — тест "у
+ *        диагонали" считается построчно, в СТАТИЧЕСКИЙ (не стековый) буфер
+ *        на одну строку: полный буфер 48x48 пикселей (4.6 КБ) на стеке — в
+ *        одном кадре с main()/Screen_Update() и без RTOS многовато (см. чат
+ *        про IWDG/размер стека), одна строка (96 байт) безопасна.
+ *        Блокирующий построчный вывод — редкое событие (смена
+ *        видимости), не каждый кадр, как и у циферблата.
+ */
+static bool draw_idle_cross(uint16_t x, uint16_t y)
+{
+    static display_color_t s_row_buf[SCREEN_IDLE_CROSS_SIZE]; /* см. докстринг — не на стеке */
+    const uint16_t size = SCREEN_IDLE_CROSS_SIZE;
+    const uint16_t t = SCREEN_IDLE_CROSS_THICKNESS;
+
+    while (Display_IsBusy()) { }
+    for (uint16_t row = 0; row < size; row++) {
+        for (uint16_t col = 0; col < size; col++) {
+            uint16_t anti_col = (uint16_t)(size - 1U - col);
+            bool on_main_diag = (uint16_t)((row > col) ? (row - col) : (col - row)) <= t;
+            bool on_anti_diag = (uint16_t)((row > anti_col) ? (row - anti_col) : (anti_col - row)) <= t;
+            s_row_buf[col] = (on_main_diag || on_anti_diag) ? COLOR_IDLE_CROSS : COLOR_BG;
+        }
+        if (Display_SetWindow(x, (uint16_t)(y + row), (uint16_t)(x + size - 1U), (uint16_t)(y + row)) != DISPLAY_OK) {
+            return false;
+        }
+        Display_WritePixelsDMA(s_row_buf, size);
+        while (Display_IsBusy()) { }
+    }
+    return true;
+}
+
+/** @brief Стереть крестик (залить фоном) — тот же контракт, что и erase_sleep_icon(). */
+static bool erase_idle_cross(uint16_t x, uint16_t y)
+{
+    while (Display_IsBusy()) { }
+    if (Display_SetWindow(x, y, (uint16_t)(x + SCREEN_IDLE_CROSS_SIZE - 1U),
+                           (uint16_t)(y + SCREEN_IDLE_CROSS_SIZE - 1U)) != DISPLAY_OK) {
+        return false;
+    }
+    Display_FillColorDMA(COLOR_BG, (uint32_t)SCREEN_IDLE_CROSS_SIZE * SCREEN_IDLE_CROSS_SIZE);
+    while (Display_IsBusy()) { }
+    return true;
+}
+
+/**
  * @brief Полностью стереть экран и заставить TextField перерисовать всё
  *        заново — вызывается при КАЖДОЙ смене режима экрана (главный <->
  *        сервисное меню, в обе стороны), чтобы не было наложения одного
@@ -437,7 +533,7 @@ void Screen_Init(void)
 {
     draw_divider();
 
-    TextField_ConfigureLine(LINE_INFO, SCREEN_INFO_EEPROM_X, SCREEN_INFO_Y,
+    TextField_ConfigureLine(LINE_INFO, SCREEN_INFO_X, SCREEN_INFO_Y,
                              &AntiquaB_18_uni, COLOR_INFO, COLOR_BG);
     TextField_ConfigureLine(LINE_INFO_SLEEP_SOLDER, SCREEN_INFO_SLEEP_SOLDER_TEXT_RIGHT_EDGE_X, SCREEN_INFO_Y,
                              &AntiquaB_18_uni, COLOR_SLEEP_AWAKE, COLOR_BG);
@@ -466,6 +562,8 @@ void Screen_Init(void)
                              &AntiquaB_18_uni, COLOR_FAULT, COLOR_BG);
     TextField_ConfigureLine(LINE_SOLDER_FAULT_MSG2, SCREEN_HALF_CENTER_LEFT_X, SCREEN_FAULT_MSG2_Y,
                              &AntiquaB_18_uni, COLOR_FAULT, COLOR_BG);
+    TextField_ConfigureLine(LINE_SOLDER_DISABLED_MSG, SCREEN_HALF_CENTER_LEFT_X, SCREEN_DISABLED_MSG_Y,
+                             &AntiquaB_32_uni, COLOR_ACTIVE_CURRENT, COLOR_BG);
     TextField_ConfigureLine(LINE_SOLDER_TARGET, SCREEN_HALF_CENTER_LEFT_X, SCREEN_TARGET_Y,
                              &AntiquaB_18_uni, COLOR_ACTIVE_TARGET, COLOR_BG);
 
@@ -477,6 +575,8 @@ void Screen_Init(void)
                              &AntiquaB_18_uni, COLOR_FAULT, COLOR_BG);
     TextField_ConfigureLine(LINE_DESOLDER_FAULT_MSG2, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_FAULT_MSG2_Y,
                              &AntiquaB_18_uni, COLOR_FAULT, COLOR_BG);
+    TextField_ConfigureLine(LINE_DESOLDER_DISABLED_MSG, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_DISABLED_MSG_Y,
+                             &AntiquaB_32_uni, COLOR_INACTIVE_CURRENT, COLOR_BG);
     TextField_ConfigureLine(LINE_DESOLDER_TARGET, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_TARGET_Y,
                              &AntiquaB_18_uni, COLOR_INACTIVE_TARGET, COLOR_BG);
 
@@ -506,7 +606,8 @@ void Screen_Init(void)
     }
 
     for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
-        s_last_fault[ch] = false; /* Error_Init() тоже гарантирует "нет неисправности" по умолчанию */
+        s_last_content[ch] = CHANNEL_CONTENT_NORMAL; /* Error_Init()/State_Init() тоже гарантируют "нет неисправности"/enabled по умолчанию */
+        s_idle_icon_shown[ch] = false;
         s_last_sleep_color[ch] = COLOR_SLEEP_AWAKE; /* Sleep_Init() тоже гарантирует AWAKE/remaining=0 по умолчанию -> пусто, цвет не виден, но белый — нейтральный старт */
     }
     /* Solder активен по умолчанию при старте (см. InputFSM_Init()) —
@@ -567,86 +668,123 @@ bool Screen_GetShownTemp(channel_id_t ch, int32_t *out_temp)
 
 static void update_channel_content(channel_id_t ch, uint16_t center_x)
 {
-    uint8_t line_current    = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_CURRENT    : LINE_DESOLDER_CURRENT;
-    uint8_t line_fault_msg  = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_FAULT_MSG  : LINE_DESOLDER_FAULT_MSG;
-    uint8_t line_fault_msg2 = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_FAULT_MSG2 : LINE_DESOLDER_FAULT_MSG2;
-    uint8_t line_target     = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_TARGET    : LINE_DESOLDER_TARGET;
+    uint8_t line_current      = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_CURRENT      : LINE_DESOLDER_CURRENT;
+    uint8_t line_fault_msg    = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_FAULT_MSG    : LINE_DESOLDER_FAULT_MSG;
+    uint8_t line_fault_msg2   = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_FAULT_MSG2   : LINE_DESOLDER_FAULT_MSG2;
+    uint8_t line_disabled_msg = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_DISABLED_MSG : LINE_DESOLDER_DISABLED_MSG;
+    uint8_t line_target       = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_TARGET      : LINE_DESOLDER_TARGET;
+    uint16_t cross_x = (uint16_t)(center_x - SCREEN_IDLE_CROSS_SIZE / 2U);
 
-    const char *fault_msg = Error_GetChannelFaultMessage(ch); /* не NULL только для аварий: RTD_SHORT/RTD_OPEN/HEATER_OPEN */
+    const char *fault_msg = Error_GetChannelFaultMessage(ch); /* не NULL только для аварий: RTD_SHORT/RTD_OPEN/HEATER_OPEN/ERR AD1220 */
     bool enabled = State_IsEnabled(ch);
-    bool idle    = Error_IsChannelIdle(ch); /* инструмент не подключен — не авария, только "--" */
-    bool faulted = Error_IsChannelFaulted(ch); /* синоним fault_msg != NULL, см. error.h — считаем один раз,
-                                                 * нужно и для гейта ниже, и для перекраски в конце функции */
+    bool idle    = Error_IsChannelIdle(ch); /* инструмент не подключен — не авария, крестик (см. draw_idle_cross()) */
+    bool faulted = Error_IsChannelFaulted(ch); /* нужно для перекраски title/current в конце функции, см. apply_channel_colors() */
 
-    /* CURRENT (Comic_60_dig) и FAULT_MSG/FAULT_MSG2 (AntiquaB_18_uni)
-     * физически делят одну и ту же Y-полосу (см. докстринг файла) — в
-     * любой момент непусто ровно одно из трёх полей, остальные пустые.
-     * TextField_Process() отрисовывает по одной dirty-строке за вызов,
-     * начиная с САМОГО МЕЛКОГО индекса (см. text_field.c) — у CURRENT
-     * индекс меньше, чем у FAULT_MSG/FAULT_MSG2. Если писать новое
-     * содержимое напрямую на кадре смены fault<->не-fault, при появлении
-     * аварии порядок безопасен (CURRENT первым гасится на "", затем
-     * FAULT_MSG/2 рисуют текст — на уже пустом месте), а вот при СНЯТИИ
-     * аварии порядок ломается: CURRENT (меньший индекс) рисуется первым
-     * и получает число/прочерк, а FAULT_MSG/FAULT_MSG2 гасятся только
-     * ПОСЛЕ — и их стирание старого текста (та же Y-полоса!) затирает уже
-     * нарисованное число. Статичным порядком индексов это не решить (для
-     * противоположного перехода порядок снова стал бы неверным) — поэтому
-     * на самом переходе сначала гасим ВСЕ ТРИ поля и ждём, пока реально
+    /* Приоритет состояний (см. чат): авария > idle > выключен аккордом >
+     * спит (SLEEP_MODE_SLEEP) > обычное число. idle/fault физически не
+     * пересекаются (Error_GetToolFault() — одно значение на канал, см.
+     * error.h), остальные пары — независимые подсистемы (State/Sleep),
+     * поэтому порядок ниже важен. */
+    channel_content_t content;
+    if (fault_msg != NULL)      content = CHANNEL_CONTENT_FAULT;
+    else if (idle)              content = CHANNEL_CONTENT_IDLE;
+    else if (!enabled)          content = CHANNEL_CONTENT_DISABLED;
+    else if (Sleep_GetMode(ch) == SLEEP_MODE_SLEEP) content = CHANNEL_CONTENT_ASLEEP;
+    else                        content = CHANNEL_CONTENT_NORMAL;
+
+    /* CURRENT (Comic_60_dig), FAULT_MSG/FAULT_MSG2 (AntiquaB_18_uni),
+     * DISABLED_MSG (AntiquaB_32_uni) и крестик (растр, см. draw_idle_cross())
+     * физически делят одну и ту же Y-полосу (см. докстринг файла) — в любой
+     * момент непусто ровно одно из них. TextField_Process() отрисовывает по
+     * одной dirty-строке за вызов, начиная с САМОГО МЕЛКОГО индекса (см.
+     * text_field.c) — у CURRENT индекс меньше, чем у FAULT_MSG/2/DISABLED_MSG.
+     * Если писать новое содержимое напрямую на кадре смены состояния, при
+     * ПОЯВЛЕНИИ более позднего по индексу поля порядок безопасен (CURRENT
+     * первым гасится на "", остальные рисуют текст на уже пустом месте), а
+     * вот при возврате К CURRENT порядок ломается: CURRENT (меньший индекс)
+     * рисуется первым и получает число/"--", а прежнее поле гасится только
+     * ПОСЛЕ — и его стирание старого текста (та же Y-полоса!) затирает уже
+     * нарисованное. Статичным порядком индексов это не решить (для
+     * противоположного перехода порядок снова стал бы неверным) — поэтому на
+     * самом переходе сначала гасим ВСЕ ТЕКСТОВЫЕ поля и ждём, пока реально
      * доиграет отрисовка (TextField_IsSettled()), и только потом на
      * следующих вызовах рисуем настоящее новое содержимое (см. чат —
-     * "на месте записи остаётся незаполненное пространство"). */
-    if (!s_content_clearing[ch] && faulted != s_last_fault[ch]) {
+     * "на месте записи остаётся незаполненное пространство").
+     *
+     * Крестик рисуется СЫРЫМ Display_WritePixelsDMA в обход TextField
+     * (см. s_idle_icon_shown) — TextField не знает про эти пиксели и не
+     * сотрёт их сам ни на выходе из IDLE, ни держа старое "--"/число под
+     * ним, поэтому erase_idle_cross() вызывается явно на выходе из IDLE,
+     * ДО того как эта фаза гашения текстовых полей вообще запускается —
+     * иначе крестик остаётся видимым поверх нового текста ещё один кадр. */
+    if (s_last_content[ch] == CHANNEL_CONTENT_IDLE && content != CHANNEL_CONTENT_IDLE && s_idle_icon_shown[ch]) {
+        if (erase_idle_cross(cross_x, SCREEN_IDLE_CROSS_Y)) {
+            s_idle_icon_shown[ch] = false;
+        }
+    }
+
+    if (!s_content_clearing[ch] && content != s_last_content[ch]) {
         TextField_PrintfCentered(line_current, center_x, "");
         TextField_PrintfCentered(line_fault_msg, center_x, "");
         TextField_PrintfCentered(line_fault_msg2, center_x, "");
+        TextField_PrintfCentered(line_disabled_msg, center_x, "");
         s_content_clearing[ch] = true;
     }
 
     if (s_content_clearing[ch]) {
         if (TextField_IsSettled(line_current) && TextField_IsSettled(line_fault_msg)
-            && TextField_IsSettled(line_fault_msg2)) {
+            && TextField_IsSettled(line_fault_msg2) && TextField_IsSettled(line_disabled_msg)) {
             s_content_clearing[ch] = false;
         }
     }
 
     if (!s_content_clearing[ch]) {
-        if (idle || fault_msg != NULL || !enabled) {
+        if (content != CHANNEL_CONTENT_NORMAL) {
             s_temp_shown_valid[ch] = false; /* число не показываем — при возврате начинаем без гистерезиса */
         }
-        if (idle) {
-            /* Инструмент не подключен: ни красного, ни сообщения, ни зуммера
-             * (см. error.h) — то же двойное тире, что и у выключенного
-             * канала, тем же Comic_60_dig. */
-            TextField_PrintfCentered(line_current, center_x, "--");
-            TextField_PrintfCentered(line_fault_msg, center_x, "");
-            TextField_PrintfCentered(line_fault_msg2, center_x, "");
-        } else if (fault_msg != NULL) {
-            /* Текущая температура НЕ выводится вообще — на её месте сообщение
-             * в отдельном поле (Comic_60_dig кириллицу не содержит), в 2 строки. */
-            TextField_PrintfCentered(line_current, center_x, "");
-            print_fault_message_2line(line_fault_msg, line_fault_msg2, center_x, fault_msg);
-        } else if (!enabled) {
-            /* Канал выключен коротким UP+DN (см. fsm.c) — число текущей
-             * температуры показывать бессмысленно (нагрев не идёт, значение
-             * не поддерживается). "--" выводим через поле line_current
-             * (Comic_60_dig) — в наборе _dig теперь есть дефис (см. bdf2c_TFT.py),
-             * так что крупный шрифт совпадает с обычным выводом числа. */
-            TextField_PrintfCentered(line_current, center_x, "--");
-            TextField_PrintfCentered(line_fault_msg, center_x, "");
-            TextField_PrintfCentered(line_fault_msg2, center_x, "");
-        } else {
-            fixed_t cur = State_GetCurrentTemp(ch);
-            int32_t cur_int = temp_for_display(ch, cur);
-            TextField_PrintfCentered(line_current, center_x, "%ld", (long)cur_int);
-            TextField_PrintfCentered(line_fault_msg, center_x, "");
-            TextField_PrintfCentered(line_fault_msg2, center_x, "");
+        switch (content) {
+            case CHANNEL_CONTENT_FAULT:
+                /* Текущая температура НЕ выводится вообще — на её месте сообщение
+                 * в отдельном поле (Comic_60_dig кириллицу не содержит), в 2 строки. */
+                print_fault_message_2line(line_fault_msg, line_fault_msg2, center_x, fault_msg);
+                break;
+            case CHANNEL_CONTENT_IDLE:
+                /* Инструмент не подключен: ни красного, ни зуммера (см.
+                 * error.h) — растровый крестик пониженной контрастности
+                 * (см. COLOR_IDLE_CROSS) вместо текста. */
+                if (!s_idle_icon_shown[ch]) {
+                    if (draw_idle_cross(cross_x, SCREEN_IDLE_CROSS_Y)) {
+                        s_idle_icon_shown[ch] = true;
+                    }
+                }
+                break;
+            case CHANNEL_CONTENT_DISABLED:
+                /* Канал выключен коротким UP+DN (см. fsm.c) — "ВЫКЛ"
+                 * отдельным полем AntiquaB_32_uni (Comic_60_dig кириллицу не
+                 * содержит, как и у сообщений аварии). */
+                TextField_PrintfCentered(line_disabled_msg, center_x, "ВЫКЛ");
+                break;
+            case CHANNEL_CONTENT_ASLEEP:
+                /* SLEEP_MODE_SLEEP — число не поддерживается (реального
+                 * снижения нагрева при входе в SLEEP пока нет, см. Sleep.md,
+                 * но показывать застывшее последнее значение вводит в
+                 * заблуждение, см. чат) — то же "--", что раньше было у
+                 * idle/выключенного канала. */
+                TextField_PrintfCentered(line_current, center_x, "--");
+                break;
+            case CHANNEL_CONTENT_NORMAL:
+            default: {
+                fixed_t cur = State_GetCurrentTemp(ch);
+                int32_t cur_int = temp_for_display(ch, cur);
+                TextField_PrintfCentered(line_current, center_x, "%ld", (long)cur_int);
+                break;
+            }
         }
     }
 
     /* Целевая — всегда числом, независимо от неисправности (ВРЕМЕННО, см.
-     * докстринг); физически не пересекается с CURRENT/FAULT_MSG областью
-     * (см. SCREEN_TARGET_Y) — стадию гашения выше не ждёт. */
+     * докстринг); физически не пересекается с CURRENT/FAULT_MSG/DISABLED_MSG
+     * областью (см. SCREEN_TARGET_Y) — стадию гашения выше не ждёт. */
     uint16_t target = Settings_GetTarget(ch);
     if (enabled && !Error_IsChannelBlocked(ch) && Sleep_GetMode(ch) == SLEEP_MODE_PRESLEEP) {
         /* В PRESLEEP реально применяется min(уставка, PresleepTemp), см.
@@ -656,10 +794,10 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
     }
     TextField_PrintfCentered(line_target, center_x, "%u", (unsigned)target);
 
-    if (faulted != s_last_fault[ch]) {
+    if (faulted != (s_last_content[ch] == CHANNEL_CONTENT_FAULT)) {
         apply_channel_colors(ch);
-        s_last_fault[ch] = faulted;
     }
+    s_last_content[ch] = content;
 }
 
 /**

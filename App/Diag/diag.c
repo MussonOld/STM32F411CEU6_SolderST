@@ -72,12 +72,12 @@ void Diag_Init(void)
         s_heater_open[ch] = false;
         Error_SetHeaterOpen((channel_id_t)ch, false);
         Error_SetRtdState((channel_id_t)ch, RTD_STATE_OK);
-        Error_SetErrorCode((channel_id_t)ch, ERROR_CODE_NONE);
+        Error_SetAdcFault((channel_id_t)ch, false);
     }
 }
 
-/** ERROR_CODE_NONE, либо код неисправности без диагноза, см. diag.h/error.h. */
-static error_code_t adc_error_code(channel_id_t ch)
+/** true — неисправность без диагноза (см. diag.h/error.h). */
+static bool adc_fault_detected(channel_id_t ch)
 {
     bool no_conversion;
 
@@ -92,7 +92,7 @@ static error_code_t adc_error_code(channel_id_t ch)
         }
         no_conversion = since_ms > DIAG_ADC_STALE_MS;
     }
-    return no_conversion ? ERROR_CODE_E01_ADC_NO_CONVERSION : ERROR_CODE_NONE;
+    return no_conversion;
 }
 
 void Diag_Poll(void)
@@ -127,7 +127,7 @@ void Diag_Poll(void)
         }
 
         /* ---- Неисправность без диагноза (выше приоритетом, см. error.h) ---- */
-        Error_SetErrorCode(ch, adc_error_code(ch));
+        Error_SetAdcFault(ch, adc_fault_detected(ch));
 
         /* ---- RTD ---- */
         if (ADS1220_IsDataValid(ch)) {

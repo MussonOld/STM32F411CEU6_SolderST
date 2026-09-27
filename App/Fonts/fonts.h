@@ -49,6 +49,7 @@ typedef struct {
 // Объявления шрифтов
 extern const font_t AntiquaB_18_uni;
 extern const font_t AntiquaB_24_uni;
+extern const font_t AntiquaB_32_uni; /* "ВЫКЛ" — CHANNEL_CONTENT_DISABLED, см. screen.c */
 extern const font_t Comic_40_dig;
 extern const font_t Comic_60_dig;
 
