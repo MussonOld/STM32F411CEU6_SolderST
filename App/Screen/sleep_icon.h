@@ -5,8 +5,8 @@
  *        сохранением пропорций исходника (231x218).
  */
 
-#ifndef SLEEP_ICON_H
-#define SLEEP_ICON_H
+#ifndef APP_SCREEN_SLEEP_ICON_H_INCLUDED
+#define APP_SCREEN_SLEEP_ICON_H_INCLUDED
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,4 +24,4 @@ extern const uint16_t SleepIcon_Bitmap[SLEEP_ICON_BITMAP_W * SLEEP_ICON_BITMAP_H
 }
 #endif
 
-#endif /* SLEEP_ICON_H */
+#endif /* APP_SCREEN_SLEEP_ICON_H_INCLUDED */
