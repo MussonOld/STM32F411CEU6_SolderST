@@ -82,6 +82,8 @@
 #include "menu.h"
 #include "control.h"
 #include "sleep_icon.h"
+#include "solder_icon.h"
+#include "desolder_icon.h"
 #include <stddef.h>
 #include <stdio.h>
 #include "fixed_point.h"
@@ -130,14 +132,28 @@ enum {
 #define SCREEN_DIVIDER_X1   (160U) /* разделитель 2px шириной: X0..X1 включительно */
 
 #define SCREEN_TITLE_Y      (36U)
-#define SCREEN_TITLE_HEIGHT (18U) /* высота шрифта AntiquaB_18_uni */
-#define SCREEN_TITLE_LEFT_X   (40U)
-#define SCREEN_TITLE_RIGHT_X  (205U)
+/* Раньше — высота шрифта AntiquaB_18_uni (текстовые заголовки "Паяльник"/
+ * "Отсос"). Теперь оба заголовка — иконки (см. чат, solder_icon.h/
+ * desolder_icon.h), взята высота более высокой из двух (Desolder, 39px),
+ * чтобы CURRENT-блок начинался на одном и том же Y в обеих половинах
+ * экрана — иконка Solder (21px) просто оставляет пустое место под собой
+ * в той же полосе, не растягиваясь. */
+#define SCREEN_TITLE_HEIGHT ((DESOLDER_ICON_BITMAP_H > SOLDER_ICON_BITMAP_H) ? DESOLDER_ICON_BITMAP_H : SOLDER_ICON_BITMAP_H)
 
 /* Центры половин экрана — используются TextField_PrintfCentered() для
  * температур, реальная ширина текста меряется на лету (не типовая). */
 #define SCREEN_HALF_CENTER_LEFT_X   ((SCREEN_DIVIDER_X0) / 2U)
 #define SCREEN_HALF_CENTER_RIGHT_X  (SCREEN_DIVIDER_X1 + 1U + SCREEN_HALF_CENTER_LEFT_X)
+
+/* Иконки заголовков (растры SolderIcon_Bitmap/DesolderIcon_Bitmap, см.
+ * solder_icon.h/desolder_icon.h) вместо текста "Паяльник"/"Отсос" (см. чат)
+ * — центрируются по X тем же center_x, что и CURRENT/TARGET своей половины,
+ * привязаны по Y к верху титульной полосы (SCREEN_TITLE_Y); у каждой своя
+ * высота (21 и 39px), общая полоса под обе — SCREEN_TITLE_HEIGHT (см. выше). */
+#define SCREEN_SOLDER_ICON_X   ((uint16_t)(SCREEN_HALF_CENTER_LEFT_X  - SOLDER_ICON_BITMAP_W   / 2U))
+#define SCREEN_DESOLDER_ICON_X ((uint16_t)(SCREEN_HALF_CENTER_RIGHT_X - DESOLDER_ICON_BITMAP_W / 2U))
+#define SCREEN_SOLDER_ICON_Y   SCREEN_TITLE_Y
+#define SCREEN_DESOLDER_ICON_Y SCREEN_TITLE_Y
 
 #define SCREEN_PRESETS_Y (210U)
 /* Пресеты:
@@ -336,10 +352,10 @@ static void apply_channel_colors(channel_id_t ch)
     }
 
     if (faulted) {
-        TextField_SetColors(line_title,   COLOR_FAULT, COLOR_BG);
+        TextField_SetColors(line_title,   COLOR_FAULT, COLOR_BG); /* заголовок теперь иконка (см. draw_solder_icon()/draw_desolder_icon()), эта строка ничего не красит на экране — no-op, оставлено чтобы не усложнять функцию веткой на канал */
         TextField_SetColors(line_current, COLOR_FAULT, COLOR_BG);
     } else {
-        TextField_SetColors(line_title,   active ? COLOR_ACTIVE_TITLE   : COLOR_INACTIVE_TITLE,   COLOR_BG);
+        TextField_SetColors(line_title,   active ? COLOR_ACTIVE_TITLE   : COLOR_INACTIVE_TITLE,   COLOR_BG); /* тот же no-op, что и выше */
         TextField_SetColors(line_current, active ? COLOR_ACTIVE_CURRENT : COLOR_INACTIVE_CURRENT, COLOR_BG);
         /* CHANNEL_CONTENT_DISABLED ("ВЫКЛ") — та же активная/неактивная
          * пара, что и у CURRENT (авария и disabled взаимоисключающие, см.
@@ -537,6 +553,41 @@ static bool erase_asleep_icon(uint16_t x, uint16_t y)
 }
 
 /**
+ * @brief Нарисовать иконки заголовков ("Паяльник"/"Отсос", см.
+ *        solder_icon.h/desolder_icon.h) — статичны, без erase-пары: в
+ *        отличие от иконок IDLE/SLEEP (зависят от состояния канала и
+ *        стираются/перерисовываются по ходу работы), эти рисуются только
+ *        два раза за всё время — в Screen_Init() и повторно в
+ *        clear_screen_for_mode_switch() после полной заливки экрана при
+ *        возврате из сервисного меню (см. её докстринг). Тот же блокирующий
+ *        паттерн одним DMA-проходом, что и draw_asleep_icon().
+ */
+static void draw_solder_icon(void)
+{
+    while (Display_IsBusy()) { }
+    if (Display_SetWindow(SCREEN_SOLDER_ICON_X, SCREEN_SOLDER_ICON_Y,
+                           (uint16_t)(SCREEN_SOLDER_ICON_X + SOLDER_ICON_BITMAP_W - 1U),
+                           (uint16_t)(SCREEN_SOLDER_ICON_Y + SOLDER_ICON_BITMAP_H - 1U)) != DISPLAY_OK) {
+        return;
+    }
+    Display_WritePixelsDMA(SolderIcon_Bitmap, (uint32_t)SOLDER_ICON_BITMAP_W * SOLDER_ICON_BITMAP_H);
+    while (Display_IsBusy()) { }
+}
+
+/** @brief Нарисовать иконку заголовка "Отсос" — тот же контракт, что и draw_solder_icon(). */
+static void draw_desolder_icon(void)
+{
+    while (Display_IsBusy()) { }
+    if (Display_SetWindow(SCREEN_DESOLDER_ICON_X, SCREEN_DESOLDER_ICON_Y,
+                           (uint16_t)(SCREEN_DESOLDER_ICON_X + DESOLDER_ICON_BITMAP_W - 1U),
+                           (uint16_t)(SCREEN_DESOLDER_ICON_Y + DESOLDER_ICON_BITMAP_H - 1U)) != DISPLAY_OK) {
+        return;
+    }
+    Display_WritePixelsDMA(DesolderIcon_Bitmap, (uint32_t)DESOLDER_ICON_BITMAP_W * DESOLDER_ICON_BITMAP_H);
+    while (Display_IsBusy()) { }
+}
+
+/**
  * @brief Полностью стереть экран и заставить TextField перерисовать всё
  *        заново — вызывается при КАЖДОЙ смене режима экрана (главный <->
  *        сервисное меню, в обе стороны), чтобы не было наложения одного
@@ -574,17 +625,18 @@ static void clear_screen_for_mode_switch(screen_mode_t new_mode)
     TextField_InvalidateAll(); /* все строки (обоих экранов) забывают, что было на экране — перерисуются с нуля на чистом фоне */
 
     if (new_mode == SCREEN_MODE_MAIN) {
-        /* Заголовки каналов ("Паяльник"/"Отсос") печатаются TextField_Printf()
-         * только один раз, в Screen_Init() — Screen_Update() дальше меняет
-         * только их ЦВЕТ (apply_channel_colors -> TextField_SetColors), не
-         * текст. TextField_InvalidateAll() выше стирает text у ВСЕХ строк,
-         * включая эти, а перепечатать их больше некому — без этого вызова
+        /* Иконки заголовков ("Паяльник"/"Отсос") рисуются raw DMA один раз в
+         * Screen_Init() — Screen_Update() дальше меняет только ЦВЕТ подсветки
+         * канала (apply_channel_colors -> TextField_SetColors на
+         * LINE_*_TITLE, сейчас no-op — см. её комментарий), самих пикселей
+         * иконки это не касается. Полная заливка фона выше стирает и их
+         * тоже (растр в обход TextField, TextField_InvalidateAll() ниже про
+         * эти пиксели не знает и перерисовать некому) — без вызова здесь
          * заголовки исчезают насовсем после первого же переключения режима
-         * экрана (сервисное меню туда и обратно). Печатать нужно именно
-         * ЗДЕСЬ, после InvalidateAll(), а не в блоке выше — иначе
-         * InvalidateAll() тут же сотрёт то, что мы только что написали. */
-        TextField_Printf(LINE_SOLDER_TITLE, "Паяльник");
-        TextField_Printf(LINE_DESOLDER_TITLE, "Отсос");
+         * экрана (сервисное меню туда и обратно), ровно как раньше было бы
+         * с текстом. */
+        draw_solder_icon();
+        draw_desolder_icon();
     }
 }
 
@@ -608,7 +660,12 @@ void Screen_Init(void)
      * рисовать; первый же вызов из Screen_Update() нарисует иконку по
      * месту, если нужно. */
 
-    TextField_ConfigureLine(LINE_SOLDER_TITLE, SCREEN_TITLE_LEFT_X, SCREEN_TITLE_Y,
+    /* LINE_SOLDER_TITLE больше не печатает текст (заголовок теперь иконка,
+     * см. draw_solder_icon()/apply_channel_colors()) — TextField-строка
+     * оставлена сконфигурированной просто чтобы TextField_SetColors() в
+     * apply_channel_colors() (сейчас безвредный no-op на пустой строке)
+     * не трогала неинициализированную линию; x/y и шрифт значения не имеют. */
+    TextField_ConfigureLine(LINE_SOLDER_TITLE, SCREEN_HALF_CENTER_LEFT_X, SCREEN_TITLE_Y,
                              &AntiquaB_18_uni, COLOR_ACTIVE_TITLE, COLOR_BG);
     /* CURRENT остаётся Comic_60_dig, как и было — крупные цифры. Кириллицу
      * этот шрифт не содержит физически, поэтому для текста об обрыве
@@ -626,7 +683,8 @@ void Screen_Init(void)
     TextField_ConfigureLine(LINE_SOLDER_TARGET, SCREEN_HALF_CENTER_LEFT_X, SCREEN_TARGET_Y,
                              &AntiquaB_18_uni, COLOR_ACTIVE_TARGET, COLOR_BG);
 
-    TextField_ConfigureLine(LINE_DESOLDER_TITLE, SCREEN_TITLE_RIGHT_X, SCREEN_TITLE_Y,
+    /* LINE_DESOLDER_TITLE — тот же no-op, что и у LINE_SOLDER_TITLE выше. */
+    TextField_ConfigureLine(LINE_DESOLDER_TITLE, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_TITLE_Y,
                              &AntiquaB_18_uni, COLOR_INACTIVE_TITLE, COLOR_BG);
     TextField_ConfigureLine(LINE_DESOLDER_CURRENT, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_CURRENT_Y,
                              &Comic_60_dig, COLOR_INACTIVE_CURRENT, COLOR_BG);
@@ -650,9 +708,10 @@ void Screen_Init(void)
      * первом же TextField_PrintfCentered()/PrintfRightAligned() в
      * Screen_Update(), до первой отрисовки на экран. */
 
-    /* Подписи каналов — статичный текст, меняется только цвет */
-    TextField_Printf(LINE_SOLDER_TITLE, "Паяльник");
-    TextField_Printf(LINE_DESOLDER_TITLE, "Отсос");
+    /* Заголовки каналов — иконки (растр, раз и навсегда, см. draw_solder_icon()/
+     * draw_desolder_icon()), не текст. */
+    draw_solder_icon();
+    draw_desolder_icon();
 
     /* Сервисное меню — шрифт 18 везде (см. спецификацию), позиции по
      * вертикали друг под другом, x общий для title и всех строк списка */
