@@ -73,14 +73,17 @@ static void dispatch_event(const button_event_t *ev)
     /* --- TOOLS: переключение активного канала — работает ВСЕГДА, в любом
      * режиме экрана (в т.ч. внутри сервисного меню — оно наследует активный
      * канал и TOOLS может переключить его прямо оттуда, см. menu.h).
-     * Не передаём фокус на неисправный канал (Error_IsChannelBlocked) — если
-     * оба канала неисправны одновременно, переключение всё равно разрешаем
-     * (иначе застреваем на одном канале навсегда без возможности хоть
-     * что-то увидеть по второму; в этом случае управление всё равно
-     * заблокировано на обоих, так что переключение безвредно). */
+     * Переключаем ТОЛЬКО на исправный канал (см. чат). Если исправен ровно
+     * один из двух — авто-фокус (см. InputFSM_Poll()) и так уже держит нас
+     * на нём, так что вручную сюда попасть, будучи на исправном канале,
+     * нельзя (target тогда неисправен — условие ниже ложно, кнопка
+     * фактически заблокирована, как и задумано). Если неисправны оба —
+     * переключаться тоже незачем: раньше здесь был запасной вариант,
+     * разрешавший скакать между двумя одинаково нерабочими каналами просто
+     * чтобы посмотреть на второй — от него отказались. */
     if (ev->mask == BUTTON_MASK(BUTTON_TOOLS) && ev->type == BUTTON_EVENT_SHORT_PRESS) {
         channel_id_t target = (s_active_channel == CHANNEL_SOLDER) ? CHANNEL_DESOLDER : CHANNEL_SOLDER;
-        if (!Error_IsChannelBlocked(target) || Error_IsChannelBlocked(s_active_channel)) {
+        if (!Error_IsChannelBlocked(target)) {
             s_active_channel = target;
             s_accel.active = false; /* на всякий случай, физически невозможно при живом accel, но дёшево подстраховаться */
         }
@@ -207,6 +210,24 @@ void InputFSM_SyncStateFromSettings(void)
 
 void InputFSM_Poll(void)
 {
+    /* Авто-фокус: если активный канал стал неисправен/не подключен, а
+     * АЛЬТЕРНАТИВНЫЙ канал исправен — переносим фокус на него сами, не
+     * дожидаясь нажатия TOOLS (см. чат). Работает в любом режиме экрана —
+     * тем же обоснованием, что и ручной TOOLS выше (сервисное меню
+     * наследует активный канал). Если неисправны оба — условие ниже не
+     * сработает ни для одной стороны (alternate тоже блокирован), фокус
+     * остаётся как есть; ручной TOOLS в этом случае тоже ничего не делает
+     * (см. dispatch_event()) — переключаться между двумя одинаково
+     * нерабочими каналами незачем. Выполняется ДО разбора очереди кнопок,
+     * чтобы TOOLS в этом же тике уже видел актуальный s_active_channel. */
+    if (Error_IsChannelBlocked(s_active_channel)) {
+        channel_id_t alternate = (s_active_channel == CHANNEL_SOLDER) ? CHANNEL_DESOLDER : CHANNEL_SOLDER;
+        if (!Error_IsChannelBlocked(alternate)) {
+            s_active_channel = alternate;
+            s_accel.active = false; /* см. тот же комментарий у TOOLS в dispatch_event() */
+        }
+    }
+
     button_event_t ev;
     while (Buttons_PopEvent(&ev)) {
         dispatch_event(&ev);
