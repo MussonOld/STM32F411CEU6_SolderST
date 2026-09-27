@@ -6,6 +6,7 @@
 #include "beep.h"
 #include "main.h"          /* BEEP_Pin / BEEP_GPIO_Port */
 #include "stm32f4xx_hal.h"
+#include "settings.h"      /* Settings_GetFlagBit(SETTINGS_FLAG_BUZZER_BIT) — см. Beep_Alarm() */
 
 /** Всего полупериодов в сигнале: каждый импульс = "вкл" + "выкл". */
 #define BEEP_ALARM_HALF_STEPS (BEEP_ALARM_PULSES * 2U)
@@ -30,6 +31,13 @@ void Beep_Init(void)
 
 void Beep_Alarm(void)
 {
+    /* Пункт меню "Bzzz" (см. menu.c/settings.h) до сих пор ничего не
+     * проверял здесь — переключение флага меняло только сохранённое
+     * значение, звук всё равно всегда играл (см. чат). Единственная точка
+     * входа в модуль — гасим тут. */
+    if (!Settings_GetFlagBit(SETTINGS_FLAG_BUZZER_BIT)) {
+        return;
+    }
     if (s_steps_left != 0) {
         return; /* уже играет — не накладываем, см. beep.h */
     }
