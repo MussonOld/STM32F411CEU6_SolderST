@@ -134,10 +134,10 @@ enum {
 #define SCREEN_TITLE_Y      (36U)
 /* Раньше — высота шрифта AntiquaB_18_uni (текстовые заголовки "Паяльник"/
  * "Отсос"). Теперь оба заголовка — иконки (см. чат, solder_icon.h/
- * desolder_icon.h), взята высота более высокой из двух (Desolder, 39px),
- * чтобы CURRENT-блок начинался на одном и том же Y в обеих половинах
- * экрана — иконка Solder (21px) просто оставляет пустое место под собой
- * в той же полосе, не растягиваясь. */
+ * desolder_icon.h), взята высота более высокой из двух (Desolder, 31px
+ * после ужатия до 120px по ширине), чтобы CURRENT-блок начинался на одном
+ * и том же Y в обеих половинах экрана — иконка Solder (17px) центрируется
+ * по вертикали в той же полосе, не растягиваясь. */
 #define SCREEN_TITLE_HEIGHT ((DESOLDER_ICON_BITMAP_H > SOLDER_ICON_BITMAP_H) ? DESOLDER_ICON_BITMAP_H : SOLDER_ICON_BITMAP_H)
 
 /* Центры половин экрана — используются TextField_PrintfCentered() для
@@ -148,12 +148,14 @@ enum {
 /* Иконки заголовков (растры SolderIcon_Bitmap/DesolderIcon_Bitmap, см.
  * solder_icon.h/desolder_icon.h) вместо текста "Паяльник"/"Отсос" (см. чат)
  * — центрируются по X тем же center_x, что и CURRENT/TARGET своей половины,
- * привязаны по Y к верху титульной полосы (SCREEN_TITLE_Y); у каждой своя
- * высота (21 и 39px), общая полоса под обе — SCREEN_TITLE_HEIGHT (см. выше). */
+ * и по Y — внутри общей титульной полосы (SCREEN_TITLE_HEIGHT, взята по
+ * более высокой из двух иконок), а не по общему верхнему краю: иконки
+ * разной высоты (17 и 31px после ужатия до 120px по ширине, см. чат) иначе
+ * не совпадали бы по центру, хоть и совпадали бы по верху. */
 #define SCREEN_SOLDER_ICON_X   ((uint16_t)(SCREEN_HALF_CENTER_LEFT_X  - SOLDER_ICON_BITMAP_W   / 2U))
 #define SCREEN_DESOLDER_ICON_X ((uint16_t)(SCREEN_HALF_CENTER_RIGHT_X - DESOLDER_ICON_BITMAP_W / 2U))
-#define SCREEN_SOLDER_ICON_Y   SCREEN_TITLE_Y
-#define SCREEN_DESOLDER_ICON_Y SCREEN_TITLE_Y
+#define SCREEN_SOLDER_ICON_Y   ((uint16_t)(SCREEN_TITLE_Y + (SCREEN_TITLE_HEIGHT - SOLDER_ICON_BITMAP_H)   / 2U))
+#define SCREEN_DESOLDER_ICON_Y ((uint16_t)(SCREEN_TITLE_Y + (SCREEN_TITLE_HEIGHT - DESOLDER_ICON_BITMAP_H) / 2U))
 
 #define SCREEN_PRESETS_Y (210U)
 /* Пресеты:
