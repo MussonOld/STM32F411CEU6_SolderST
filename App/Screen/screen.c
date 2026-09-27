@@ -12,9 +12,9 @@
  *                показывается ТОЛЬКО пока идёт обратный отсчёт (AWAKE/
  *                PRESLEEP) — скрыта и в AWAKE, когда таймер не идёт
  *                (remaining==0), и в SLEEP (там же пусто и без текста —
- *                прочерки на месте температуры уже достаточный сигнал,
- *                см. CHANNEL_CONTENT_ASLEEP; отдельная подпись "Спит"
- *                убрана, см. чат),
+ *                иконка спящего смайлика на месте температуры уже
+ *                достаточный сигнал, см. CHANNEL_CONTENT_ASLEEP; отдельная
+ *                подпись "Спит" убрана, см. чат),
  *                см. update_sleep_status()/s_sleep_icon_shown[]; по центру —
  *                сообщение EEPROM (Error_GetInfoZoneMessage()): транзитное
  *                ("сброшено на заводские", 5 сек) либо авария (весь
@@ -81,6 +81,7 @@
 #include "sleep.h"
 #include "menu.h"
 #include "control.h"
+#include "sleep_icon.h"
 #include <stddef.h>
 #include <stdio.h>
 #include "fixed_point.h"
@@ -191,6 +192,13 @@ enum {
 #define SCREEN_IDLE_CROSS_Y ((uint16_t)(SCREEN_CURRENT_Y + (SCREEN_CURRENT_HEIGHT - SCREEN_IDLE_CROSS_SIZE) / 2U))
 #define COLOR_IDLE_CROSS DISPLAY_RGB565(120, 120, 120) /* см. чат — "пониженная контрастность, как и сейчас" (тусклее обычного текста) */
 
+/* Иконка SLEEP (спящий смайлик, растр SleepIcon_Bitmap — см. sleep_icon.h)
+ * вместо "--" в CHANNEL_CONTENT_ASLEEP (см. чат). Тот же принцип
+ * центрирования по Y, что и у крестика IDLE (вписана в 67px CURRENT-полосу,
+ * своя высота из sleep_icon.h вместо SCREEN_IDLE_CROSS_SIZE); по X —
+ * центрируется на center_x своей половины экрана, как и крестик. */
+#define SCREEN_ASLEEP_ICON_Y ((uint16_t)(SCREEN_CURRENT_Y + (SCREEN_CURRENT_HEIGHT - SLEEP_ICON_BITMAP_H) / 2U))
+
 #define SCREEN_INFO_X (10U)
 #define SCREEN_INFO_Y (6U)
 /* Инфозона разбита на три поля по x: сообщение EEPROM по центру,
@@ -274,7 +282,7 @@ typedef enum {
     CHANNEL_CONTENT_FAULT,      /* авария — 2-строчное сообщение (AntiquaB_18_uni) */
     CHANNEL_CONTENT_IDLE,       /* инструмент не подключен — растровый крестик, без текста */
     CHANNEL_CONTENT_DISABLED,   /* канал выключен аккордом — "ВЫКЛ" (AntiquaB_32_uni) */
-    CHANNEL_CONTENT_ASLEEP,     /* SLEEP_MODE_SLEEP — "--" (Comic_60_dig), как раньше у idle/disabled */
+    CHANNEL_CONTENT_ASLEEP,     /* SLEEP_MODE_SLEEP — растровая иконка (спящий смайлик, см. sleep_icon.h), раньше здесь было "--" */
 } channel_content_t;
 
 static channel_content_t s_last_content[CHANNEL_COUNT]; /* чтобы перекрашивать title/current и гасить блок только при реальной смене состояния */
@@ -285,6 +293,8 @@ static bool s_content_clearing[CHANNEL_COUNT]; /* см. update_channel_content()
 static bool s_idle_icon_shown[CHANNEL_COUNT]; /* крестик "инструмент не подключен" сейчас реально нарисован на экране (растр, см. draw_idle_cross()) —
                                                 * рисуется/стирается сырым Display_WritePixelsDMA в обход TextField, поэтому
                                                 * TextField не знает про эти пиксели и не сотрёт их сам при смене состояния (см. update_channel_content()) */
+static bool s_asleep_icon_shown[CHANNEL_COUNT]; /* иконка SLEEP (спящий смайлик) сейчас реально нарисована — тот же смысл
+                                                  * и та же причина, что и у s_idle_icon_shown (см. draw_asleep_icon()) */
 static screen_mode_t s_last_screen_mode; /* чтобы очищать экран только при реальной смене режима, не каждый кадр */
 static display_color_t s_last_sleep_color[CHANNEL_COUNT]; /* чтобы перекрашивать таймер сна только при реальной смене цвета (не режима — один и тот же mode может значить разный цвет, см. update_sleep_status()) */
 static uint16_t s_sleep_icon_x[CHANNEL_COUNT]; /* x, по которому иконка РЕАЛЬНО сейчас нарисована на экране (актуален только пока s_sleep_icon_shown[ch]==true) — пересчитывается в update_sleep_status() */
@@ -489,6 +499,44 @@ static bool erase_idle_cross(uint16_t x, uint16_t y)
 }
 
 /**
+ * @brief Нарисовать иконку SLEEP (спящий смайлик, готовый растр
+ *        SleepIcon_Bitmap из sleep_icon.h/.c — RGB565, сгенерирован из PNG,
+ *        см. чат). Тот же блокирующий паттерн, что и draw_sleep_icon()/
+ *        draw_idle_cross() (редкое событие — вход в SLEEP, не каждый кадр).
+ *        В отличие от них — данные уже готовы построчно в Flash, буфер (ни
+ *        стековый, ни статический) не нужен, пишем прямо из константного
+ *        массива одним DMA-проходом.
+ *
+ * @return true, если реально нарисована — тот же контракт, что и у
+ *         draw_sleep_icon()/draw_idle_cross() (см. их докстринги про
+ *         s_asleep_icon_shown ниже).
+ */
+static bool draw_asleep_icon(uint16_t x, uint16_t y)
+{
+    while (Display_IsBusy()) { }
+    if (Display_SetWindow(x, y, (uint16_t)(x + SLEEP_ICON_BITMAP_W - 1U),
+                           (uint16_t)(y + SLEEP_ICON_BITMAP_H - 1U)) != DISPLAY_OK) {
+        return false;
+    }
+    Display_WritePixelsDMA(SleepIcon_Bitmap, (uint32_t)SLEEP_ICON_BITMAP_W * SLEEP_ICON_BITMAP_H);
+    while (Display_IsBusy()) { }
+    return true;
+}
+
+/** @brief Стереть иконку SLEEP (залить фоном) — тот же контракт, что и erase_idle_cross(). */
+static bool erase_asleep_icon(uint16_t x, uint16_t y)
+{
+    while (Display_IsBusy()) { }
+    if (Display_SetWindow(x, y, (uint16_t)(x + SLEEP_ICON_BITMAP_W - 1U),
+                           (uint16_t)(y + SLEEP_ICON_BITMAP_H - 1U)) != DISPLAY_OK) {
+        return false;
+    }
+    Display_FillColorDMA(COLOR_BG, (uint32_t)SLEEP_ICON_BITMAP_W * SLEEP_ICON_BITMAP_H);
+    while (Display_IsBusy()) { }
+    return true;
+}
+
+/**
  * @brief Полностью стереть экран и заставить TextField перерисовать всё
  *        заново — вызывается при КАЖДОЙ смене режима экрана (главный <->
  *        сервисное меню, в обе стороны), чтобы не было наложения одного
@@ -520,6 +568,8 @@ static void clear_screen_for_mode_switch(screen_mode_t new_mode)
         s_sleep_icon_shown[CHANNEL_DESOLDER] = false;
         s_idle_icon_shown[CHANNEL_SOLDER] = false;
         s_idle_icon_shown[CHANNEL_DESOLDER] = false;
+        s_asleep_icon_shown[CHANNEL_SOLDER] = false;
+        s_asleep_icon_shown[CHANNEL_DESOLDER] = false;
     }
     TextField_InvalidateAll(); /* все строки (обоих экранов) забывают, что было на экране — перерисуются с нуля на чистом фоне */
 
@@ -683,6 +733,7 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
     uint8_t line_disabled_msg = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_DISABLED_MSG : LINE_DESOLDER_DISABLED_MSG;
     uint8_t line_target       = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_TARGET      : LINE_DESOLDER_TARGET;
     uint16_t cross_x = (uint16_t)(center_x - SCREEN_IDLE_CROSS_SIZE / 2U);
+    uint16_t asleep_icon_x = (uint16_t)(center_x - SLEEP_ICON_BITMAP_W / 2U);
 
     const char *fault_msg = Error_GetChannelFaultMessage(ch); /* не NULL только для аварий: RTD_SHORT/RTD_OPEN/HEATER_OPEN/ERR AD1220 */
     bool enabled = State_IsEnabled(ch);
@@ -731,6 +782,14 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
             s_idle_icon_shown[ch] = false;
         }
     }
+    /* Иконка SLEEP — та же логика и та же причина (растр в обход TextField,
+     * см. докстринг выше про s_idle_icon_shown): гасим её явно на выходе из
+     * ASLEEP, до фазы гашения текстовых полей ниже. */
+    if (s_last_content[ch] == CHANNEL_CONTENT_ASLEEP && content != CHANNEL_CONTENT_ASLEEP && s_asleep_icon_shown[ch]) {
+        if (erase_asleep_icon(asleep_icon_x, SCREEN_ASLEEP_ICON_Y)) {
+            s_asleep_icon_shown[ch] = false;
+        }
+    }
 
     if (!s_content_clearing[ch] && content != s_last_content[ch]) {
         TextField_PrintfCentered(line_current, center_x, "");
@@ -774,12 +833,17 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
                 TextField_PrintfCentered(line_disabled_msg, center_x, "ВЫКЛ");
                 break;
             case CHANNEL_CONTENT_ASLEEP:
-                /* SLEEP_MODE_SLEEP — число не поддерживается (реального
-                 * снижения нагрева при входе в SLEEP пока нет, см. Sleep.md,
-                 * но показывать застывшее последнее значение вводит в
-                 * заблуждение, см. чат) — то же "--", что раньше было у
-                 * idle/выключенного канала. */
-                TextField_PrintfCentered(line_current, center_x, "--");
+                /* SLEEP_MODE_SLEEP — вместо "--" растровая иконка (спящий
+                 * смайлик, см. sleep_icon.h/чат), сырым Display_WritePixelsDMA
+                 * в обход TextField — тот же паттерн, что и у крестика IDLE
+                 * (см. draw_idle_cross()/s_idle_icon_shown). Реального
+                 * снижения нагрева при входе в SLEEP по-прежнему нет (см.
+                 * Sleep.md) — иконка тут чисто индикация состояния. */
+                if (!s_asleep_icon_shown[ch]) {
+                    if (draw_asleep_icon(asleep_icon_x, SCREEN_ASLEEP_ICON_Y)) {
+                        s_asleep_icon_shown[ch] = true;
+                    }
+                }
                 break;
             case CHANNEL_CONTENT_NORMAL:
             default: {
@@ -822,9 +886,9 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
  * AWAKE, remaining>0, PreSleepTimeout ВЫКЛЮЧЕН         -> "MM:SS" + иконка, красный — первый выключен, это уже "второй" (Sleep) таймер, стартует сразу по простою вместо первого
  * PRESLEEP, remaining==0 (SleepTimeout выключен)       -> "Предсон" + иконка (бессрочно, второго таймера нет), жёлтый
  * PRESLEEP, remaining>0 (первый уже сработал)          -> "MM:SS" + иконка, красный — отсчёт "второго" (Sleep) таймера, а не статичная "Предсон"
- * SLEEP                                                 -> "" (пусто), без иконки — прочерки на
- *                                                          месте температуры уже достаточный
- *                                                          сигнал (см. CHANNEL_CONTENT_ASLEEP в
+ * SLEEP                                                 -> "" (пусто), без иконки — растровая иконка
+ *                                                          спящего смайлика на месте температуры уже
+ *                                                          достаточный сигнал (см. CHANNEL_CONTENT_ASLEEP в
  *                                                          update_channel_content()), отдельная
  *                                                          подпись "Спит" в инфозоне убрана (см. чат);
  *                                                          физического снижения нагрева при входе
