@@ -41,6 +41,11 @@ static bool     s_dTdt_valid[CHANNEL_COUNT];
  * отсчёт АЦП; фазу ШИМ выходная ступень пересчитывает на каждый опрос. */
 static uint8_t  s_duty_pct[CHANNEL_COUNT];
 
+/* Сглаженная копия s_duty_pct для гейджа на экране (см.
+ * Control_GetSmoothedPowerPct()/control.h) — НЕ используется в самом PID.
+ * Q16.16, 0..100. */
+static fixed_t  s_duty_smoothed[CHANNEL_COUNT];
+
 static void heater_write(channel_id_t ch, bool on)
 {
     /* Нагреватель включается НИЗКИМ уровнем (см. diag.c). */
@@ -83,8 +88,29 @@ void Control_Init(void)
     for (int i = 0; i < CHANNEL_COUNT; i++) {
         channel_id_t ch = (channel_id_t)i;
         s_last_update_tick[ch] = 0;
+        s_duty_smoothed[ch] = 0;
         force_off(ch);
     }
+}
+
+/* Экспоненциальный фильтр s_duty_pct -> s_duty_smoothed для гейджа на
+ * экране (см. control.h). Вызывается КАЖДЫЙ Control_Poll(), с фиксированным
+ * dt=CONTROL_POLL_MS — в отличие от dT/dt (привязан к реальным отсчётам
+ * АЦП), тут сглаживать нужно именно "мгновенную" мощность, включая
+ * периоды между отсчётами АЦП, где s_duty_pct не меняется, но и не должен
+ * считаться "новым" значением — фиксированный шаг делает фильтр корректным
+ * time-domain LPF независимо от темпа АЦП. */
+static void update_power_smoothing(channel_id_t ch)
+{
+    fixed_t raw = FIXED_FROM_INT((int32_t)s_duty_pct[ch]);
+    fixed_t alpha = fixed_div(FIXED_FROM_INT((int32_t)CONTROL_POLL_MS),
+                              FIXED_FROM_INT((int32_t)(CONTROL_POWER_DISPLAY_FILTER_MS + CONTROL_POLL_MS)));
+    s_duty_smoothed[ch] += fixed_mul(alpha, raw - s_duty_smoothed[ch]);
+}
+
+fixed_t Control_GetSmoothedPowerPct(channel_id_t ch)
+{
+    return s_duty_smoothed[ch];
 }
 
 fixed_t Control_PresleepSetpoint(channel_id_t ch, fixed_t setpoint)
@@ -266,6 +292,8 @@ static void poll_channel(channel_id_t ch)
 void Control_Poll(void)
 {
     for (int i = 0; i < CHANNEL_COUNT; i++) {
-        poll_channel((channel_id_t)i);
+        channel_id_t ch = (channel_id_t)i;
+        poll_channel(ch);
+        update_power_smoothing(ch); /* безусловно, даже если poll_channel() выше сделал force_off() — см. control.h */
     }
 }

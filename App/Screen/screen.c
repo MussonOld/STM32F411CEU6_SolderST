@@ -170,6 +170,23 @@ enum {
  * на экран). Останавливаем линию с небольшим отступом сверху от SCREEN_PRESETS_Y. */
 #define SCREEN_DIVIDER_Y1   (SCREEN_PRESETS_Y - 6U)
 
+/* Гейдж мощности (см. чат) — узкая вертикальная колонка у разделителя,
+ * "как у спиртового термометра": заполняется СНИЗУ ВВЕРХ на долю
+ * Control_GetSmoothedPowerPct(ch)/100 от своей высоты, остаток сверху —
+ * тусклый "трек" (видна вся шкала целиком даже при 0%, не только пустое
+ * место). Та же вертикальная протяжённость, что и у статического
+ * разделителя (SCREEN_INFO_HEIGHT..SCREEN_DIVIDER_Y1) — визуально одна
+ * группа с ним. Ширина/зазор — ВРЕМЕННО, поправить по факту на экране. */
+#define SCREEN_POWER_BAR_WIDTH  (8U)
+#define SCREEN_POWER_BAR_GAP    (3U)  /* зазор от разделителя */
+#define SCREEN_POWER_BAR_Y0     (SCREEN_INFO_HEIGHT)
+#define SCREEN_POWER_BAR_Y1     (SCREEN_DIVIDER_Y1)
+#define SCREEN_POWER_BAR_HEIGHT ((uint16_t)(SCREEN_POWER_BAR_Y1 - SCREEN_POWER_BAR_Y0 + 1U))
+#define SCREEN_SOLDER_POWER_BAR_X0   ((uint16_t)(SCREEN_DIVIDER_X0 - SCREEN_POWER_BAR_GAP - SCREEN_POWER_BAR_WIDTH))
+#define SCREEN_DESOLDER_POWER_BAR_X0 ((uint16_t)(SCREEN_DIVIDER_X1 + 1U + SCREEN_POWER_BAR_GAP))
+#define COLOR_POWER_FILL  DISPLAY_RGB565(255, 90, 0)  /* тёплый оранжевый — "греет" */
+#define COLOR_POWER_TRACK DISPLAY_RGB565(40, 40, 40)  /* тусклый трек — видна вся шкала, а не голый фон */
+
 /* Текущая+целевая температура центрируются по вертикали в промежутке между
  * низом заголовка и верхом строки пресетов (тот же отступ 6px, что и у
  * разделителя). CURRENT_HEIGHT/TARGET_HEIGHT — высоты шрифтов, GAP — зазор. */
@@ -386,6 +403,55 @@ static void draw_divider(void)
         Display_FillColorDMA(COLOR_DIVIDER, (uint32_t)width * height);
         while (Display_IsBusy()) { } /* однократно, блокирующе — редкое событие (старт/смена режима экрана), не каждый кадр */
     }
+}
+
+/* Последнее нарисованное заполнение гейджа мощности, в пикселях — чтобы не
+ * дёргать DMA заново на каждый Screen_Update(), если сглаженный процент
+ * (см. Control_GetSmoothedPowerPct()) после квантования в пиксели не
+ * изменился. 0xFFFF — недостижимое значение (высота гейджа < 0xFFFF),
+ * форсирует перерисовку целиком на первый вызов после Screen_Init()/
+ * возврата из меню (см. clear_screen_for_mode_switch()). */
+static uint16_t s_power_bar_fill_px[CHANNEL_COUNT];
+
+/** @brief Один сплошной сегмент гейджа (ширина фиксирована SCREEN_POWER_BAR_WIDTH), height==0 — no-op. */
+static void draw_power_bar_segment(uint16_t x0, uint16_t y0, uint16_t height, display_color_t color)
+{
+    if (height == 0U) return;
+    if (Display_SetWindow(x0, y0, (uint16_t)(x0 + SCREEN_POWER_BAR_WIDTH - 1U),
+                           (uint16_t)(y0 + height - 1U)) != DISPLAY_OK) {
+        return;
+    }
+    Display_FillColorDMA(color, (uint32_t)SCREEN_POWER_BAR_WIDTH * height);
+    while (Display_IsBusy()) { } /* редкое событие — только когда сглаженный % реально сдвинул пиксель заполнения, см. вызов ниже */
+}
+
+/**
+ * @brief Перерисовать гейдж мощности канала — сегмент "трек" (тусклый,
+ *        сверху) + сегмент "заполнение" (снизу, см. геометрию выше), но
+ *        только если высота заполнения в пикселях изменилась с прошлого
+ *        раза (s_power_bar_fill_px). Redraw целиком, а не только дельту —
+ *        колонка узкая (SCREEN_POWER_BAR_WIDTH), а меняется редко благодаря
+ *        сглаживанию в Control (секунды, см. CONTROL_POWER_DISPLAY_FILTER_MS) —
+ *        лишний DMA-трафик от передельки уже закрашенного несущественный.
+ */
+static void update_power_gauge(channel_id_t ch, uint16_t bar_x0)
+{
+    fixed_t pct = Control_GetSmoothedPowerPct(ch); /* 0..100, Q16.16 */
+    fixed_t fill_fixed = fixed_div(fixed_mul(pct, FIXED_FROM_INT((int32_t)SCREEN_POWER_BAR_HEIGHT)),
+                                    FIXED_FROM_INT(100));
+    int32_t fill_px_signed = FIXED_TO_INT(fill_fixed + (FIXED_ONE >> 1)); /* округление */
+    if (fill_px_signed < 0) fill_px_signed = 0;
+    if (fill_px_signed > (int32_t)SCREEN_POWER_BAR_HEIGHT) fill_px_signed = (int32_t)SCREEN_POWER_BAR_HEIGHT;
+    uint16_t fill_px = (uint16_t)fill_px_signed;
+
+    if (fill_px == s_power_bar_fill_px[ch]) {
+        return; /* пиксель заполнения не изменился — перерисовывать нечего */
+    }
+
+    uint16_t track_height = (uint16_t)(SCREEN_POWER_BAR_HEIGHT - fill_px);
+    draw_power_bar_segment(bar_x0, SCREEN_POWER_BAR_Y0, track_height, COLOR_POWER_TRACK);
+    draw_power_bar_segment(bar_x0, (uint16_t)(SCREEN_POWER_BAR_Y0 + track_height), fill_px, COLOR_POWER_FILL);
+    s_power_bar_fill_px[ch] = fill_px;
 }
 
 /**
@@ -623,6 +689,8 @@ static void clear_screen_for_mode_switch(screen_mode_t new_mode)
         s_idle_icon_shown[CHANNEL_DESOLDER] = false;
         s_asleep_icon_shown[CHANNEL_SOLDER] = false;
         s_asleep_icon_shown[CHANNEL_DESOLDER] = false;
+        s_power_bar_fill_px[CHANNEL_SOLDER] = 0xFFFFU;   /* форс полной перерисовки гейджа, см. его докстринг */
+        s_power_bar_fill_px[CHANNEL_DESOLDER] = 0xFFFFU;
     }
     TextField_InvalidateAll(); /* все строки (обоих экранов) забывают, что было на экране — перерисуются с нуля на чистом фоне */
 
@@ -645,6 +713,11 @@ static void clear_screen_for_mode_switch(screen_mode_t new_mode)
 void Screen_Init(void)
 {
     draw_divider();
+
+    /* Гейдж мощности — сентинел форсирует первую отрисовку в первом же
+     * Screen_Update() (см. update_power_gauge()/докстринг s_power_bar_fill_px). */
+    s_power_bar_fill_px[CHANNEL_SOLDER] = 0xFFFFU;
+    s_power_bar_fill_px[CHANNEL_DESOLDER] = 0xFFFFU;
 
     TextField_ConfigureLine(LINE_INFO, SCREEN_INFO_X, SCREEN_INFO_Y,
                              &AntiquaB_18_uni, COLOR_INFO, COLOR_BG);
@@ -1182,6 +1255,9 @@ void Screen_Update(void)
 
     update_channel_content(CHANNEL_SOLDER, SCREEN_HALF_CENTER_LEFT_X);
     update_channel_content(CHANNEL_DESOLDER, SCREEN_HALF_CENTER_RIGHT_X);
+
+    update_power_gauge(CHANNEL_SOLDER, SCREEN_SOLDER_POWER_BAR_X0);
+    update_power_gauge(CHANNEL_DESOLDER, SCREEN_DESOLDER_POWER_BAR_X0);
 
     channel_id_t active = InputFSM_GetActiveChannel();
 
