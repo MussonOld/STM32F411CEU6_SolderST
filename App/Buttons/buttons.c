@@ -181,10 +181,16 @@ static void step_episode(uint8_t down_mask, uint32_t now)
                 s_episode = EPISODE_SOLO;
                 s_active_mask = only_bit;
             }
+        } else if (down_mask == BUTTONS_CHORD_UP_DN_MASK) {
+            /* UP и DN подтверждены антидребезгом в одном и том же опросе
+             * (почти одновременное нажатие) — это валидный аккорд, а не
+             * нарушение. Раньше такой случай попадал в ветку ниже. */
+            s_episode = EPISODE_CHORD;
+            s_active_mask = BUTTONS_CHORD_UP_DN_MASK;
         } else {
             /* Сразу 2+ кнопки в момент старта эпизода (в пределах одного
-             * опроса) — уже нарушение по правилу "> 2 недопустимо" либо
-             * "любая пара кроме UP+DN недопустима". */
+             * опроса), кроме пары UP+DN — нарушение по правилу "> 2
+             * недопустимо" либо "любая пара кроме UP+DN недопустима". */
             raise_violation(down_mask);
         }
         return;
