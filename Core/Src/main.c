@@ -206,16 +206,20 @@ int main(void)
     if (HAL_GetTick() - poll10ms_last_tick >= BUTTONS_POLL_MS) {
         poll10ms_last_tick += BUTTONS_POLL_MS;
         Buttons_Poll();
-        Diag_Poll(); /* тот же гейт 10мс — DIAG_POLL_MS == 10, см. diag.h */
         Beep_Poll(); /* тот же гейт 10мс — BEEP_POLL_MS == 10, полупериод меандра 250мс, запас ~25x */
         Sleep_Poll(); /* тот же гейт 10мс — BUTTONS_POLL_MS == SLEEP_POLL_MS, см. sleep.h */
+
+        /* Конвейер одного измерения: ADS1220 -> Diag -> Error -> Control. Порядок
+         * важен: Diag и Control должны работать с ОДНИМ И ТЕМ ЖЕ отсчётом —
+         * иначе PID видит новую температуру, а Error ещё держит диагностику
+         * предыдущего отсчёта. */
         ADS1220_Poll(); /* тот же гейт 10мс — ADS1220_POLL_MS тоже 10, см. ads1220.h (сам DRDY на 20SPS обновляется раз в ~50мс, опрос чаще — просто чтение GPIO, дёшево) */
+        Diag_Poll(); /* тот же гейт 10мс — DIAG_POLL_MS == 10, см. diag.h; после ADS1220_Poll(), до Control_Poll() */
+        Error_ReportPsuStatus(HAL_GPIO_ReadPin(Pok_GPIO_Port, Pok_Pin) == GPIO_PIN_RESET); /* Pok активный низкий; без дебаунса; если на реальном железе окажется дребезг, добавить по образцу sleep.c; до Control_Poll(), чтобы авария БП учитывалась в том же проходе */
         Control_Poll(); /* тот же гейт 10мс — CONTROL_POLL_MS тоже 10, см. control.h. Сам писатель
                           * State.current_temp/heater_active */
 
         Pump_Poll();    /* тот же гейт 10мс — PUMP_POLL_MS == 10, после Diag_Poll()/Control_Poll(): читает уже обновлённые Error/State, см. pump.h */
-
-        Error_ReportPsuStatus(HAL_GPIO_ReadPin(Pok_GPIO_Port, Pok_Pin) == GPIO_PIN_RESET); /* Pok активный низкий; без дебаунса; если на реальном железе окажется дребезг, добавить по образцу sleep.c */
 
         /* Сторожевой — ПОСЛЕ Control_Poll(): зависание любого опроса выше, как
          * и остановка SysTick (гейт по HAL_GetTick), приводит к сбросу. */

@@ -67,7 +67,9 @@
  *
  * Использование:
  *   Diag_Init() — после Error_Init() и ADS1220_Init().
- *   Diag_Poll() — из главного цикла, период ~DIAG_POLL_MS.
+ *   Diag_Poll() — из главного цикла, период ~DIAG_POLL_MS. Порядок в цикле:
+ *                 ADS1220_Poll() -> Diag_Poll() -> Control_Poll() — Diag и
+ *                 Control работают с одним и тем же отсчётом (см. main.c).
  */
 
 #ifndef DIAG_H
