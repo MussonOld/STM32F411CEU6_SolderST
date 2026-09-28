@@ -32,6 +32,11 @@ static bool s_alarm_beeped[CHANNEL_COUNT];
 /** Последнее достоверно измеренное состояние нагревателя. */
 static bool s_heater_open[CHANNEL_COUNT];
 
+/** Отсчёт АЦП (ADS1220_GetLastUpdateTick), по которому Diag в последний раз
+ *  вынес вердикт по RTD канала — см. Diag_IsSampleEvaluated(). */
+static uint32_t s_eval_tick[CHANNEL_COUNT];
+static bool     s_eval_valid[CHANNEL_COUNT];
+
 /** Момент Diag_Init() — точка отсчёта грейс-периода на старте АЦП, см. diag.h. */
 static uint32_t s_boot_tick;
 
@@ -66,6 +71,8 @@ void Diag_Init(void)
     s_boot_tick = HAL_GetTick();
     for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
         s_alarm_beeped[ch] = false;
+        s_eval_valid[ch] = false;
+        s_eval_tick[ch] = 0;
         /* Фейл-сейф до первого достоверного замера: считаем нагреватель
          * исправным, чтобы не выдать ложную аварию на старте. Реальное
          * состояние приедет в первом же Diag_Poll(), если окно открыто. */
@@ -93,6 +100,13 @@ static bool adc_fault_detected(channel_id_t ch)
         no_conversion = since_ms > DIAG_ADC_STALE_MS;
     }
     return no_conversion;
+}
+
+bool Diag_IsSampleEvaluated(channel_id_t ch)
+{
+    return ADS1220_IsDataValid(ch)
+        && s_eval_valid[ch]
+        && (s_eval_tick[ch] == ADS1220_GetLastUpdateTick(ch));
 }
 
 void Diag_Poll(void)
@@ -131,6 +145,8 @@ void Diag_Poll(void)
 
         /* ---- RTD ---- */
         if (ADS1220_IsDataValid(ch)) {
+            s_eval_tick[ch] = ADS1220_GetLastUpdateTick(ch); /* отсчёт, по которому выносим вердикт ниже */
+            s_eval_valid[ch] = true;
             fixed_t t = ADS1220_GetTemperatureC(ch);
             rtd_state_t rtd;
 
@@ -142,6 +158,8 @@ void Diag_Poll(void)
                 rtd = RTD_STATE_OK;
             }
             Error_SetRtdState(ch, rtd);
+        } else {
+            s_eval_valid[ch] = false;
         }
         /* Конверсий ещё не было — RTD не оцениваем, чтобы стартовый ноль
          * не прочитался как КЗ (см. diag.h). */

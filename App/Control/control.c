@@ -10,6 +10,7 @@
 #include "settings.h"
 #include "sleep.h"
 #include "error.h"
+#include "diag.h"
 #include "ads1220.h"
 #include "main.h"          /* Solder_On/Desolder_On — GPIO порт/пин */
 #include "stm32f4xx_hal.h"
@@ -205,8 +206,11 @@ static void pid_step(channel_id_t ch, fixed_t setpoint, fixed_t true_setpoint, f
 
 static void poll_channel(channel_id_t ch)
 {
-    /* Нет валидного отсчёта АЦП — греть вслепую нельзя, fail-safe off. */
-    if (!ADS1220_IsDataValid(ch)) {
+    /* Нет валидного отсчёта АЦП — греть вслепую нельзя, fail-safe off. Тот же
+     * отказ, если Diag ещё не оценил ПОСЛЕДНИЙ отсчёт (иначе Error относился бы
+     * к предыдущему измерению): при порядке ADS1220 -> Diag -> Control из main.c
+     * не срабатывает никогда, но делает порядок проверяемым, а не негласным. */
+    if (!ADS1220_IsDataValid(ch) || !Diag_IsSampleEvaluated(ch)) {
         force_off(ch);
         return;
     }
