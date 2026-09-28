@@ -29,19 +29,20 @@ void Beep_Init(void)
     pin_write(false);
 }
 
-void Beep_Alarm(void)
+bool Beep_Alarm(void)
 {
     /* Пункт меню "Bzzz" (см. menu.c/settings.h): при выключенном флаге
      * сигнал не играет. Единственная точка входа в модуль — проверка здесь. */
     if (!Settings_GetFlagBit(SETTINGS_FLAG_BUZZER_BIT)) {
-        return;
+        return true; /* намеренно подавлен — повторять запрос не нужно */
     }
     if (s_steps_left != 0) {
-        return; /* уже играет — не накладываем, см. beep.h */
+        return false; /* уже играет — не накладываем, см. beep.h; вызывающий повторит позже */
     }
     s_steps_left = BEEP_ALARM_HALF_STEPS;
     s_last_tick  = HAL_GetTick();
     pin_write(true); /* первый полупериод — сразу "вкл", без ожидания */
+    return true;
 }
 
 void Beep_Poll(void)

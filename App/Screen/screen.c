@@ -400,15 +400,18 @@ static void draw_divider(void)
 static uint16_t s_power_bar_fill_px[CHANNEL_COUNT];
 
 /** @brief Один сплошной сегмент гейджа (ширина фиксирована SCREEN_POWER_BAR_WIDTH), height==0 — no-op. */
-static void draw_power_bar_segment(uint16_t x0, uint16_t y0, uint16_t height, display_color_t color)
+static bool draw_power_bar_segment(uint16_t x0, uint16_t y0, uint16_t height, display_color_t color)
 {
-    if (height == 0U) return;
+    if (height == 0U) return true;
     if (Display_SetWindow(x0, y0, (uint16_t)(x0 + SCREEN_POWER_BAR_WIDTH - 1U),
                            (uint16_t)(y0 + height - 1U)) != DISPLAY_OK) {
-        return;
+        return false;
     }
-    Display_FillColorDMA(color, (uint32_t)SCREEN_POWER_BAR_WIDTH * height);
+    if (Display_FillColorDMA(color, (uint32_t)SCREEN_POWER_BAR_WIDTH * height) != DISPLAY_OK) {
+        return false;
+    }
     while (Display_IsBusy()) { } /* редкое событие — только когда сглаженный % реально сдвинул пиксель заполнения, см. вызов ниже */
+    return true;
 }
 
 /**
@@ -435,9 +438,11 @@ static void update_power_gauge(channel_id_t ch, uint16_t bar_x0)
     }
 
     uint16_t track_height = (uint16_t)(SCREEN_POWER_BAR_HEIGHT - fill_px);
-    draw_power_bar_segment(bar_x0, SCREEN_POWER_BAR_Y0, track_height, COLOR_POWER_TRACK);
-    draw_power_bar_segment(bar_x0, (uint16_t)(SCREEN_POWER_BAR_Y0 + track_height), fill_px, COLOR_POWER_FILL);
-    s_power_bar_fill_px[ch] = fill_px;
+    bool ok = draw_power_bar_segment(bar_x0, SCREEN_POWER_BAR_Y0, track_height, COLOR_POWER_TRACK);
+    ok = draw_power_bar_segment(bar_x0, (uint16_t)(SCREEN_POWER_BAR_Y0 + track_height), fill_px, COLOR_POWER_FILL) && ok;
+    if (ok) {
+        s_power_bar_fill_px[ch] = fill_px; /* при ошибке не фиксируем — следующий вызов перерисует */
+    }
 }
 
 /**
@@ -469,9 +474,9 @@ static const uint16_t s_sleep_icon_bitmap[SLEEP_ICON_H] = {
  *        каждый кадр). Буфер на стеке — функция дожидается завершения DMA
  *        перед возвратом, буфер не переживёт функцию иначе.
  *
- * @return true, если реально нарисована (Display_SetWindow() успешен).
- *         false — окно не выставилось (например, DISPLAY_ERROR); ничего
- *         не нарисовано. Вызывающий код (update_sleep_status()) ОБЯЗАН
+ * @return true, если реально нарисована (Display_SetWindow() и запуск DMA
+ *         успешны). false — окно не выставилось или DMA не стартовал
+ *         (DISPLAY_ERROR); иконка не нарисована (или нарисована частично). Вызывающий код (update_sleep_status()) ОБЯЗАН
  *         проверять результат и не фиксировать s_sleep_icon_shown[]/
  *         s_sleep_icon_x[] как "нарисовано", если он false — иначе
  *         состояние разъезжается с реальным экраном НАВСЕГДА (следующий
@@ -494,7 +499,9 @@ static bool draw_sleep_icon(uint16_t x, uint16_t y)
     if (Display_SetWindow(x, y, (uint16_t)(x + SLEEP_ICON_W - 1U), (uint16_t)(y + SLEEP_ICON_H - 1U)) != DISPLAY_OK) {
         return false;
     }
-    Display_WritePixelsDMA(buf, (uint32_t)SLEEP_ICON_W * SLEEP_ICON_H);
+    if (Display_WritePixelsDMA(buf, (uint32_t)SLEEP_ICON_W * SLEEP_ICON_H) != DISPLAY_OK) {
+        return false;
+    }
     while (Display_IsBusy()) { }
     return true;
 }
@@ -514,7 +521,9 @@ static bool erase_sleep_icon(uint16_t x, uint16_t y)
     if (Display_SetWindow(x, y, (uint16_t)(x + SLEEP_ICON_W - 1U), (uint16_t)(y + SLEEP_ICON_H - 1U)) != DISPLAY_OK) {
         return false;
     }
-    Display_FillColorDMA(COLOR_BG, (uint32_t)SLEEP_ICON_W * SLEEP_ICON_H);
+    if (Display_FillColorDMA(COLOR_BG, (uint32_t)SLEEP_ICON_W * SLEEP_ICON_H) != DISPLAY_OK) {
+        return false;
+    }
     while (Display_IsBusy()) { }
     return true;
 }
@@ -547,7 +556,9 @@ static bool draw_idle_cross(uint16_t x, uint16_t y)
         if (Display_SetWindow(x, (uint16_t)(y + row), (uint16_t)(x + size - 1U), (uint16_t)(y + row)) != DISPLAY_OK) {
             return false;
         }
-        Display_WritePixelsDMA(s_row_buf, size);
+        if (Display_WritePixelsDMA(s_row_buf, size) != DISPLAY_OK) {
+            return false;
+        }
         while (Display_IsBusy()) { }
     }
     return true;
@@ -561,7 +572,9 @@ static bool erase_idle_cross(uint16_t x, uint16_t y)
                            (uint16_t)(y + SCREEN_IDLE_CROSS_SIZE - 1U)) != DISPLAY_OK) {
         return false;
     }
-    Display_FillColorDMA(COLOR_BG, (uint32_t)SCREEN_IDLE_CROSS_SIZE * SCREEN_IDLE_CROSS_SIZE);
+    if (Display_FillColorDMA(COLOR_BG, (uint32_t)SCREEN_IDLE_CROSS_SIZE * SCREEN_IDLE_CROSS_SIZE) != DISPLAY_OK) {
+        return false;
+    }
     while (Display_IsBusy()) { }
     return true;
 }
@@ -586,7 +599,9 @@ static bool draw_asleep_icon(uint16_t x, uint16_t y)
                            (uint16_t)(y + SLEEP_ICON_BITMAP_H - 1U)) != DISPLAY_OK) {
         return false;
     }
-    Display_WritePixelsDMA(SleepIcon_Bitmap, (uint32_t)SLEEP_ICON_BITMAP_W * SLEEP_ICON_BITMAP_H);
+    if (Display_WritePixelsDMA(SleepIcon_Bitmap, (uint32_t)SLEEP_ICON_BITMAP_W * SLEEP_ICON_BITMAP_H) != DISPLAY_OK) {
+        return false;
+    }
     while (Display_IsBusy()) { }
     return true;
 }
@@ -599,7 +614,9 @@ static bool erase_asleep_icon(uint16_t x, uint16_t y)
                            (uint16_t)(y + SLEEP_ICON_BITMAP_H - 1U)) != DISPLAY_OK) {
         return false;
     }
-    Display_FillColorDMA(COLOR_BG, (uint32_t)SLEEP_ICON_BITMAP_W * SLEEP_ICON_BITMAP_H);
+    if (Display_FillColorDMA(COLOR_BG, (uint32_t)SLEEP_ICON_BITMAP_W * SLEEP_ICON_BITMAP_H) != DISPLAY_OK) {
+        return false;
+    }
     while (Display_IsBusy()) { }
     return true;
 }

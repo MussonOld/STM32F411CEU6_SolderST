@@ -33,6 +33,13 @@ static uint8_t s_flags;
 static bool     s_dirty = false;
 static uint32_t s_last_change_tick = 0;
 
+/* Пауза между повторами записи после неудачи (EEPROM/I2C мертвы): без неё
+ * каждый проход главного цикла запускал бы блокирующую I2C-транзакцию с
+ * тайм-аутами. */
+#define SETTINGS_SAVE_RETRY_MS 5000U
+static bool     s_retry_wait = false;
+static uint32_t s_retry_tick = 0;
+
 /* ---- Разметка EEPROM ----
  * addr 0-1 : magic (0xA55A) — признак "данные записаны полностью". При
  *            сохранении сначала обнуляется (инвалидация), затем пишутся
@@ -485,8 +492,15 @@ void Settings_Poll(void)
     if (!s_dirty) {
         return;
     }
-    if ((HAL_GetTick() - s_last_change_tick) >= SETTINGS_SAVE_DELAY_MS) {
-        Settings_Save(); /* при неудаче s_dirty намеренно остаётся true — попробуем на следующем Poll */
+    uint32_t now = HAL_GetTick();
+    if (s_retry_wait && (now - s_retry_tick) < SETTINGS_SAVE_RETRY_MS) {
+        return;
+    }
+    if ((now - s_last_change_tick) >= SETTINGS_SAVE_DELAY_MS) {
+        /* при неудаче s_dirty намеренно остаётся true — повтор не раньше
+         * чем через SETTINGS_SAVE_RETRY_MS */
+        s_retry_wait = !Settings_Save();
+        s_retry_tick = now;
     }
 }
 
