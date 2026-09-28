@@ -150,6 +150,7 @@ static void perform_reset(void)
     channel_id_t ch = InputFSM_GetActiveChannel();
     if (s_level == MENU_LEVEL_USER) {
         Settings_ResetUserDefaults(ch);
+        Settings_ResetGlobalUserDefaults(); /* Bzzz — общий на оба канала */
     } else {
         Settings_ResetExpertDefaults(ch);
     }

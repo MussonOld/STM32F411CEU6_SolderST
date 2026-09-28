@@ -268,17 +268,22 @@ bool Settings_ResetToDefaults(void);
 /**
  * @brief Точечный сброс полей уровня User сервисного меню (см. menu.h) для
  *        ОДНОГО канала — PreslipTime, PreslipTemp, Standby — к значениям по
- *        умолчанию (тем же, что в Settings_Init()). Дополнительно сбрасывает
- *        и глобальный флаг Bzzz (SETTINGS_FLAG_BUZZER_BIT) в OFF — это общий
- *        на оба канала флаг, но пункт "Сброс" уровня User сбрасывает его
- *        тоже.
+ *        умолчанию (тем же, что в Settings_Init()). Глобальные поля (Bzzz)
+ *        НЕ трогает — для них Settings_ResetGlobalUserDefaults().
  *
  * В отличие от Settings_ResetToDefaults(), EEPROM НЕ стирается и другие
  * каналы/поля не трогаются — обычный путь через публичные сеттеры (клампинг
- * + отложенная запись через Settings_Poll(), как при обычном редактировании
- * из меню).
+ * + запись при выходе из меню, как при обычном редактировании).
  */
 void Settings_ResetUserDefaults(channel_id_t ch);
+
+/**
+ * @brief Сброс глобальных (общих на оба канала) полей уровня User сервисного
+ *        меню к значениям по умолчанию: флаг Bzzz (SETTINGS_FLAG_BUZZER_BIT)
+ *        в OFF. Пункт "Сброс" уровня User вызывает её вместе с
+ *        Settings_ResetUserDefaults(ch).
+ */
+void Settings_ResetGlobalUserDefaults(void);
 
 /**
  * @brief Точечный сброс полей уровня Expert сервисного меню (см. menu.h) для

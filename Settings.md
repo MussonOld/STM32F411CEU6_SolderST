@@ -72,7 +72,8 @@
 | `Settings_Load()` | Загрузить конфиг из EEPROM в RAM, вызывать один раз при старте. Возвращает `SettingsLoadStatus_t` |
 | `Settings_ResetToDefaults()` | Стереть EEPROM целиком и записать дефолты — тот же путь восстановления, что и при `Settings_Load()` с невалидными данными. ⚠️ Сейчас нигде не вызывается: пункт "Сброс" в сервисном меню использует точечные `Settings_ResetUserDefaults()`/`Settings_ResetExpertDefaults()` (см. ниже) — они не трогают EEPROM целиком и не задевают другие поля/каналы |
 | `Settings_Init()` | Установить значения по умолчанию всем каналам (не трогает EEPROM) |
-| `Settings_ResetUserDefaults(ch)` | Точечный сброс полей уровня User (пресеты 1/2/3, PresleepTemp, PreSleepTimeout, SleepTimeout) для одного канала к дефолтам `Settings_Init()`; также сбрасывает глобальный флаг `SETTINGS_FLAG_BUZZER_BIT`. EEPROM не стирается — обычный путь через сеттеры (клампинг + отложенная запись). Используется пунктом "Сброс" сервисного меню (User) |
+| `Settings_ResetUserDefaults(ch)` | Точечный сброс полей уровня User (пресеты 1/2/3, PresleepTemp, PreSleepTimeout, SleepTimeout) для одного канала к дефолтам `Settings_Init()`. Глобальные поля не трогает. EEPROM не стирается — обычный путь через сеттеры (клампинг; запись при выходе из меню). Используется пунктом "Сброс" сервисного меню (User) |
+| `Settings_ResetGlobalUserDefaults()` | Сброс глобальных (общих на оба канала) полей уровня User: флаг `SETTINGS_FLAG_BUZZER_BIT` в OFF. Вызывается пунктом "Сброс" сервисного меню (User) вместе с `Settings_ResetUserDefaults(ch)` |
 | `Settings_ResetExpertDefaults(ch)` | Точечный сброс Kp/Ki/Kd/Slope/Bias для одного канала к дефолтам. EEPROM не стирается. Используется пунктом "Сброс" сервисного меню (Expert) |
 
 ## Связь с другими модулями

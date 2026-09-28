@@ -621,7 +621,11 @@ void Settings_ResetUserDefaults(channel_id_t ch)
     Settings_SetPresleepTemp(ch, SETTINGS_DEFAULT_PRESLEEP_TEMP);
     Settings_SetPreSleepTimeout(ch, SETTINGS_DEFAULT_PRE_SLEEP_TIMEOUT);
     Settings_SetSleepTimeout(ch, SETTINGS_DEFAULT_SLEEP_TIMEOUT);
-    Settings_SetFlagBit(SETTINGS_FLAG_BUZZER_BIT, false); /* глобальный флаг — см. докстринг в settings.h */
+}
+
+void Settings_ResetGlobalUserDefaults(void)
+{
+    Settings_SetFlagBit(SETTINGS_FLAG_BUZZER_BIT, false);
 }
 
 void Settings_ResetExpertDefaults(channel_id_t ch)

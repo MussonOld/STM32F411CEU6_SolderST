@@ -26,7 +26,8 @@
  * меню для ТЕКУЩЕГО активного канала (Settings_ResetUserDefaults() /
  * Settings_ResetExpertDefaults() — точечно, EEPROM не стирается, в отличие
  * от Settings_ResetToDefaults()). На уровне User сброс также затрагивает
- * глобальный флаг Bzzz (общий на оба канала).
+ * глобальный флаг Bzzz (общий на оба канала) — отдельным вызовом
+ * Settings_ResetGlobalUserDefaults().
  *
  * Требует подтверждения: короткий SET2 на пункте "Сброс" переводит в режим
  * подтверждения (Menu_IsShowingResetConfirm()) — короткий SET2 в этом режиме
