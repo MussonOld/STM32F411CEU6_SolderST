@@ -26,7 +26,11 @@ void Pump_Init(void)
 
 void Pump_Poll(void)
 {
-    /* Btn_Pump активная низкая: нажата = RESET. */
+    /* Btn_Pump активная низкая: нажата = RESET.
+     * НАМЕРЕННО читается сырым уровнем, без дебаунса: насос должен реагировать
+     * сразу. Тот же пин читает и Sleep (sleep.c, read_raw_idle()), но там
+     * СОЗНАТЕЛЬНО с дебаунсом — дребезг не должен сбрасывать таймер простоя.
+     * Два чтения одного входа — разные контракты; не унифицировать (см. pump.h). */
     bool pressed = (HAL_GPIO_ReadPin(Btn_Pump_GPIO_Port, Btn_Pump_Pin) == GPIO_PIN_RESET);
     bool allowed = State_IsEnabled(CHANNEL_DESOLDER)
                 && !Error_IsChannelBlocked(CHANNEL_DESOLDER);
