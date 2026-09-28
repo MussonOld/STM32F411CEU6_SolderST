@@ -1,7 +1,6 @@
 # STM32CubeIDE - служебные папки
 .metadata/
 /Debug/
-Release/
 *.launch
 
 # Сборка и объектные файлы
