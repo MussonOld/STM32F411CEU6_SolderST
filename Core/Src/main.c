@@ -227,7 +227,14 @@ int main(void)
     }
 
     InputFSM_Poll();
-    Settings_Poll();  /* отложенная запись в EEPROM — сама решает, когда физически писать */
+    /* Отложенная запись в EEPROM — сама решает, когда физически писать. В
+     * сервисном меню НЕ вызывается: правки меню пишутся одной транзакцией при
+     * выходе (fsm.c: exit_service_to_main() -> Settings_Save()), см. menu.h. Если
+     * питание пропадёт посреди сессии меню, в EEPROM останется состояние до её
+     * начала. */
+    if (InputFSM_GetScreenMode() != SCREEN_MODE_SERVICE) {
+        Settings_Poll();
+    }
     Error_Poll();     /* таймер транзитного сообщения EEPROM в инфозоне */
 
     if (HAL_GetTick() - screen_update_last_tick >= SCREEN_UPDATE_MS) {

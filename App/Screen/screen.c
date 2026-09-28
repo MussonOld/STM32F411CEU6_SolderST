@@ -992,7 +992,10 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
     if (enabled && !Error_IsChannelBlocked(ch) && Sleep_GetMode(ch) == SLEEP_MODE_PRESLEEP) {
         /* В PRESLEEP реально применяется min(уставка, PresleepTemp), см.
          * Control_PresleepSetpoint() — для визуального контроля показываем именно её.
-         * При выходе из PRESLEEP (любая активность) снова возвращается уставка. */
+         * Из PRESLEEP канал выходит только по активности на входах Sleep —
+         * инструмент снят с подставки (Dock) или нажата кнопка помпы (Btn_Pump),
+         * а также при включении канала (Sleep_ForceAwake()); тогда снова
+         * показывается уставка. */
         target = (uint16_t)FIXED_TO_INT(Control_PresleepSetpoint(ch, FIXED_FROM_INT(target)));
     }
     TextField_PrintfCentered(line_target, center_x, "%u", (unsigned)target);

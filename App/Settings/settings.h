@@ -217,6 +217,8 @@ bool Settings_Save(void);
  * Если было изменение (любым Settings_Set*) и с него прошло не менее
  * SETTINGS_SAVE_DELAY_MS без новых изменений — выполняет Settings_Save().
  * Не блокирует, если сохранять нечего (просто сравнение по HAL_GetTick()).
+ * main.c не вызывает её, пока открыто сервисное меню: правки меню пишутся
+ * одним Settings_Save() при выходе (см. menu.h).
  */
 void Settings_Poll(void);
 
