@@ -61,7 +61,7 @@ void InputFSM_Init(void);
  * Settings_Load(), до входа в главный цикл. Без этого State_SetpointTemp
  * остаётся 0 (дефолт State_Init()) до первого нажатия SET/UP/DN, хотя экран
  * (читает Settings напрямую) и Settings уже показывают загруженное значение
- * — рассинхрон State/Settings, который заметен будущему Control/PID, если
+ * — рассинхрон State/Settings, который заметен Control/PID, если
  * тот читает State_GetSetpointTemp() до первого нажатия кнопки.
  */
 void InputFSM_SyncStateFromSettings(void);

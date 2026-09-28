@@ -59,28 +59,25 @@ extern "C" {
 
 /**
  * @brief Масштаб хранения Slope: реальное значение = Settings_GetSlope(ch) / SETTINGS_SLOPE_SCALE
- * @note Диапазон ВРЕМЕННЫЙ (назначен без уточнения от пользователя, см. чат) —
- *       уточнить позже. Нижняя граница обязана быть > 0: slope используется
+ * @note Нижняя граница обязана быть > 0: slope используется
  *       как делитель в формуле t=(R-bias)/slope, ноль недопустим.
  */
 #define SETTINGS_SLOPE_SCALE  (1000U)
 #define SETTINGS_SLOPE_MIN    (1U)      /* реальное 0.001 — минимум, чтобы не было деления на 0 */
-#define SETTINGS_SLOPE_MAX    (10000U)  /* реальное 10.0 — ВРЕМЕННО, уточнить */
+#define SETTINGS_SLOPE_MAX    (10000U)  /* реальное 10.0 */
 
 /**
  * @brief Масштаб хранения Bias: реальное значение = Settings_GetBias(ch) / SETTINGS_BIAS_SCALE
- * @note Диапазон ВРЕМЕННЫЙ, уточнить позже.
  */
 #define SETTINGS_BIAS_SCALE  (10U)
 #define SETTINGS_BIAS_MIN    (0U)
-#define SETTINGS_BIAS_MAX    (1000U)  /* реальное 100.0 — ВРЕМЕННО, уточнить */
+#define SETTINGS_BIAS_MAX    (1000U)  /* реальное 100.0 */
 
 /**
- * @brief Диапазон коэффициентов PID.
- * @note ВРЕМЕННЫЙ (масштаб/единицы Kp/Ki/Kd ещё не определены) — уточнить позже.
+ * @brief Диапазон коэффициентов PID (масштаб и единицы — см. CONTROL_PID_SCALE в control.h).
  */
 #define SETTINGS_PID_MIN  (0U)
-#define SETTINGS_PID_MAX  (10000U)  /* ВРЕМЕННО, уточнить */
+#define SETTINGS_PID_MAX  (10000U)
 
 /**
  * @brief Номер пресета
@@ -96,7 +93,7 @@ typedef enum {
  * @brief Результат Settings_Load() — три разных причины, а не один bool
  *
  * Разделены специально: IO_ERROR и INVALID требуют разной реакции наверху
- * (например, будущего Error-модуля). IO_ERROR — микросхема не отвечает,
+ * (например, модуля Error). IO_ERROR — микросхема не отвечает,
  * с данными в EEPROM всё может быть в порядке, просто сейчас не достучаться.
  * INVALID — связь рабочая, но то, что там лежит, не заслуживает доверия
  * (magic/checksum не сошлись — новый/заменённый чип, либо повреждение;
@@ -121,8 +118,6 @@ typedef enum {
  * см. control.h), slope/bias = 75 / 208 (откалиброваны по термопаре, номинал
  * по формуле датчика — 72 / 217; см. SETTINGS_SLOPE_SCALE/SETTINGS_BIAS_SCALE),
  * flags=0.
- * Значения без явного задания от пользователя помечены в реализации как
- * временные — подлежат уточнению.
  */
 void Settings_Init(void);
 
@@ -150,7 +145,7 @@ uint16_t Settings_GetPresleepTemp(channel_id_t ch);
 /**
  * @brief Коэффициент наклона (Slope) линеаризации канала.
  * @note Хранится умноженным на SETTINGS_SLOPE_SCALE. Клампится к
- *       [SETTINGS_SLOPE_MIN, SETTINGS_SLOPE_MAX] (диапазон временный).
+ *       [SETTINGS_SLOPE_MIN, SETTINGS_SLOPE_MAX].
  */
 void     Settings_SetSlope(channel_id_t ch, uint16_t value);
 uint16_t Settings_GetSlope(channel_id_t ch);
@@ -158,7 +153,7 @@ uint16_t Settings_GetSlope(channel_id_t ch);
 /**
  * @brief Коэффициент смещения (Bias) линеаризации канала.
  * @note Хранится умноженным на SETTINGS_BIAS_SCALE. Клампится к
- *       [SETTINGS_BIAS_MIN, SETTINGS_BIAS_MAX] (диапазон временный).
+ *       [SETTINGS_BIAS_MIN, SETTINGS_BIAS_MAX].
  */
 void     Settings_SetBias(channel_id_t ch, uint16_t value);
 uint16_t Settings_GetBias(channel_id_t ch);
@@ -175,15 +170,15 @@ uint16_t Settings_GetSleepTimeout(channel_id_t ch);
 
 /* ---- Коэффициенты PID ---- */
 
-/** @brief Kp PID канала. Клампится к [SETTINGS_PID_MIN, SETTINGS_PID_MAX] (временно). */
+/** @brief Kp PID канала. Клампится к [SETTINGS_PID_MIN, SETTINGS_PID_MAX]. */
 void     Settings_SetKp(channel_id_t ch, uint16_t value);
 uint16_t Settings_GetKp(channel_id_t ch);
 
-/** @brief Ki PID канала. Клампится к [SETTINGS_PID_MIN, SETTINGS_PID_MAX] (временно). */
+/** @brief Ki PID канала. Клампится к [SETTINGS_PID_MIN, SETTINGS_PID_MAX]. */
 void     Settings_SetKi(channel_id_t ch, uint16_t value);
 uint16_t Settings_GetKi(channel_id_t ch);
 
-/** @brief Kd PID канала. Клампится к [SETTINGS_PID_MIN, SETTINGS_PID_MAX] (временно). */
+/** @brief Kd PID канала. Клампится к [SETTINGS_PID_MIN, SETTINGS_PID_MAX]. */
 void     Settings_SetKd(channel_id_t ch, uint16_t value);
 uint16_t Settings_GetKd(channel_id_t ch);
 
@@ -239,7 +234,7 @@ void Settings_Poll(void);
  *    → SETTINGS_LOAD_INVALID (даже если запись дефолтов обратно прошла
  *    успешно — сам факт невалидности сохраняется в результате, а не
  *    "гасится" последующим успешным восстановлением; ожидается, что
- *    вызывающий код — например, будущий Error-модуль — покажет
+ *    вызывающий код — например, модуль Error — показывает
  *    предупреждение об этом до конца текущего сеанса).
  *  - Связь успешна, magic/checksum сошлись, НО хотя бы одно поле вне
  *    своего допустимого диапазона (редкое, но реальное совпадение
@@ -262,8 +257,8 @@ SettingsLoadStatus_t Settings_Load(void);
  *        уровня) использует точечные Settings_ResetUserDefaults()/
  *        Settings_ResetExpertDefaults() ниже, которые не стирают EEPROM
  *        целиком и не трогают поля других каналов/уровня. Оставлена как
- *        публичная утилита полного сброса (например, для будущего пункта
- *        "заводские настройки" уровня Expert).
+ *        публичная утилита полного сброса (например, для пункта
+ *        "заводские настройки" уровня Expert, если он понадобится).
  * @return true — стирание и запись дефолтов прошли успешно
  */
 bool Settings_ResetToDefaults(void);

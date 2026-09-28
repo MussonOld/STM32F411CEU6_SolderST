@@ -24,8 +24,7 @@
 extern "C" {
 #endif
 
-/* Интервал между шагами при удержании — ВРЕМЕННЫЙ, не уточнялся, подобрать
- * по ощущениям на реальном железе. */
+/* Интервал между шагами при удержании, мс. */
 #define STEP_ACCEL_REPEAT_MS        (150U)
 #define STEP_ACCEL_STEP1_ITERATIONS (10U)
 #define STEP_ACCEL_STEP5_ITERATIONS (5U)

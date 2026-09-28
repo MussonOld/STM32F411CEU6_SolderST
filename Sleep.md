@@ -63,4 +63,4 @@
 - Тайминги читаются из `Settings` (`GetPreSleepTimeout`/`GetSleepTimeout`/`GetPresleepTemp`) — см. `Settings.md`.
 - Отображается в инфозоне главного экрана через `Screen` (`update_sleep_status()`) — см. `Screen.md`.
 - `Fsm` вызывает `Sleep_ForceAwake(ch)` при включении канала аккордом UP+DN — см. `FSM.md`.
-- Влияние на нагрев/уставку — решение будущего модуля Control (PID), пока не задокументирован отдельно.
+- Влияние на нагрев/уставку — решение `Control` (`control.h`): в SLEEP нагрев отключён, в PRESLEEP уставка = `min(уставка, PresleepTemp)`.

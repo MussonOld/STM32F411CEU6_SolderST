@@ -170,13 +170,13 @@ enum {
  * на экран). Останавливаем линию с небольшим отступом сверху от SCREEN_PRESETS_Y. */
 #define SCREEN_DIVIDER_Y1   (SCREEN_PRESETS_Y - 6U)
 
-/* Гейдж мощности (см. чат) — узкая вертикальная колонка у разделителя,
+/* Гейдж мощности — узкая вертикальная колонка у разделителя,
  * "как у спиртового термометра": заполняется СНИЗУ ВВЕРХ на долю
  * Control_GetSmoothedPowerPct(ch)/100 от своей высоты, остаток сверху —
  * тусклый "трек" (видна вся шкала целиком даже при 0%, не только пустое
  * место). Та же вертикальная протяжённость, что и у статического
  * разделителя (SCREEN_INFO_HEIGHT..SCREEN_DIVIDER_Y1) — визуально одна
- * группа с ним. Ширина/зазор — ВРЕМЕННО, поправить по факту на экране. */
+ * группа с ним. */
 #define SCREEN_POWER_BAR_WIDTH  (8U)
 #define SCREEN_POWER_BAR_GAP    (3U)  /* зазор от разделителя */
 #define SCREEN_POWER_BAR_Y0     (SCREEN_INFO_HEIGHT)
@@ -210,9 +210,8 @@ enum {
 #define SCREEN_FAULT_MSG2_Y ((uint16_t)(SCREEN_CURRENT_Y + SCREEN_TITLE_HEIGHT + SCREEN_FAULT_MSG2_GAP))
 
 /* "ВЫКЛ" (CHANNEL_CONTENT_DISABLED) — одна строка AntiquaB_32_uni,
- * вертикально по центру той же 67px CURRENT-полосы (см. чат — ВРЕМЕННО,
- * поправить по факту на экране: реальная высота глифов шрифта может не
- * совпадать с номиналом 32px из его имени). */
+ * вертикально по центру той же 67px CURRENT-полосы (реальная высота глифов
+ * шрифта может не совпадать с номиналом 32px из его имени). */
 #define SCREEN_DISABLED_HEIGHT (32U)
 #define SCREEN_DISABLED_MSG_Y ((uint16_t)(SCREEN_CURRENT_Y + (SCREEN_CURRENT_HEIGHT - SCREEN_DISABLED_HEIGHT) / 2U))
 
@@ -220,8 +219,7 @@ enum {
  * draw_idle_cross()) — растр, вычисляется на лету (не хранится константой,
  * в отличие от SLEEP_ICON_BITMAP — тут это просто тест "около диагонали",
  * ручками эту сетку не набирали). Квадрат, вписанный в CURRENT-полосу
- * (67px), с запасом по бокам для обеих половин экрана (~79px). ВРЕМЕННО —
- * поправить размер/толщину по факту на экране. */
+ * (67px), с запасом по бокам для обеих половин экрана (~79px). */
 #define SCREEN_IDLE_CROSS_SIZE      (48U)
 #define SCREEN_IDLE_CROSS_THICKNESS (4U)  /* полутолщина луча, см. draw_idle_cross() */
 #define SCREEN_IDLE_CROSS_Y ((uint16_t)(SCREEN_CURRENT_Y + (SCREEN_CURRENT_HEIGHT - SCREEN_IDLE_CROSS_SIZE) / 2U))
@@ -1025,8 +1023,7 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
  *                                                          достаточный сигнал (см. CHANNEL_CONTENT_ASLEEP в
  *                                                          update_channel_content()), отдельная
  *                                                          подпись "Спит" в инфозоне убрана (см. чат);
- *                                                          физического снижения нагрева при входе
- *                                                          в SLEEP пока нет — см. ниже
+ *                                                          нагрев в SLEEP отключает Control
  *
  * Текст всегда выравнивается по правому краю right_edge_x. Иконка
  * циферблата ставится СЛЕВА от него вплотную (зазор SLEEP_ICON_GAP_X),
