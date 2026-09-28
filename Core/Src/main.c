@@ -181,8 +181,7 @@ int main(void)
    * задокументированы как "вызывать с периодом ~10 мс", но без этого гейта
    * они опрашивались бы на каждой итерации главного цикла (единицы мкс),
    * и дебаунс в 3 стабильных опроса превращался бы в единицы мкс вместо
-   * заявленных 30 мс. Без дрейфа (см. также счётчик в предыдущей версии
-   * main.c) — += period, а не = HAL_GetTick(). */
+   * заявленных 30 мс. Без дрейфа — += period, а не = HAL_GetTick(). */
   uint32_t poll10ms_last_tick = HAL_GetTick();
 
   /* Отдельный дрейф-фри гейт на SCREEN_UPDATE_MS (30мс) для Screen_Update() —
@@ -216,7 +215,7 @@ int main(void)
 
         Pump_Poll();    /* тот же гейт 10мс — PUMP_POLL_MS == 10, после Diag_Poll()/Control_Poll(): читает уже обновлённые Error/State, см. pump.h */
 
-        Error_ReportPsuStatus(HAL_GPIO_ReadPin(Pok_GPIO_Port, Pok_Pin) == GPIO_PIN_RESET); /* Pok активный низкий; без дебаунса — см. чат, если на реальном железе окажется дребезг, добавить по образцу sleep.c */
+        Error_ReportPsuStatus(HAL_GPIO_ReadPin(Pok_GPIO_Port, Pok_Pin) == GPIO_PIN_RESET); /* Pok активный низкий; без дебаунса; если на реальном железе окажется дребезг, добавить по образцу sleep.c */
 
         /* Сторожевой — ПОСЛЕ Control_Poll(): зависание любого опроса выше, как
          * и остановка SysTick (гейт по HAL_GetTick), приводит к сбросу. */

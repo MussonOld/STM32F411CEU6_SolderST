@@ -12,9 +12,8 @@
  *                показывается ТОЛЬКО пока идёт обратный отсчёт (AWAKE/
  *                PRESLEEP) — скрыта и в AWAKE, когда таймер не идёт
  *                (remaining==0), и в SLEEP (там же пусто и без текста —
- *                иконка спящего смайлика на месте температуры уже
- *                достаточный сигнал, см. CHANNEL_CONTENT_ASLEEP; отдельная
- *                подпись "Спит" убрана, см. чат),
+ *                иконка спящего смайлика на месте температуры, см.
+ *                CHANNEL_CONTENT_ASLEEP),
  *                см. update_sleep_status()/s_sleep_icon_shown[]; по центру —
  *                сообщение EEPROM (Error_GetInfoZoneMessage()): транзитное
  *                ("сброшено на заводские", 5 сек) либо авария (весь
@@ -37,8 +36,8 @@
  *        RTD/нагреватель оборван — CURRENT пуст, FAULT_MSG/FAULT_MSG2 —
  *        текст по словам ("Обрыв"/"RTD", "Обрыв"/"нагревателя", "КЗ"/"RTD")
  *      - целевая температура прямо под ней, шрифт AntiquaB_18_uni, всегда
- *        числом независимо от неисправности (ВРЕМЕННО — по ТЗ будет
- *        убрана позже)
+ *        числом независимо от неисправности (отладочное поле на период
+ *        опытной эксплуатации)
  *  - строка пресетов внизу, шрифт AntiquaB_24_uni, ТРИ отдельных поля
  *    (не одна строка) — пресеты активного канала:
  *      - preset1: TextField_Printf(), фиксированный x=10 от левого края
@@ -96,7 +95,7 @@
 enum {
     LINE_INFO = 0,
     LINE_SOLDER_TITLE,
-    LINE_SOLDER_CURRENT,      /* число, шрифт Comic_60_dig — непусто в NORMAL и ASLEEP ("--") */
+    LINE_SOLDER_CURRENT,      /* число, шрифт Comic_60_dig — непусто только в CHANNEL_CONTENT_NORMAL */
     LINE_SOLDER_FAULT_MSG,    /* 1-я строка "Обрыв"/"КЗ"/"ERR", шрифт AntiquaB_18_uni — непусто только в CHANNEL_CONTENT_FAULT */
     LINE_SOLDER_FAULT_MSG2,   /* 2-я строка ("RTD"/"нагревателя"/"AD1220") — см. print_fault_message_2line() */
     LINE_SOLDER_DISABLED_MSG, /* "ВЫКЛ", шрифт AntiquaB_32_uni — непусто только в CHANNEL_CONTENT_DISABLED */
@@ -132,12 +131,10 @@ enum {
 #define SCREEN_DIVIDER_X1   (160U) /* разделитель 2px шириной: X0..X1 включительно */
 
 #define SCREEN_TITLE_Y      (36U)
-/* Раньше — высота шрифта AntiquaB_18_uni (текстовые заголовки "Паяльник"/
- * "Отсос"). Теперь оба заголовка — иконки (см. чат, solder_icon.h/
- * desolder_icon.h), взята высота более высокой из двух (Desolder, 31px
- * после ужатия до 120px по ширине), чтобы CURRENT-блок начинался на одном
- * и том же Y в обеих половинах экрана — иконка Solder (17px) центрируется
- * по вертикали в той же полосе, не растягиваясь. */
+/* Высота титульной полосы — высота более высокой из двух иконок заголовков
+ * (Desolder, 31px при ширине 120px), чтобы CURRENT-блок начинался на одном
+ * и том же Y в обеих половинах экрана; иконка Solder (17px) центрируется по
+ * вертикали в той же полосе, не растягиваясь. */
 #define SCREEN_TITLE_HEIGHT ((DESOLDER_ICON_BITMAP_H > SOLDER_ICON_BITMAP_H) ? DESOLDER_ICON_BITMAP_H : SOLDER_ICON_BITMAP_H)
 
 /* Центры половин экрана — используются TextField_PrintfCentered() для
@@ -145,16 +142,14 @@ enum {
 #define SCREEN_HALF_CENTER_LEFT_X   ((SCREEN_DIVIDER_X0) / 2U)
 #define SCREEN_HALF_CENTER_RIGHT_X  (SCREEN_DIVIDER_X1 + 1U + SCREEN_HALF_CENTER_LEFT_X)
 
-/* Иконки заголовков (растры SolderIcon_Bitmap/DesolderIcon_Bitmap, см.
- * solder_icon.h/desolder_icon.h) вместо текста "Паяльник"/"Отсос" (см. чат)
- * — центрируются по X тем же center_x, что и CURRENT/TARGET своей половины,
- * и по Y — внутри общей титульной полосы (SCREEN_TITLE_HEIGHT, взята по
- * более высокой из двух иконок), а не по общему верхнему краю: иконки
- * разной высоты (17 и 31px после ужатия до 120px по ширине, см. чат) иначе
- * не совпадали бы по центру, хоть и совпадали бы по верху. */
+/* Иконки заголовков каналов (растры SolderIcon_Bitmap/DesolderIcon_Bitmap, см.
+ * solder_icon.h/desolder_icon.h) центрируются по X тем же center_x, что и
+ * CURRENT/TARGET своей половины, и по Y — внутри общей титульной полосы
+ * (SCREEN_TITLE_HEIGHT), а не по общему верхнему краю: иконки разной высоты
+ * (17 и 31px при ширине 120px) иначе не совпадали бы по центру. */
 #define SCREEN_SOLDER_ICON_X   ((uint16_t)(SCREEN_HALF_CENTER_LEFT_X  - SOLDER_ICON_BITMAP_W   / 2U))
 #define SCREEN_DESOLDER_ICON_X ((uint16_t)(SCREEN_HALF_CENTER_RIGHT_X - DESOLDER_ICON_BITMAP_W / 2U))
-#define SCREEN_SOLDER_ICON_Y   ((uint16_t)(SCREEN_TITLE_Y + (SCREEN_TITLE_HEIGHT - SOLDER_ICON_BITMAP_H)   / 2U + 5U)) /* +5px вручную, см. чат */
+#define SCREEN_SOLDER_ICON_Y   ((uint16_t)(SCREEN_TITLE_Y + (SCREEN_TITLE_HEIGHT - SOLDER_ICON_BITMAP_H)   / 2U + 5U)) /* +5px — ручная подгонка по месту */
 #define SCREEN_DESOLDER_ICON_Y ((uint16_t)(SCREEN_TITLE_Y + (SCREEN_TITLE_HEIGHT - DESOLDER_ICON_BITMAP_H) / 2U))
 
 #define SCREEN_PRESETS_Y (210U)
@@ -200,8 +195,8 @@ enum {
     ((SCREEN_TEMP_BAND_BOTTOM - SCREEN_TEMP_BAND_TOP) - SCREEN_TEMP_BLOCK_HEIGHT) / 2U))
 #define SCREEN_TARGET_Y  ((uint16_t)(SCREEN_CURRENT_Y + SCREEN_CURRENT_HEIGHT + SCREEN_TEMP_GAP))
 
-/* Аварийное сообщение всегда в 2 строки (2 слова в одну не помещаются, см.
- * чат) — FAULT_MSG остаётся на позиции SCREEN_CURRENT_Y (как и раньше),
+/* Аварийное сообщение всегда в 2 строки (2 слова в одну не помещаются) —
+ * FAULT_MSG стоит на позиции SCREEN_CURRENT_Y,
  * FAULT_MSG2 — сразу под ней. SCREEN_TITLE_HEIGHT — высота шрифта
  * AntiquaB_18_uni (тем же шрифтом выводятся обе строки), небольшой зазор
  * между ними. До SCREEN_TARGET_Y ещё много места (CURRENT-блок посчитан
@@ -223,10 +218,10 @@ enum {
 #define SCREEN_IDLE_CROSS_SIZE      (48U)
 #define SCREEN_IDLE_CROSS_THICKNESS (4U)  /* полутолщина луча, см. draw_idle_cross() */
 #define SCREEN_IDLE_CROSS_Y ((uint16_t)(SCREEN_CURRENT_Y + (SCREEN_CURRENT_HEIGHT - SCREEN_IDLE_CROSS_SIZE) / 2U))
-#define COLOR_IDLE_CROSS DISPLAY_RGB565(120, 120, 120) /* см. чат — "пониженная контрастность, как и сейчас" (тусклее обычного текста) */
+#define COLOR_IDLE_CROSS DISPLAY_RGB565(120, 120, 120) /* пониженная контрастность — тусклее обычного текста */
 
 /* Иконка SLEEP (спящий смайлик, растр SleepIcon_Bitmap — см. sleep_icon.h)
- * вместо "--" в CHANNEL_CONTENT_ASLEEP (см. чат). Тот же принцип
+ * в CHANNEL_CONTENT_ASLEEP. Тот же принцип
  * центрирования по Y, что и у крестика IDLE (вписана в 67px CURRENT-полосу,
  * своя высота из sleep_icon.h вместо SCREEN_IDLE_CROSS_SIZE); по X —
  * центрируется на center_x своей половины экрана, как и крестик. */
@@ -241,19 +236,14 @@ enum {
  * выравнивается по правому краю (TextField_PrintfRightAligned), иконка —
  * ПЕРЕСЧИТЫВАЕТСЯ на каждое обновление по ФАКТИЧЕСКОЙ ширине текущего
  * текста таймера (см. update_sleep_status()), а не по одной статичной
- * позиции под "худший случай" — раньше расчёт брал самый широкий из
- * реальных текстов ("Предсон"/"99:59") и добавлял ручной сдвиг
- * SLEEP_ICON_X_OFFSET вправо, к более узкому обычному "M:SS", но это
- * означало, что при РЕАЛЬНОМ показе широкого текста ("Предсон") его
- * прямоугольник перекрывал область иконки и стирал её пикселями текста
- * (см. историю бага — "у второго таймера пропал циферблат"). Пересчёт по
- * факту на каждый вызов гарантированно исключает такое наложение — зазор
+ * позиции под "худший случай" (иначе широкий текст, например "Предсон", перекрыл бы область иконки и стёр её).
+ * Пересчёт по факту на каждый вызов исключает наложение — зазор
  * SLEEP_ICON_GAP_X между иконкой и текстом всегда одинаковый, независимо
  * от длины текста. Работает независимо для каждого инструмента (своя
  * половина экрана, свои координаты — см. вызовы update_sleep_status()).
  * Сообщение EEPROM выводится от самого левого края (SCREEN_INFO_X), а не
- * от центра — см. чат: на SCREEN_INFO_EEPROM_X=100 оно визуально наезжало
- * на таймер паяльника (см. TextField_ConfigureLine(LINE_INFO, ...) ниже). */
+ * от центра — иначе оно наезжало бы на таймер паяльника (см.
+ * TextField_ConfigureLine(LINE_INFO, ...) ниже). */
 #define SCREEN_INFO_SLEEP_SOLDER_TEXT_RIGHT_EDGE_X   (SCREEN_DIVIDER_X0 - 6U)
 #define SCREEN_INFO_SLEEP_DESOLDER_TEXT_RIGHT_EDGE_X (SCREEN_WIDTH - 10U)
 
@@ -301,21 +291,19 @@ static channel_id_t s_last_active_channel;
 
 /**
  * @brief Взаимоисключающие состояния содержимого CURRENT-блока канала
- *        (см. update_channel_content()) — раньше отслеживался только один
- *        bool (авария/не авария), теперь состояний пять, и переключение
- *        между ЛЮБОЙ парой требует того же гашения-и-ожидания-settled, что
- *        раньше делалось только для аварии (см. s_content_clearing ниже):
- *        каждое состояние рисует CURRENT-блок по-своему (число, "--",
- *        2-строчный текст аварии, "ВЫКЛ" отдельным полем, крестик отдельным
- *        растром — см. ADS1220_SETTLE ниже про растр), и они физически
- *        делят одну Y-полосу.
+ *        (см. update_channel_content()). Переключение между ЛЮБОЙ парой
+ *        состояний требует гашения текстовых полей и ожидания settled (см.
+ *        s_content_clearing ниже): каждое состояние рисует CURRENT-блок
+ *        по-своему (число, 2-строчный текст аварии, "ВЫКЛ" отдельным полем,
+ *        крестик и иконка сна — растрами), и все они физически делят одну
+ *        Y-полосу.
  */
 typedef enum {
     CHANNEL_CONTENT_NORMAL = 0, /* число текущей температуры (Comic_60_dig) */
     CHANNEL_CONTENT_FAULT,      /* авария — 2-строчное сообщение (AntiquaB_18_uni) */
     CHANNEL_CONTENT_IDLE,       /* инструмент не подключен — растровый крестик, без текста */
     CHANNEL_CONTENT_DISABLED,   /* канал выключен аккордом — "ВЫКЛ" (AntiquaB_32_uni) */
-    CHANNEL_CONTENT_ASLEEP,     /* SLEEP_MODE_SLEEP — растровая иконка (спящий смайлик, см. sleep_icon.h), раньше здесь было "--" */
+    CHANNEL_CONTENT_ASLEEP,     /* SLEEP_MODE_SLEEP — растровая иконка (спящий смайлик, см. sleep_icon.h) */
 } channel_content_t;
 
 static channel_content_t s_last_content[CHANNEL_COUNT]; /* чтобы перекрашивать title/current и гасить блок только при реальной смене состояния */
@@ -333,7 +321,7 @@ static display_color_t s_last_sleep_color[CHANNEL_COUNT]; /* чтобы пере
 static uint16_t s_sleep_icon_x[CHANNEL_COUNT]; /* x, по которому иконка РЕАЛЬНО сейчас нарисована на экране (актуален только пока s_sleep_icon_shown[ch]==true) — пересчитывается в update_sleep_status() */
 static bool s_sleep_icon_shown[CHANNEL_COUNT]; /* сейчас ли иконка реально нарисована на экране (скрыта, когда таймер не отображается) */
 static int32_t s_temp_shown[CHANNEL_COUNT];      /* целое, которое сейчас показывает CURRENT (актуально только при s_temp_shown_valid) */
-static bool    s_temp_shown_valid[CHANNEL_COUNT]; /* false, пока CURRENT показывает не число ("--"/авария) — следующее число берётся без гистерезиса */
+static bool    s_temp_shown_valid[CHANNEL_COUNT]; /* false, пока CURRENT показывает не число (авария/крестик/"ВЫКЛ"/иконка сна) — следующее число берётся без гистерезиса */
 
 /**
  * @brief Гистерезис вывода текущей температуры, °C.
@@ -369,7 +357,7 @@ static void apply_channel_colors(channel_id_t ch)
     }
 
     if (faulted) {
-        TextField_SetColors(line_title,   COLOR_FAULT, COLOR_BG); /* заголовок теперь иконка (см. draw_solder_icon()/draw_desolder_icon()), эта строка ничего не красит на экране — no-op, оставлено чтобы не усложнять функцию веткой на канал */
+        TextField_SetColors(line_title,   COLOR_FAULT, COLOR_BG); /* заголовок — иконка (см. draw_solder_icon()/draw_desolder_icon()), эта строка ничего не красит на экране — no-op, оставлено чтобы не усложнять функцию веткой на канал */
         TextField_SetColors(line_current, COLOR_FAULT, COLOR_BG);
     } else {
         TextField_SetColors(line_title,   active ? COLOR_ACTIVE_TITLE   : COLOR_INACTIVE_TITLE,   COLOR_BG); /* тот же no-op, что и выше */
@@ -488,8 +476,7 @@ static const uint16_t s_sleep_icon_bitmap[SLEEP_ICON_H] = {
  *         s_sleep_icon_x[] как "нарисовано", если он false — иначе
  *         состояние разъезжается с реальным экраном НАВСЕГДА (следующий
  *         вызов решит, что иконка уже там, где её на самом деле нет, и
- *         не предпримет повторной попытки) — см. историю бага "у второго
- *         таймера пропал циферблат".
+ *         не предпримет повторной попытки).
  */
 static bool draw_sleep_icon(uint16_t x, uint16_t y)
 {
@@ -539,8 +526,7 @@ static bool erase_sleep_icon(uint16_t x, uint16_t y)
  *        s_sleep_icon_bitmap), тут нет готовой битовой сетки — тест "у
  *        диагонали" считается построчно, в СТАТИЧЕСКИЙ (не стековый) буфер
  *        на одну строку: полный буфер 48x48 пикселей (4.6 КБ) на стеке — в
- *        одном кадре с main()/Screen_Update() и без RTOS многовато (см. чат
- *        про IWDG/размер стека), одна строка (96 байт) безопасна.
+ *        одном кадре с main()/Screen_Update() и без RTOS многовато для стека, одна строка (96 байт) безопасна.
  *        Блокирующий построчный вывод — редкое событие (смена
  *        видимости), не каждый кадр, как и у циферблата.
  */
@@ -582,8 +568,8 @@ static bool erase_idle_cross(uint16_t x, uint16_t y)
 
 /**
  * @brief Нарисовать иконку SLEEP (спящий смайлик, готовый растр
- *        SleepIcon_Bitmap из sleep_icon.h/.c — RGB565, сгенерирован из PNG,
- *        см. чат). Тот же блокирующий паттерн, что и draw_sleep_icon()/
+ *        SleepIcon_Bitmap из sleep_icon.h/.c — RGB565, сгенерирован из PNG).
+ *        Тот же блокирующий паттерн, что и draw_sleep_icon()/
  *        draw_idle_cross() (редкое событие — вход в SLEEP, не каждый кадр).
  *        В отличие от них — данные уже готовы построчно в Flash, буфер (ни
  *        стековый, ни статический) не нужен, пишем прямо из константного
@@ -677,10 +663,8 @@ static void clear_screen_for_mode_switch(screen_mode_t new_mode)
          * растры рисуются сырым DMA в обход TextField, и TextField_InvalidateAll()
          * ниже про них не знает — не сбросив это здесь, ближайший
          * update_sleep_status()/update_channel_content() решил бы, что
-         * иконка/крестик уже на экране (raз "показана"=true с прошлого
-         * раза), и не перерисовал бы их на самом деле чистом фоне (см.
-         * чат — крестик не подключенного канала не появлялся после выхода
-         * из меню). */
+         * иконка/крестик уже на экране (раз "показана"=true с прошлого
+         * раза), и не перерисовал бы их на самом деле чистом фоне. */
         s_sleep_icon_shown[CHANNEL_SOLDER] = false;
         s_sleep_icon_shown[CHANNEL_DESOLDER] = false;
         s_idle_icon_shown[CHANNEL_SOLDER] = false;
@@ -701,8 +685,7 @@ static void clear_screen_for_mode_switch(screen_mode_t new_mode)
          * тоже (растр в обход TextField, TextField_InvalidateAll() ниже про
          * эти пиксели не знает и перерисовать некому) — без вызова здесь
          * заголовки исчезают насовсем после первого же переключения режима
-         * экрана (сервисное меню туда и обратно), ровно как раньше было бы
-         * с текстом. */
+         * экрана (сервисное меню туда и обратно). */
         draw_solder_icon();
         draw_desolder_icon();
     }
@@ -733,14 +716,14 @@ void Screen_Init(void)
      * рисовать; первый же вызов из Screen_Update() нарисует иконку по
      * месту, если нужно. */
 
-    /* LINE_SOLDER_TITLE больше не печатает текст (заголовок теперь иконка,
-     * см. draw_solder_icon()/apply_channel_colors()) — TextField-строка
-     * оставлена сконфигурированной просто чтобы TextField_SetColors() в
-     * apply_channel_colors() (сейчас безвредный no-op на пустой строке)
-     * не трогала неинициализированную линию; x/y и шрифт значения не имеют. */
+    /* LINE_SOLDER_TITLE текст не печатает (заголовок — иконка, см.
+     * draw_solder_icon()/apply_channel_colors()) — TextField-строка
+     * сконфигурирована только чтобы TextField_SetColors() в
+     * apply_channel_colors() (безвредный no-op на пустой строке) не трогал
+     * неинициализированную линию; x/y и шрифт значения не имеют. */
     TextField_ConfigureLine(LINE_SOLDER_TITLE, SCREEN_HALF_CENTER_LEFT_X, SCREEN_TITLE_Y,
                              &AntiquaB_18_uni, COLOR_ACTIVE_TITLE, COLOR_BG);
-    /* CURRENT остаётся Comic_60_dig, как и было — крупные цифры. Кириллицу
+    /* CURRENT — Comic_60_dig, крупные цифры. Кириллицу
      * этот шрифт не содержит физически, поэтому для текста об обрыве
      * заведено ОТДЕЛЬНОЕ поле FAULT_MSG (AntiquaB_18_uni), на той же
      * позиции — в любой момент содержимое имеет ровно одно из двух полей,
@@ -809,7 +792,7 @@ void Screen_Init(void)
 
 /**
  * @brief Аварийное сообщение всегда в 2 строки — 2 слова в одну строку не
- *        помещаются (см. чат). Делит msg по первому пробелу: "Обрыв
+ *        помещаются. Делит msg по первому пробелу: "Обрыв
  *        нагревателя" -> "Обрыв"/"нагревателя", "КЗ RTD" -> "КЗ"/"RTD".
  *        Однословных сообщений сейчас нет (см. error.c), но на случай
  *        появления — целиком в line1, line2 пустая.
@@ -872,7 +855,7 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
     bool idle    = Error_IsChannelIdle(ch); /* инструмент не подключен — не авария, крестик (см. draw_idle_cross()) */
     bool faulted = Error_IsChannelFaulted(ch); /* нужно для перекраски title/current в конце функции, см. apply_channel_colors() */
 
-    /* Приоритет состояний (см. чат): авария > idle > выключен аккордом >
+    /* Приоритет состояний: авария > idle > выключен аккордом >
      * спит (SLEEP_MODE_SLEEP) > обычное число. idle/fault физически не
      * пересекаются (Error_GetToolFault() — одно значение на канал, см.
      * error.h), остальные пары — независимые подсистемы (State/Sleep),
@@ -894,18 +877,17 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
      * ПОЯВЛЕНИИ более позднего по индексу поля порядок безопасен (CURRENT
      * первым гасится на "", остальные рисуют текст на уже пустом месте), а
      * вот при возврате К CURRENT порядок ломается: CURRENT (меньший индекс)
-     * рисуется первым и получает число/"--", а прежнее поле гасится только
+     * рисуется первым и получает число, а прежнее поле гасится только
      * ПОСЛЕ — и его стирание старого текста (та же Y-полоса!) затирает уже
      * нарисованное. Статичным порядком индексов это не решить (для
      * противоположного перехода порядок снова стал бы неверным) — поэтому на
      * самом переходе сначала гасим ВСЕ ТЕКСТОВЫЕ поля и ждём, пока реально
      * доиграет отрисовка (TextField_IsSettled()), и только потом на
-     * следующих вызовах рисуем настоящее новое содержимое (см. чат —
-     * "на месте записи остаётся незаполненное пространство").
+     * следующих вызовах рисуем настоящее новое содержимое.
      *
      * Крестик рисуется СЫРЫМ Display_WritePixelsDMA в обход TextField
      * (см. s_idle_icon_shown) — TextField не знает про эти пиксели и не
-     * сотрёт их сам ни на выходе из IDLE, ни держа старое "--"/число под
+     * сотрёт их сам ни на выходе из IDLE, ни держа старое число под
      * ним, поэтому erase_idle_cross() вызывается явно на выходе из IDLE,
      * ДО того как эта фаза гашения текстовых полей вообще запускается —
      * иначе крестик остаётся видимым поверх нового текста ещё один кадр. */
@@ -965,12 +947,11 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
                 TextField_PrintfCentered(line_disabled_msg, center_x, "ВЫКЛ");
                 break;
             case CHANNEL_CONTENT_ASLEEP:
-                /* SLEEP_MODE_SLEEP — вместо "--" растровая иконка (спящий
-                 * смайлик, см. sleep_icon.h/чат), сырым Display_WritePixelsDMA
-                 * в обход TextField — тот же паттерн, что и у крестика IDLE
-                 * (см. draw_idle_cross()/s_idle_icon_shown). Реального
-                 * снижения нагрева при входе в SLEEP по-прежнему нет (см.
-                 * Sleep.md) — иконка тут чисто индикация состояния. */
+                /* SLEEP_MODE_SLEEP — растровая иконка (спящий смайлик, см.
+                 * sleep_icon.h), сырым Display_WritePixelsDMA в обход
+                 * TextField — тот же паттерн, что и у крестика IDLE (см.
+                 * draw_idle_cross()/s_idle_icon_shown). Нагрев в SLEEP
+                 * отключает Control — иконка только индицирует состояние. */
                 if (!s_asleep_icon_shown[ch]) {
                     if (draw_asleep_icon(asleep_icon_x, SCREEN_ASLEEP_ICON_Y)) {
                         s_asleep_icon_shown[ch] = true;
@@ -1018,12 +999,9 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
  * AWAKE, remaining>0, PreSleepTimeout ВЫКЛЮЧЕН         -> "MM:SS" + иконка, красный — первый выключен, это уже "второй" (Sleep) таймер, стартует сразу по простою вместо первого
  * PRESLEEP, remaining==0 (SleepTimeout выключен)       -> "Предсон" + иконка (бессрочно, второго таймера нет), жёлтый
  * PRESLEEP, remaining>0 (первый уже сработал)          -> "MM:SS" + иконка, красный — отсчёт "второго" (Sleep) таймера, а не статичная "Предсон"
- * SLEEP                                                 -> "" (пусто), без иконки — растровая иконка
- *                                                          спящего смайлика на месте температуры уже
- *                                                          достаточный сигнал (см. CHANNEL_CONTENT_ASLEEP в
- *                                                          update_channel_content()), отдельная
- *                                                          подпись "Спит" в инфозоне убрана (см. чат);
- *                                                          нагрев в SLEEP отключает Control
+ * SLEEP                                                 -> "" (пусто), без иконки — состояние SLEEP
+ *                                                          показывает иконка на месте температуры (см.
+ *                                                          CHANNEL_CONTENT_ASLEEP в update_channel_content())
  *
  * Текст всегда выравнивается по правому краю right_edge_x. Иконка
  * циферблата ставится СЛЕВА от него вплотную (зазор SLEEP_ICON_GAP_X),
@@ -1038,9 +1016,8 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
  * settled, иконка вообще не трогается и остаётся там, где её поставили на
  * предыдущем settled-состоянии — это безопасно по определению: рядом с ней
  * тогда лежал именно тот текст, который сейчас ещё физически на экране
- * (новый buf, посчитанный чуть выше, туда ещё не долетел). См. историю
- * бага и докстринг TextField_GetShownWidth()/TextField_IsSettled() в
- * text_field.h.
+ * (новый buf, посчитанный чуть выше, туда ещё не долетел). См. докстринг
+ * TextField_GetShownWidth()/TextField_IsSettled() в text_field.h.
  */
 static void update_sleep_status(channel_id_t ch, uint8_t line, uint16_t right_edge_x)
 {
@@ -1079,11 +1056,9 @@ static void update_sleep_status(channel_id_t ch, uint8_t line, uint16_t right_ed
             else snprintf(buf, sizeof(buf), "%lu:%02lu", (unsigned long)min, (unsigned long)sec);
             break;
         case SLEEP_MODE_SLEEP:
-            /* Раньше был текст "Спит" + иконка рядом (нагрев уже отключён
-             * Control'ом) — убрали по запросу (см. чат): прочерков на месте
-             * температуры (CHANNEL_CONTENT_ASLEEP, см. update_channel_content())
-             * достаточно, отдельная подпись в инфозоне не нужна. Тот же
-             * "нечего показывать", что и у AWAKE/remaining==0. */
+            /* SLEEP показывает иконка на месте температуры
+             * (CHANNEL_CONTENT_ASLEEP, см. update_channel_content()), в
+             * инфозоне показывать нечего — как и у AWAKE/remaining==0. */
             buf[0] = '\0';
             timer_visible = false;
             break;

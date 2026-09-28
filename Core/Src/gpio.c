@@ -57,12 +57,7 @@ void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOA, Disp_DC_Pin|Disp_RST_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, BEEP_Pin, GPIO_PIN_RESET); /* ПОДТВЕРЖДЕНО (см. чат): зуммер активный ВЫСОКИЙ, не
-                                                          * низкий, как предполагалось раньше — на статическом
-                                                          * SET (впервые, после удаления heartbeat, который до
-                                                          * этого постоянно дёргал пин и маскировал залипание)
-                                                          * заорал непрерывно. Было GPIO_PIN_SET, исправлено на
-                                                          * GPIO_PIN_RESET. */
+  HAL_GPIO_WritePin(GPIOB, BEEP_Pin, GPIO_PIN_RESET); /* зуммер активный ВЫСОКИЙ — RESET = молчит */
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, Pump_On_Pin|Solder_On_Pin|Desolder_On_Pin|ADS1220_Solder_CS_Pin|ADS1220_Desolder_CS_Pin, GPIO_PIN_SET); /* Pump_On активный НИЗКИЙ — высокий = насос выключен, см. pump.h */
@@ -102,7 +97,7 @@ void MX_GPIO_Init(void)
   /*Configure GPIO pin : Pok_Pin */
   GPIO_InitStruct.Pin = Pok_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLUP; /* Power OK от блока питания, активный низкий (см. чат) —
+  GPIO_InitStruct.Pull = GPIO_PULLUP; /* Power OK от блока питания, активный низкий —
                                         * подтяжка на случай открытого стока на стороне БП; если
                                         * там push-pull, лишней подтяжка не мешает */
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
