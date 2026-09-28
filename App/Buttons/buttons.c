@@ -167,6 +167,17 @@ static void step_episode(uint8_t down_mask, uint32_t now)
 {
     uint8_t count = popcount8(down_mask);
 
+    /* "Передача с руки на руку": прежняя одиночная кнопка отпущена, а другая
+     * подтверждена в том же опросе — down_mask по-прежнему один бит, но уже
+     * чужой. Без этого эпизод продолжал бы жить с маской ПРЕЖНЕЙ кнопки:
+     * новое нажатие терялось (или long-press уходил с чужой маской). Закрываем
+     * эпизод прежней кнопки как обычно (short, если long не сработал) и ниже
+     * начинаем новый эпизод уже для новой. */
+    if ((s_episode == EPISODE_PENDING_CHORD || s_episode == EPISODE_SOLO) &&
+        count == 1 && down_mask != s_active_mask) {
+        finalize_episode();
+    }
+
     if (s_episode == EPISODE_NONE) {
         /* Начало нового эпизода */
         s_first_down_tick = now;
