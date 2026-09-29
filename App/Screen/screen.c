@@ -303,6 +303,11 @@ _Static_assert(SCREEN_PRESLEEP_ICON_Y + PRESLEEP_ICON_BITMAP_H <= SCREEN_SLEEP_T
 #define COLOR_INACTIVE_CURRENT DISPLAY_RGB565(90, 90, 90)
 #define COLOR_ACTIVE_TARGET    DISPLAY_RGB565(180, 180, 180)
 #define COLOR_INACTIVE_TARGET  DISPLAY_RGB565(60, 60, 60)
+/* Текущая температура в фазах сна (LINE_x_SLEEP_TEMP) — серая, тусклее
+ * обычного белого числа: канал не работает, число вторично к иконке.
+ * Активный/неактивный канал различаются яркостью, как и везде. */
+#define COLOR_ACTIVE_SLEEP_TEMP   DISPLAY_RGB565(150, 150, 150)
+#define COLOR_INACTIVE_SLEEP_TEMP DISPLAY_RGB565(60, 60, 60)
 #define COLOR_ACTIVE_PRESETS   DISPLAY_RGB565(255, 210, 0)
 #define COLOR_ACTIVE_TITLE     DISPLAY_RGB565(255, 255, 255)
 #define COLOR_INACTIVE_TITLE   DISPLAY_RGB565(90, 90, 90)
@@ -403,7 +408,7 @@ static void apply_channel_colors(channel_id_t ch)
          * пара, что и у CURRENT (авария и disabled взаимоисключающие, см.
          * update_channel_content(), так что faulted-ветку сюда заводить не нужно). */
         TextField_SetColors(line_disabled_msg, active ? COLOR_ACTIVE_CURRENT : COLOR_INACTIVE_CURRENT, COLOR_BG);
-        TextField_SetColors(line_sleep_temp, active ? COLOR_ACTIVE_CURRENT : COLOR_INACTIVE_CURRENT, COLOR_BG); /* температура в фазах сна — та же пара, что и большое число */
+        TextField_SetColors(line_sleep_temp, active ? COLOR_ACTIVE_SLEEP_TEMP : COLOR_INACTIVE_SLEEP_TEMP, COLOR_BG); /* температура в фазах сна — серая пара (см. COLOR_ACTIVE_SLEEP_TEMP) */
     }
 }
 
@@ -825,7 +830,7 @@ void Screen_Init(void)
     TextField_ConfigureLine(LINE_SOLDER_TARGET, SCREEN_HALF_CENTER_LEFT_X, SCREEN_TARGET_Y,
                              &AntiquaB_18_uni, COLOR_ACTIVE_TARGET, COLOR_BG);
     TextField_ConfigureLine(LINE_SOLDER_SLEEP_TEMP, SCREEN_HALF_CENTER_LEFT_X, SCREEN_SLEEP_TEMP_Y,
-                             &AntiquaB_32_uni, COLOR_ACTIVE_CURRENT, COLOR_BG);
+                             &AntiquaB_32_uni, COLOR_ACTIVE_SLEEP_TEMP, COLOR_BG);
 
     /* LINE_DESOLDER_TITLE — тот же no-op, что и у LINE_SOLDER_TITLE выше. */
     TextField_ConfigureLine(LINE_DESOLDER_TITLE, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_TITLE_Y,
@@ -841,7 +846,7 @@ void Screen_Init(void)
     TextField_ConfigureLine(LINE_DESOLDER_TARGET, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_TARGET_Y,
                              &AntiquaB_18_uni, COLOR_INACTIVE_TARGET, COLOR_BG);
     TextField_ConfigureLine(LINE_DESOLDER_SLEEP_TEMP, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_SLEEP_TEMP_Y,
-                             &AntiquaB_32_uni, COLOR_INACTIVE_CURRENT, COLOR_BG);
+                             &AntiquaB_32_uni, COLOR_INACTIVE_SLEEP_TEMP, COLOR_BG);
 
     TextField_ConfigureLine(LINE_PRESET_1, SCREEN_PRESET1_X, SCREEN_PRESETS_Y,
                              &AntiquaB_24_uni, COLOR_ACTIVE_PRESETS, COLOR_BG);
