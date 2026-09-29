@@ -59,12 +59,15 @@ extern "C" {
 
 /**
  * @brief Масштаб хранения Slope: реальное значение = Settings_GetSlope(ch) / SETTINGS_SLOPE_SCALE
- * @note Нижняя граница обязана быть > 0: slope используется
- *       как делитель в формуле t=(R-bias)/slope, ноль недопустим.
+ * @note Диапазон — не только "> 0" (slope делитель в t=(R-bias)/slope), но и
+ *       защита от переполнения fixed_t (Q16.16, ~±32767): при R-bias до
+ *       ~225 Ом (насыщение АЦП ~125 Ом минус Bias до 100 Ом) и SLOPE ниже
+ *       0.03 Ом/°C температура улетает в тысячи-десятки тысяч градусов.
+ *       Номинал по паспорту датчика — 0.072 Ом/°C (см. SETTINGS_DEFAULT_SLOPE).
  */
 #define SETTINGS_SLOPE_SCALE  (1000U)
-#define SETTINGS_SLOPE_MIN    (1U)      /* реальное 0.001 — минимум, чтобы не было деления на 0 */
-#define SETTINGS_SLOPE_MAX    (10000U)  /* реальное 10.0 */
+#define SETTINGS_SLOPE_MIN    (50U)   /* реальное 0.05 */
+#define SETTINGS_SLOPE_MAX    (100U)  /* реальное 0.1 */
 
 /**
  * @brief Масштаб хранения Bias: реальное значение = Settings_GetBias(ch) / SETTINGS_BIAS_SCALE
