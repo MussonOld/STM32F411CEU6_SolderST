@@ -102,7 +102,7 @@ enum {
     LINE_SOLDER_TITLE,
     LINE_SOLDER_CURRENT,      /* число, шрифт Comic_60_dig — непусто только в CHANNEL_CONTENT_NORMAL */
     LINE_SOLDER_FAULT_MSG,    /* 1-я строка "Обрыв"/"КЗ"/"ERR", шрифт AntiquaB_18_uni — непусто только в CHANNEL_CONTENT_FAULT */
-    LINE_SOLDER_FAULT_MSG2,   /* 2-я строка ("RTD"/"нагревателя"/"AD1220") — см. print_fault_message_2line() */
+    LINE_SOLDER_FAULT_MSG2,   /* 2-я строка ("RTD"/"нагревателя"/"ADS1220") — см. print_fault_message_2line() */
     LINE_SOLDER_DISABLED_MSG, /* "ВЫКЛ", шрифт AntiquaB_32_uni — непусто только в CHANNEL_CONTENT_DISABLED */
     LINE_SOLDER_TARGET,       /* уставка (ВРЕМЕННОЕ отладочное поле), опущена на SCREEN_TARGET_SHIFT_Y — в строку пресетов */
     LINE_SOLDER_SLEEP_TEMP,   /* текущая температура в PRESLEEP/SLEEP (AntiquaB_32_uni) — на прежнем месте уставки, под иконкой сна */
@@ -958,7 +958,7 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
     uint16_t asleep_icon_x = (uint16_t)(center_x - SLEEP_ICON_BITMAP_W / 2U);
     uint16_t presleep_icon_x = (uint16_t)(center_x - PRESLEEP_ICON_BITMAP_W / 2U);
 
-    const char *fault_msg = Error_GetChannelFaultMessage(ch); /* не NULL только для аварий: RTD_SHORT/RTD_OPEN/HEATER_OPEN/ERR AD1220 */
+    const char *fault_msg = Error_GetChannelFaultMessage(ch); /* не NULL только для аварий: RTD_SHORT/RTD_OPEN/HEATER_OPEN/ERR ADS1220 */
     bool enabled = State_IsEnabled(ch);
     bool idle    = Error_IsChannelIdle(ch); /* инструмент не подключен — не авария, крестик (см. draw_idle_cross()) */
     bool faulted = Error_IsChannelFaulted(ch); /* нужно для перекраски title/current в конце функции, см. apply_channel_colors() */

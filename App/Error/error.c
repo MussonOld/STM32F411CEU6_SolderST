@@ -162,7 +162,7 @@ bool Error_IsChannelAlarm(channel_id_t ch)
 const char *Error_GetChannelFaultMessage(channel_id_t ch)
 {
     switch (Error_GetToolFault(ch)) {
-        case TOOL_FAULT_ADC_FAULT:   return "ERR AD1220"; /* 2 строки на экране, см. print_fault_message_2line() в screen.c */
+        case TOOL_FAULT_ADC_FAULT:   return "ERR ADS1220"; /* 2 строки на экране, см. print_fault_message_2line() в screen.c */
         case TOOL_FAULT_RTD_SHORT:   return "КЗ RTD";
         case TOOL_FAULT_RTD_OPEN:    return "Обрыв RTD";
         case TOOL_FAULT_HEATER_OPEN: return "Обрыв нагревателя";
