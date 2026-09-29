@@ -34,7 +34,7 @@ FSM главного экрана: активный канал, разбор с�
 | Функция | Назначение |
 |---|---|
 | `InputFSM_Init()` | Активный канал = `CHANNEL_SOLDER`, режим = `SCREEN_MODE_MAIN` |
-| `InputFSM_SyncStateFromSettings()` | Отразить в `State` то, что реально загружено в `Settings`, для каждого канала. Вызвать ровно один раз при старте, сразу после `Settings_Load()`, до входа в главный цикл — иначе `State_GetSetpointTemp()` останется 0 (дефолт `State_Init()`) до первого нажатия кнопки, хотя `Settings` и экран уже показывают загруженное значение (рассинхрон, заметный будущему Control/PID) |
+| `InputFSM_SyncStateFromSettings()` | Отразить в `State` то, что реально загружено в `Settings`, для каждого канала. Вызвать ровно один раз при старте, сразу после `Settings_Load()`, до входа в главный цикл — иначе `State_GetSetpointTemp()` останется 0 (дефолт `State_Init()`) до первого нажатия кнопки, хотя `Settings` и экран уже показывают загруженное значение (рассинхрон, заметный `Control`, см. `Control.md`) |
 | `InputFSM_Poll()` | Один шаг: разобрать очередь событий `Buttons` + продвинуть авто-повтор UP/DN. Вызывать из главного цикла каждую итерацию, после `Buttons_Poll()` |
 | `InputFSM_GetActiveChannel()` | Текущий активный канал (для `Screen` — какую половину рисовать ярко) |
 | `InputFSM_GetScreenMode()` | Текущий режим экрана — `SCREEN_MODE_MAIN` / `SCREEN_MODE_SERVICE` (для `Screen` — что рисовать) |
