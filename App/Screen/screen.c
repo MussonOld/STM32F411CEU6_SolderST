@@ -95,7 +95,6 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <string.h>
-#include <string.h>
 
 /* ---- Индексы строк TextField ---- */
 enum {
