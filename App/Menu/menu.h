@@ -24,8 +24,8 @@
  * ---- Пункт "Сброс" (есть на обоих уровнях, User и Expert) ----
  * Пункт-действие: сбрасывает к значениям по умолчанию поля ТЕКУЩЕГО уровня
  * меню для ТЕКУЩЕГО активного канала (Settings_ResetUserDefaults() /
- * Settings_ResetExpertDefaults() — точечно, EEPROM не стирается, в отличие
- * от Settings_ResetToDefaults()). На уровне User сброс также затрагивает
+ * Settings_ResetExpertDefaults() — точечно, EEPROM не стирается). На уровне
+ * User сброс также затрагивает
  * глобальный флаг Bzzz (общий на оба канала) — отдельным вызовом
  * Settings_ResetGlobalUserDefaults().
  *

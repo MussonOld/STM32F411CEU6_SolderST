@@ -617,19 +617,6 @@ SettingsLoadStatus_t Settings_Load(void)
     return SETTINGS_LOAD_INVALID;
 }
 
-bool Settings_ResetToDefaults(void)
-{
-    /* Тот же путь восстановления, что и при обнаружении невалидных данных
-     * в Settings_Load() (см. там) — стереть чип целиком, поднять дефолты в
-     * RAM, записать их обратно. Сейчас никем не вызывается — пункт "Сброс"
-     * сервисного меню использует точечные Settings_ResetUserDefaults()/
-     * Settings_ResetExpertDefaults() ниже (см. докстринг в settings.h). */
-    Settings_Init();
-    bool erased = erase_eeprom();
-    bool saved = Settings_Save();
-    return erased && saved;
-}
-
 void Settings_ResetUserDefaults(channel_id_t ch)
 {
     if (!channel_valid(ch)) return;
