@@ -92,6 +92,7 @@
 #include <stdio.h>
 #include "fixed_point.h"
 #include <stdint.h>
+#include <assert.h>
 #include <stdbool.h>
 #include <string.h>
 #include <string.h>
@@ -208,7 +209,7 @@ enum {
  * пресетов слева 10.., по оси 160 и справа до 310), по Y низ шрифта 18
  * совпадает с низом пресетов (шрифт 24 на SCREEN_PRESETS_Y).
  * Блок CURRENT для центрирования (SCREEN_TEMP_BLOCK_HEIGHT) НЕ меняется —
- * положение большого числа остаётся прежним. */
+ * положение полосы CURRENT (SCREEN_CURRENT_Y) остаётся прежним. */
 #define SCREEN_TARGET_SHIFT_Y     (50U)
 #define SCREEN_SLEEP_TEMP_HEIGHT  (32U) /* высота AntiquaB_32_uni */
 #define SCREEN_SLEEP_TEMP_Y ((uint16_t)(SCREEN_CURRENT_Y + SCREEN_CURRENT_HEIGHT + SCREEN_TEMP_GAP))
@@ -217,6 +218,16 @@ _Static_assert(SCREEN_SLEEP_TEMP_Y + SCREEN_SLEEP_TEMP_HEIGHT <= SCREEN_DIVIDER_
                "sleep temperature must end above the bottom of the divider/presets gap");
 _Static_assert(SCREEN_TARGET_Y + SCREEN_TARGET_HEIGHT <= SCREEN_HEIGHT,
                "target field must fit on the screen");
+
+/* Реальная высота рамки шрифта Comic_60_dig (Comic_60_dig.height), НЕ равна
+ * номинальным 67px полосы CURRENT (SCREEN_CURRENT_HEIGHT): цифры занимают в
+ * рамке строки ~1..47 из 49. Если рисовать число от верха полосы, оно
+ * оказывается на (67-49)/2 = 9px выше центра полосы, по которому
+ * центрируются иконки (крестик, смайлики сна) и "ВЫКЛ". Поэтому число
+ * ставится так, чтобы рамка шрифта стояла по центру полосы. Значение обязано
+ * совпадать с Comic_60_dig.height — Screen_Init() проверяет это assert()-ом. */
+#define SCREEN_CURRENT_FONT_HEIGHT (49U)
+#define SCREEN_CURRENT_TEXT_Y ((uint16_t)(SCREEN_CURRENT_Y + (SCREEN_CURRENT_HEIGHT - SCREEN_CURRENT_FONT_HEIGHT) / 2U))
 
 /* Аварийное сообщение всегда в 2 строки (2 слова в одну не помещаются) —
  * FAULT_MSG стоит на позиции SCREEN_CURRENT_Y,
@@ -784,6 +795,7 @@ static void clear_screen_for_mode_switch(screen_mode_t new_mode)
 
 void Screen_Init(void)
 {
+    assert(Comic_60_dig.height == SCREEN_CURRENT_FONT_HEIGHT); /* см. SCREEN_CURRENT_TEXT_Y */
     draw_divider();
 
     /* Гейдж мощности — сентинел форсирует первую отрисовку в первом же
@@ -819,7 +831,7 @@ void Screen_Init(void)
      * заведено ОТДЕЛЬНОЕ поле FAULT_MSG (AntiquaB_18_uni), на той же
      * позиции — в любой момент содержимое имеет ровно одно из двух полей,
      * второе пустое (см. update_channel_content()). */
-    TextField_ConfigureLine(LINE_SOLDER_CURRENT, SCREEN_HALF_CENTER_LEFT_X, SCREEN_CURRENT_Y,
+    TextField_ConfigureLine(LINE_SOLDER_CURRENT, SCREEN_HALF_CENTER_LEFT_X, SCREEN_CURRENT_TEXT_Y,
                              &Comic_60_dig, COLOR_ACTIVE_CURRENT, COLOR_BG);
     TextField_ConfigureLine(LINE_SOLDER_FAULT_MSG, SCREEN_HALF_CENTER_LEFT_X, SCREEN_CURRENT_Y,
                              &AntiquaB_18_uni, COLOR_FAULT, COLOR_BG);
@@ -835,7 +847,7 @@ void Screen_Init(void)
     /* LINE_DESOLDER_TITLE — тот же no-op, что и у LINE_SOLDER_TITLE выше. */
     TextField_ConfigureLine(LINE_DESOLDER_TITLE, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_TITLE_Y,
                              &AntiquaB_18_uni, COLOR_INACTIVE_TITLE, COLOR_BG);
-    TextField_ConfigureLine(LINE_DESOLDER_CURRENT, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_CURRENT_Y,
+    TextField_ConfigureLine(LINE_DESOLDER_CURRENT, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_CURRENT_TEXT_Y,
                              &Comic_60_dig, COLOR_INACTIVE_CURRENT, COLOR_BG);
     TextField_ConfigureLine(LINE_DESOLDER_FAULT_MSG, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_CURRENT_Y,
                              &AntiquaB_18_uni, COLOR_FAULT, COLOR_BG);
