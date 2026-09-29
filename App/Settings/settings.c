@@ -79,8 +79,27 @@ static uint32_t s_retry_tick = 0;
 #define SETTINGS_DEFAULT_PRESLEEP_TEMP      (150U)
 #define SETTINGS_DEFAULT_PRE_SLEEP_TIMEOUT  (10U)
 #define SETTINGS_DEFAULT_SLEEP_TIMEOUT      (10U)
-#define SETTINGS_DEFAULT_SLOPE              (75U)  /* 0.075 Ом/°C * SETTINGS_SLOPE_SCALE — откалибровано по термопаре (номинал по формуле датчика 72) */
-#define SETTINGS_DEFAULT_BIAS               (208U) /* 20.8 Ом * SETTINGS_BIAS_SCALE — откалибровано по термопаре (номинал по формуле датчика 217) */
+/* Slope/Bias по умолчанию — РАЗНЫЕ для канала паяльника и канала отсоса, у
+ * каждого RTD свой разброс параметров.
+ *   Паяльник (CHANNEL_SOLDER)   — откалибровано на реальном железе.
+ *   Отсос    (CHANNEL_DESOLDER) — отдельная калибровка ещё не сделана,
+ *   значения временные (термопара, номинал по формуле датчика — 72/217).
+ */
+#define SETTINGS_DEFAULT_SLOPE_SOLDER       (89U)  /* 0.089 Ом/°C — калибровка на железе */
+#define SETTINGS_DEFAULT_BIAS_SOLDER        (207U) /* 20.7 Ом — калибровка на железе */
+#define SETTINGS_DEFAULT_SLOPE_DESOLDER     (75U)  /* 0.075 Ом/°C — временно, см. выше */
+#define SETTINGS_DEFAULT_BIAS_DESOLDER      (208U) /* 20.8 Ом — временно, см. выше */
+
+/** @brief Slope/Bias по умолчанию для канала ch — см. SETTINGS_DEFAULT_SLOPE_SOLDER/DESOLDER выше. */
+static inline uint16_t settings_default_slope(channel_id_t ch)
+{
+    return (ch == CHANNEL_SOLDER) ? SETTINGS_DEFAULT_SLOPE_SOLDER : SETTINGS_DEFAULT_SLOPE_DESOLDER;
+}
+
+static inline uint16_t settings_default_bias(channel_id_t ch)
+{
+    return (ch == CHANNEL_SOLDER) ? SETTINGS_DEFAULT_BIAS_SOLDER : SETTINGS_DEFAULT_BIAS_DESOLDER;
+}
 #define SETTINGS_DEFAULT_KP                 (500U) /* 5 %/°C, подобрано на паяльнике (см. control.h) */
 #define SETTINGS_DEFAULT_KI                 (90U)  /* 0.9 %/(°C*с) */
 #define SETTINGS_DEFAULT_KD                 (300U) /* 3 %/(°C/с) */
@@ -158,8 +177,8 @@ void Settings_Init(void)
         s_channels[ch].preset[PRESET_3]  = SETTINGS_DEFAULT_PRESET_3;
         s_channels[ch].target            = SETTINGS_DEFAULT_TARGET;
         s_channels[ch].presleep_temp     = SETTINGS_DEFAULT_PRESLEEP_TEMP;
-        s_channels[ch].slope             = SETTINGS_DEFAULT_SLOPE;
-        s_channels[ch].bias              = SETTINGS_DEFAULT_BIAS;
+        s_channels[ch].slope             = settings_default_slope((channel_id_t)ch);
+        s_channels[ch].bias              = settings_default_bias((channel_id_t)ch);
         s_channels[ch].pre_sleep_timeout = SETTINGS_DEFAULT_PRE_SLEEP_TIMEOUT;
         s_channels[ch].sleep_timeout     = SETTINGS_DEFAULT_SLEEP_TIMEOUT;
         s_channels[ch].kp                = SETTINGS_DEFAULT_KP;
@@ -635,6 +654,6 @@ void Settings_ResetExpertDefaults(channel_id_t ch)
     Settings_SetKp(ch, SETTINGS_DEFAULT_KP);
     Settings_SetKi(ch, SETTINGS_DEFAULT_KI);
     Settings_SetKd(ch, SETTINGS_DEFAULT_KD);
-    Settings_SetSlope(ch, SETTINGS_DEFAULT_SLOPE);
-    Settings_SetBias(ch, SETTINGS_DEFAULT_BIAS);
+    Settings_SetSlope(ch, settings_default_slope(ch));
+    Settings_SetBias(ch, settings_default_bias(ch));
 }

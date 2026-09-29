@@ -61,20 +61,24 @@ extern "C" {
  * @brief Масштаб хранения Slope: реальное значение = Settings_GetSlope(ch) / SETTINGS_SLOPE_SCALE
  * @note Диапазон — не только "> 0" (slope делитель в t=(R-bias)/slope), но и
  *       защита от переполнения fixed_t (Q16.16, ~±32767): при R-bias до
- *       ~225 Ом (насыщение АЦП ~125 Ом минус Bias до 100 Ом) и SLOPE ниже
- *       0.03 Ом/°C температура улетает в тысячи-десятки тысяч градусов.
- *       Номинал по паспорту датчика — 0.072 Ом/°C (см. SETTINGS_DEFAULT_SLOPE).
+ *       ~150 Ом (насыщение АЦП ~125 Ом при Bias у нижней границы 19 Ом) и
+ *       SLOPE ниже разумного температура улетала бы в тысячи градусов.
+ *       Номинал по паспорту датчика — 0.072 Ом/°C; дефолты по каналам — см.
+ *       SETTINGS_DEFAULT_SLOPE_SOLDER/_DESOLDER в settings.c.
  */
 #define SETTINGS_SLOPE_SCALE  (1000U)
-#define SETTINGS_SLOPE_MIN    (50U)   /* реальное 0.05 */
-#define SETTINGS_SLOPE_MAX    (100U)  /* реальное 0.1 */
+#define SETTINGS_SLOPE_MIN    (60U)   /* реальное 0.06 */
+#define SETTINGS_SLOPE_MAX    (110U)  /* реальное 0.11 */
 
 /**
  * @brief Масштаб хранения Bias: реальное значение = Settings_GetBias(ch) / SETTINGS_BIAS_SCALE
+ * @note Диапазон ограничен вокруг номинала по паспорту датчика (21.7 Ом) —
+ *       за пределами этого узкого коридора значение уже не калибровка
+ *       реального разброса RTD, а явная ошибка ввода.
  */
 #define SETTINGS_BIAS_SCALE  (10U)
-#define SETTINGS_BIAS_MIN    (0U)
-#define SETTINGS_BIAS_MAX    (1000U)  /* реальное 100.0 */
+#define SETTINGS_BIAS_MIN    (190U)  /* реальное 19.0 */
+#define SETTINGS_BIAS_MAX    (250U)  /* реальное 25.0 */
 
 /**
  * @brief Диапазон коэффициентов PID (масштаб и единицы — см. CONTROL_PID_SCALE в control.h).
