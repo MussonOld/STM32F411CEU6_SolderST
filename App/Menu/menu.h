@@ -11,7 +11,7 @@
  * ---- Уровни ----
  * User (по умолчанию при входе в меню):
  *   Выход, Bzzz (ON/OFF, глобальный флаг — см. SETTINGS_FLAG_BUZZER_BIT),
- *   PreslipTime (Settings_GetPreSleepTimeout, канала), PreslipTemp
+ *   PresleepTime (Settings_GetPreSleepTimeout, канала), PresleepTemp
  *   (Settings_GetPresleepTemp, канала), Standby (Settings_GetSleepTimeout,
  *   канала), Сброс (см. ниже), Expert (переход на уровень Expert).
  *

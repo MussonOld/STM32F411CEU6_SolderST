@@ -274,7 +274,7 @@ bool Settings_ResetToDefaults(void);
 
 /**
  * @brief Точечный сброс полей уровня User сервисного меню (см. menu.h) для
- *        ОДНОГО канала — PreslipTime, PreslipTemp, Standby — к значениям по
+ *        ОДНОГО канала — PresleepTime, PresleepTemp, Standby — к значениям по
  *        умолчанию (тем же, что в Settings_Init()). Глобальные поля (Bzzz)
  *        НЕ трогает — для них Settings_ResetGlobalUserDefaults().
  *

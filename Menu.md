@@ -10,10 +10,10 @@
 
 - **Выход**
 - **Bzzz** — ON/OFF, глобальный флаг (`SETTINGS_FLAG_BUZZER_BIT`)
-- **PreslipTime** — `Settings_GetPreSleepTimeout()`, канала
-- **PreslipTemp** — `Settings_GetPresleepTemp()`, канала
+- **PresleepTime** — `Settings_GetPreSleepTimeout()`, канала
+- **PresleepTemp** — `Settings_GetPresleepTemp()`, канала
 - **Standby** — `Settings_GetSleepTimeout()`, канала
-- **Сброс** — `Settings_ResetUserDefaults(ch)` + `Settings_ResetGlobalUserDefaults()` (с промтом подтверждения, см. ниже): пресеты 1/2/3, PreslipTemp, PreslipTime, Standby канала и глобальный флаг Bzzz — к дефолтам
+- **Сброс** — `Settings_ResetUserDefaults(ch)` + `Settings_ResetGlobalUserDefaults()` (с промтом подтверждения, см. ниже): пресеты 1/2/3, PresleepTemp, PresleepTime, Standby канала и глобальный флаг Bzzz — к дефолтам
 - **Expert** — переход на уровень Expert
 
 ### Expert

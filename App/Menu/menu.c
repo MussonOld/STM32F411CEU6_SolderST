@@ -263,7 +263,7 @@ menu_action_t Menu_HandleEvent(const button_event_t *ev)
                 }
                 return MENU_ACTION_NONE;
             }
-            /* Bzzz/PreslipTime/PreslipTemp/Standby — редактируемые */
+            /* Bzzz/PresleepTime/PresleepTemp/Standby — редактируемые */
             s_state = MENU_STATE_EDITING;
             return MENU_ACTION_NONE;
         }
@@ -331,8 +331,8 @@ const char *Menu_GetItemLabel(uint8_t index)
         switch (index) {
             case ITEM_EXIT:          return "Выход";
             case ITEM_BUZZER:        return "Bzzz";
-            case ITEM_PRESLEEP_TIME: return "PreslipTime";
-            case ITEM_PRESLEEP_TEMP: return "PreslipTemp";
+            case ITEM_PRESLEEP_TIME: return "PresleepTime";
+            case ITEM_PRESLEEP_TEMP: return "PresleepTemp";
             case ITEM_STANDBY:       return "Standby";
             case ITEM_RESET:         return "Сброс";
             case ITEM_EXPERT:        return "Expert";
