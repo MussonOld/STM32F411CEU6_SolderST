@@ -235,7 +235,7 @@ fixed_t ADS1220_GetResistanceOhm(channel_id_t ch)
 fixed_t ADS1220_GetTemperatureC(channel_id_t ch)
 {
     if (!channel_valid(ch)) {
-        return 0; /* Settings_GetSlope() на неверном канале вернул бы 0 -> деление на ноль ниже */
+        return 0; /* защита от невалидного канала; деление на ноль невозможно благодаря клампингу Slope в Settings, см. комментарий ниже */
     }
     /* t[°C] = (R - bias) / slope. Номиналы по паспорту RTD — bias=21.7 Ом,
      * slope=0.072 Ом/°C (Settings по умолчанию: 217 и 72) — но реальные
