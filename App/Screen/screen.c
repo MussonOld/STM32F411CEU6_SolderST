@@ -250,11 +250,10 @@ _Static_assert(SCREEN_TARGET_Y + SCREEN_TARGET_HEIGHT <= SCREEN_HEIGHT,
  * центрируется на center_x своей половины экрана, как и крестик. */
 #define SCREEN_ASLEEP_ICON_Y ((uint16_t)(SCREEN_CURRENT_Y + (SCREEN_CURRENT_HEIGHT - SLEEP_ICON_BITMAP_H) / 2U))
 
-/* Иконка PRESLEEP (зевающий смайлик, PreSleepIcon_Bitmap 70x80 — см.
- * presleep_icon.h) на месте большого числа. Выше CURRENT-полосы (80 > 67),
- * поэтому центрируется по ней со свесом вверх и вниз поровну
- * ((80-67)/2 = 6px), а не через беззнаковую разность, как у иконки SLEEP. */
-#define SCREEN_PRESLEEP_ICON_Y ((uint16_t)(SCREEN_CURRENT_Y - (PRESLEEP_ICON_BITMAP_H - SCREEN_CURRENT_HEIGHT) / 2U))
+/* Иконка PRESLEEP (зевающий смайлик, PreSleepIcon_Bitmap 58x66 — см.
+ * presleep_icon.h) на месте большого числа. Той же высоты, что и иконка
+ * SLEEP (66px), и по Y центрируется по CURRENT-полосе по той же формуле. */
+#define SCREEN_PRESLEEP_ICON_Y ((uint16_t)(SCREEN_CURRENT_Y + (SCREEN_CURRENT_HEIGHT - PRESLEEP_ICON_BITMAP_H) / 2U))
 _Static_assert(SCREEN_PRESLEEP_ICON_Y >= SCREEN_TEMP_BAND_TOP,
                "presleep icon must not overlap the title strip");
 _Static_assert(SCREEN_PRESLEEP_ICON_Y + PRESLEEP_ICON_BITMAP_H <= SCREEN_SLEEP_TEMP_Y,
@@ -683,7 +682,7 @@ static bool draw_presleep_icon(uint16_t x, uint16_t y)
     return draw_raster(PreSleepIcon_Bitmap, x, y, PRESLEEP_ICON_BITMAP_W, PRESLEEP_ICON_BITMAP_H);
 }
 
-/** @brief Стереть иконку PRESLEEP (залить фоном) — весь прямоугольник 70x80, включая все пиксели растра. */
+/** @brief Стереть иконку PRESLEEP (залить фоном) — весь прямоугольник растра. */
 static bool erase_presleep_icon(uint16_t x, uint16_t y)
 {
     return erase_raster(x, y, PRESLEEP_ICON_BITMAP_W, PRESLEEP_ICON_BITMAP_H);
@@ -999,8 +998,8 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
         }
     }
     /* Иконка PRESLEEP — то же самое при выходе из PRESLEEP (в SLEEP, обратно в
-     * NORMAL или в любое другое состояние). Её растр выше, чем у иконки SLEEP
-     * (80 против 66px), поэтому стирается своим прямоугольником целиком. */
+     * NORMAL или в любое другое состояние). Её растр уже иконки SLEEP
+     * (58 против 70px), поэтому стирается своим прямоугольником, а не прямоугольником SLEEP. */
     if (s_last_content[ch] == CHANNEL_CONTENT_PRESLEEP && content != CHANNEL_CONTENT_PRESLEEP && s_presleep_icon_shown[ch]) {
         if (erase_presleep_icon(presleep_icon_x, SCREEN_PRESLEEP_ICON_Y)) {
             s_presleep_icon_shown[ch] = false;

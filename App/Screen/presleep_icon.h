@@ -1,8 +1,9 @@
 /**
  * @file presleep_icon.h
- * @brief Растр иконки PRESLEEP (зевающий смайлик), RGB565, 70x80.
+ * @brief Растр иконки PRESLEEP (зевающий смайлик), RGB565, 58x66.
  *        См. presleep_icon.c — сгенерирован из Icons/PreSleepy.png с
- *        очисткой белого фона (на чёрном фоне экрана без ореола).
+ *        очисткой белого фона (на чёрном фоне экрана без ореола),
+ *        уменьшен до высоты иконки SLEEP (66px).
  */
 
 #ifndef APP_SCREEN_PRESLEEP_ICON_H_INCLUDED
@@ -14,10 +15,10 @@ extern "C" {
 
 #include <stdint.h>
 
-#define PRESLEEP_ICON_BITMAP_W (70U)
-#define PRESLEEP_ICON_BITMAP_H (80U)
+#define PRESLEEP_ICON_BITMAP_W (58U)
+#define PRESLEEP_ICON_BITMAP_H (66U)
 
-/** Пиксели RGB565, построчно (row-major), 70x80 = 5600 элементов. */
+/** Пиксели RGB565, построчно (row-major), 58x66 = 3828 элементов. */
 extern const uint16_t PreSleepIcon_Bitmap[PRESLEEP_ICON_BITMAP_W * PRESLEEP_ICON_BITMAP_H];
 
 #ifdef __cplusplus
