@@ -57,10 +57,11 @@ void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOA, Disp_DC_Pin|Disp_RST_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, BEEP_Pin, GPIO_PIN_RESET); /* зуммер активный ВЫСОКИЙ — RESET = молчит */
+  HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, Pump_On_Pin|Solder_On_Pin|Desolder_On_Pin|ADS1220_Solder_CS_Pin|ADS1220_Desolder_CS_Pin, GPIO_PIN_SET); /* Pump_On активный НИЗКИЙ — высокий = насос выключен, см. pump.h */
+  HAL_GPIO_WritePin(GPIOB, Pump_On_Pin|Solder_On_Pin|Desolder_On_Pin|ADS1220_Solder_CS_Pin
+                          |ADS1220_Desolder_CS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin : nPS_ON_Pin */
   GPIO_InitStruct.Pin = nPS_ON_Pin;
@@ -69,55 +70,41 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(nPS_ON_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : Dock_Pin SET1_Pin SET2_Pin SET3_Pin
+                           DN_Pin UP_Pin TOOLS_Pin */
+  GPIO_InitStruct.Pin = Dock_Pin|SET1_Pin|SET2_Pin|SET3_Pin
+                          |DN_Pin|UP_Pin|TOOLS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
   /*Configure GPIO pins : DRDY_Solder_Pin DRDY_Desolder_Pin */
   GPIO_InitStruct.Pin = DRDY_Solder_Pin|DRDY_Desolder_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : Dock_Pin */
-  GPIO_InitStruct.Pin = Dock_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : Disp_DC_Pin Disp_RST_Pin */
+  /*Configure GPIO pins : Disp_DC_Pin Disp_RST_Pin */
   GPIO_InitStruct.Pin = Disp_DC_Pin|Disp_RST_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : Solder_Test_Pin Desolder_Test_Pin Btn_Pump_Pin */
-  GPIO_InitStruct.Pin = Solder_Test_Pin|Desolder_Test_Pin|Btn_Pump_Pin;
+  /*Configure GPIO pins : Solder_Test_Pin Desolder_Test_Pin Btn_Pump_Pin Pok_Pin */
+  GPIO_InitStruct.Pin = Solder_Test_Pin|Desolder_Test_Pin|Btn_Pump_Pin|Pok_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : Pok_Pin */
-  GPIO_InitStruct.Pin = Pok_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLUP; /* Power OK от блока питания, активный низкий —
-                                        * подтяжка на случай открытого стока на стороне БП; если
-                                        * там push-pull, лишней подтяжка не мешает */
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : Pump_On_Pin BEEP_Pin Solder_On_Pin Desolder_On_Pin
+  /*Configure GPIO pins : BEEP_Pin Pump_On_Pin Solder_On_Pin Desolder_On_Pin
                            ADS1220_Solder_CS_Pin ADS1220_Desolder_CS_Pin */
-  GPIO_InitStruct.Pin = Pump_On_Pin|BEEP_Pin|Solder_On_Pin|Desolder_On_Pin
+  GPIO_InitStruct.Pin = BEEP_Pin|Pump_On_Pin|Solder_On_Pin|Desolder_On_Pin
                           |ADS1220_Solder_CS_Pin|ADS1220_Desolder_CS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : SET1_Pin SET2_Pin SET3_Pin DN_Pin
-                           UP_Pin TOOLS_Pin */
-  GPIO_InitStruct.Pin = SET1_Pin|SET2_Pin|SET3_Pin|DN_Pin
-                          |UP_Pin|TOOLS_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
 }
 
