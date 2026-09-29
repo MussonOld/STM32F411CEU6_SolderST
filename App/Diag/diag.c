@@ -147,13 +147,19 @@ void Diag_Poll(void)
         if (ADS1220_IsDataValid(ch)) {
             s_eval_tick[ch] = ADS1220_GetLastUpdateTick(ch); /* отсчёт, по которому выносим вердикт ниже */
             s_eval_valid[ch] = true;
+            /* КЗ/обрыв определяются по ФИЗИЧЕСКОМУ сопротивлению, а не по температуре:
+             * калибровка (Slope/Bias, Expert-меню) не должна ни создавать, ни скрывать
+             * аппаратную неисправность — см. diag.h. */
+            fixed_t r = ADS1220_GetResistanceOhm(ch);
             fixed_t t = ADS1220_GetTemperatureC(ch);
             rtd_state_t rtd;
 
-            if (t <= 0) {
-                rtd = RTD_STATE_SHORT;       /* КЗ: t ~= -301, не ровно 0 — см. diag.h */
-            } else if (t > FIXED_FROM_INT(SETTINGS_TEMP_MAX)) {
+            if (r <= FIXED_FROM_INT(DIAG_RTD_SHORT_MAX_OHM)) {
+                rtd = RTD_STATE_SHORT;
+            } else if (r >= FIXED_FROM_INT(DIAG_RTD_OPEN_MIN_OHM)) {
                 rtd = RTD_STATE_OPEN;
+            } else if (t > FIXED_FROM_INT(SETTINGS_TEMP_MAX)) {
+                rtd = RTD_STATE_OPEN;        /* перегрев по откалиброванной t — страховка, см. diag.h */
             } else {
                 rtd = RTD_STATE_OK;
             }
