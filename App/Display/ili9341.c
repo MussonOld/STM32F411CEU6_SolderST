@@ -118,8 +118,22 @@ static Display_Status_t start_write_chunk(void)
     return DISPLAY_OK;
 }
 
-/* ---- Обработчик завершения DMA (вызывается из HAL_SPI_TxCpltCallback) ---- */
-
+/**
+ * @brief Обработчик завершения ОДНОГО DMA-чанка (вызывается из HAL_SPI_TxCpltCallback,
+ *        т.е. из контекста прерывания).
+ *
+ * Контракт:
+ *   - не блокируется;
+ *   - если чанк не последний — САМ запускает следующий (HAL_SPI_Transmit_DMA,
+ *     через start_write_chunk() либо напрямую для заливки), это штатно для
+ *     chunked DMA и не нарушает "короткий callback";
+ *   - не должен вызывать HAL_Delay()/блокирующий HAL_SPI_Transmit() — только
+ *     *_DMA-варианты;
+ *   - внешний Display_TxCpltCallback_t (s_tx_cplt_cb) вызывается ровно один
+ *     раз, только когда чанков больше не осталось — с этого момента действует
+ *     уже его контракт (см. display.h), более строгий: он новую передачу не
+ *     запускает.
+ */
 void ILI9341_OnDmaTxComplete(void)
 {
     if (s_fill_remaining > 0) {
