@@ -9,7 +9,9 @@ typedef int32_t fixed_t;
 #define FIXED_SHIFT        16
 #define FIXED_ONE          (1 << FIXED_SHIFT)
 
-#define FIXED_FROM_INT(i)    ((fixed_t)((int32_t)(i) << FIXED_SHIFT))
+/* int64_t умножение, а не сдвиг: сдвиг отрицательного знакового значения —
+ * формальное UB в C, даже если по факту все текущие вызовы с i >= 0. */
+#define FIXED_FROM_INT(i)    ((fixed_t)((int64_t)(i) * FIXED_ONE))
 #define FIXED_TO_INT(f)      ((int32_t)((f) >> FIXED_SHIFT))
 #define FIXED_FROM_FLOAT(x)  ((fixed_t)((x) * FIXED_ONE))   /* только для констант на этапе компиляции */
 #define FIXED_TO_FLOAT(f)    ((float)(f) / (float)FIXED_ONE) /* только для вывода на экран/отладки */
