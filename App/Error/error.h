@@ -154,8 +154,8 @@ typedef enum {
  */
 typedef enum {
     RTD_STATE_OK = 0,
-    RTD_STATE_SHORT,          /**< t <= 0 */
-    RTD_STATE_OPEN,           /**< t >  SETTINGS_TEMP_MAX */
+    RTD_STATE_SHORT,          /**< R <= DIAG_RTD_SHORT_MAX_OHM (см. diag.h) */
+    RTD_STATE_OPEN,           /**< R >= DIAG_RTD_OPEN_MIN_OHM, либо t > SETTINGS_TEMP_MAX (см. diag.h) */
 } rtd_state_t;
 
 void Error_Init(void);
