@@ -13,7 +13,7 @@
 
 static uint32_t s_steps_left;     /* сколько шагов осталось; 0 = молчим */
 static uint32_t s_step_ms;        /* длительность ТЕКУЩЕГО шага (полупериод меандра — для Alarm,
-                                    * либо вся длительность одиночного тона — для Chime/Sleep) */
+                                    * либо вся длительность одиночного тона — для PowerOn/Sleep) */
 static uint32_t s_last_tick;
 static bool     s_pin_on;
 
@@ -59,12 +59,12 @@ bool Beep_Alarm(void)
     return start(BEEP_ALARM_HALF_STEPS, BEEP_ALARM_HALF_PERIOD_MS);
 }
 
-void Beep_ChannelEnabled(void)
+void Beep_PowerOn(void)
 {
     /* Одиночный шаг = один непрерывный тон заданной длительности: после
      * него s_steps_left станет 0 и Beep_Poll() выключит пин, без второго
      * полупериода "выкл" — в отличие от Alarm(), тут это не меандр. */
-    (void)start(1U, BEEP_CHANNEL_ENABLED_MS);
+    (void)start(1U, BEEP_POWER_ON_MS);
 }
 
 void Beep_EnteredSleep(void)

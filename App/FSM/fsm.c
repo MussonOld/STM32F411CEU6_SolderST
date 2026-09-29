@@ -13,7 +13,6 @@
 #include "menu.h"
 #include "screen.h" /* Screen_GetShownTemp() - отображаемая температура для записи в пресет */
 #include "sleep.h"
-#include "beep.h"
 #include "fixed_point.h"
 #include "step_accel.h" /* авто-повтор UP/DN — общий с menu.c, см. App/Common */
 #include "stm32f4xx_hal.h" /* HAL_GetTick() — интервал авто-повтора UP/DN */
@@ -221,12 +220,6 @@ static void handle_chord(const button_event_t *ev)
              * иначе включённый инструмент может тут же оказаться в
              * PRESLEEP/SLEEP, если простаивал ещё до включения. */
             Sleep_ForceAwake(s_active_channel);
-            if (!Error_IsChannelBlocked(s_active_channel)) {
-                /* Короткий сигнал только когда включаем ИСПРАВНЫЙ канал —
-                 * заблокированный аварией и так уже сигналил (Beep_Alarm(),
-                 * см. diag.c), путать эти два сигнала незачем. */
-                Beep_ChannelEnabled();
-            }
         }
     } else if (ev->type == BUTTON_EVENT_CHORD_LONG) {
         s_screen_mode = SCREEN_MODE_SERVICE;
