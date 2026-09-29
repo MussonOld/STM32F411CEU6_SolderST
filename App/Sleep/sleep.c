@@ -13,6 +13,8 @@
 
 #include "sleep.h"
 #include "settings.h"
+#include "state.h" /* State_IsEnabled() — гейт для Beep_EnteredSleep(), см. notify_if_entered_sleep() */
+#include "beep.h"
 #include "main.h" /* Dock_Pin/Dock_GPIO_Port, Btn_Pump_Pin/Btn_Pump_GPIO_Port */
 #include "stm32f4xx_hal.h"
 
@@ -62,6 +64,19 @@ static void stop_reset_timer(sleep_channel_t *c)
     c->mode = SLEEP_MODE_AWAKE;
 }
 
+/** @brief Сигнал (Beep_EnteredSleep()) ровно на фронте входа в SLEEP —
+ *        не на каждом опросе, пока канал уже в SLEEP. Только для
+ *        ВКЛЮЧЁННОГО канала: если канал выключен аккордом (State_IsEnabled
+ *        false), нагрева и так уже нет, и сигнал о "сне" был бы ложным
+ *        поводом — таймер Sleep при этом продолжает считать (не привязан
+ *        к State, см. докстринг файла), просто сигналить об этом незачем. */
+static void notify_if_entered_sleep(channel_id_t ch, sleep_mode_t prev_mode, sleep_mode_t new_mode)
+{
+    if (new_mode == SLEEP_MODE_SLEEP && prev_mode != SLEEP_MODE_SLEEP && State_IsEnabled(ch)) {
+        Beep_EnteredSleep();
+    }
+}
+
 void Sleep_Init(void)
 {
     for (int i = 0; i < CHANNEL_COUNT; i++) {
@@ -107,6 +122,8 @@ static void poll_channel(channel_id_t ch)
         return; /* инструмент используется — таймеру сейчас нечего делать */
     }
 
+    sleep_mode_t prev_mode = c->mode; /* для края AWAKE/PRESLEEP -> SLEEP ниже, см. Beep_EnteredSleep() */
+
     uint32_t now = HAL_GetTick();
     uint32_t elapsed_ms = now - c->idle_start_tick; /* корректно и при переполнении HAL_GetTick() */
 
@@ -133,6 +150,7 @@ static void poll_channel(channel_id_t ch)
         } else {
             c->mode = SLEEP_MODE_PRESLEEP; /* SleepTimeout выключен — зависаем в PRESLEEP бессрочно */
         }
+        notify_if_entered_sleep(ch, prev_mode, c->mode);
         return;
     }
 
@@ -140,6 +158,7 @@ static void poll_channel(channel_id_t ch)
     if (sleep_timeout_min > 0) {
         uint32_t sleep_total_ms = (uint32_t)sleep_timeout_min * 60000UL;
         c->mode = (elapsed_ms >= sleep_total_ms) ? SLEEP_MODE_SLEEP : SLEEP_MODE_AWAKE;
+        notify_if_entered_sleep(ch, prev_mode, c->mode);
         return;
     }
 
