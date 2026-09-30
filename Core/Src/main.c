@@ -30,6 +30,7 @@
 #include "fonts.h"
 #include "text_field.h"
 #include "screen.h"
+#include "splash.h"
 #include "buttons.h"
 #include "sleep.h"
 #include "fsm.h"
@@ -143,6 +144,16 @@ int main(void)
   MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
   Display_Init();
+
+  /* Заставка на SPLASH_HOLD_MS при включении (Icons/Designer.png, 320x240 —
+   * совпадает с размером экрана при DISPLAY_ROTATION_0, без масштабирования,
+   * см. splash.h). Блокирующее ожидание оправдано: это разовая пауза ДО
+   * входа в главный цикл, опрашивать пока ещё нечего (кнопки/АЦП/Control
+   * ещё не инициализированы). */
+  Display_SetWindow(0, 0, 319, 239);
+  Display_WritePixelsDMA(SplashScreen_Bitmap, (uint32_t)SPLASH_BITMAP_W * SPLASH_BITMAP_H);
+  while (Display_IsBusy()) { } /* см. комментарий у чёрной заливки ниже */
+  HAL_Delay(SPLASH_HOLD_MS);
 
   Display_SetWindow(0, 0, 319, 239);
   Display_FillColorDMA(DISPLAY_RGB565(0, 0, 0), 320 * 240);
