@@ -53,10 +53,10 @@
  *  - Сервисное меню (InputFSM_GetScreenMode()==SCREEN_MODE_SERVICE) —
  *    ПОЛНОСТЬЮ заменяет собой всё вышеописанное (render_menu(), отдельная
  *    ветка в Screen_Update()). Заголовок ("Настройка Паяльник"/"Настройка
- *    Отсос" — Menu_GetTitle()) + до 7 строк списком друг под другом,
+ *    Отсос" — Menu_GetTitle()) + до 8 строк списком друг под другом,
  *    шрифт AntiquaB_18_uni везде. Выбранный пункт подсвечивается цветом
  *    (жёлтый — выбран, красный — редактируется), не текстовым курсором.
- *    Те же 7 строк переиспользуются для строк предупреждения Expert
+ *    Те же 8 строк переиспользуются для строк предупреждения Expert
  *    (Menu_IsShowingExpertWarning()), промта подтверждения сброса
  *    (Menu_IsShowingResetConfirm()) и сообщения о выполненном сбросе
  *    (Menu_IsShowingResetDone()) — отдельных полей под это не заведено.
@@ -65,6 +65,16 @@
  *    clear_screen_for_mode_switch()), чтобы не было наложения одного
  *    экрана на остатки другого; статический разделитель — часть только
  *    главного экрана, перерисовывается заново при возврате в него.
+ *
+ *  - Заставка в Standby (Settings_GetSplashMode()==SPLASH_MODE_START_STANDBY,
+ *    см. standby_splash_wanted()) — полноэкранная картинка (та же, что при
+ *    включении, SplashScreen_Bitmap), целиком перекрывает оба канала. Условие
+ *    ("Standby"): нет ни одного подключённого и включённого канала, который не
+ *    спит, нет аварии/сбоя БП, и хотя бы один подключённый включённый канал в
+ *    SLEEP. Пропадает сама — как только условие перестало выполняться
+ *    (смена состояния, а не нажатие кнопки); в сервисном меню не показывается
+ *    никогда. Появление/исчезновение — по образцу смены режима экрана: полная
+ *    перерисовка через clear_screen_for_mode_switch(SCREEN_MODE_MAIN).
  *
  * Координаты — приближённый вариант по вертикали (не откалиброван визуально
  * на реальном дисплее из этой сессии), по горизонтали — динамическое
@@ -88,6 +98,7 @@
 #include "presleep_icon.h"
 #include "solder_icon.h"
 #include "desolder_icon.h"
+#include "splash.h"
 #include <stddef.h>
 #include <stdio.h>
 #include "fixed_point.h"
@@ -119,7 +130,7 @@ enum {
     LINE_INFO_SLEEP_SOLDER,   /* инфозона слева — таймер сна паяльника */
     LINE_INFO_SLEEP_DESOLDER, /* инфозона справа — таймер сна отсоса */
     LINE_MENU_TITLE,          /* сервисное меню — "Настройка Паяльник/Отсос" */
-    LINE_MENU_ITEM_0,         /* сервисное меню — 7 строк списка (максимум для уровня Expert);
+    LINE_MENU_ITEM_0,         /* сервисное меню — 8 строк списка (максимум для уровня User);
                                  при MENU_STATE_EXPERT_WARNING строки 0-2 заняты текстом
                                  предупреждения, см. render_menu() */
     LINE_MENU_ITEM_1,
@@ -128,6 +139,7 @@ enum {
     LINE_MENU_ITEM_4,
     LINE_MENU_ITEM_5,
     LINE_MENU_ITEM_6,
+    LINE_MENU_ITEM_7,
 };
 
 /* ---- Геометрия ---- */
@@ -303,9 +315,11 @@ _Static_assert(SCREEN_PRESLEEP_ICON_Y + PRESLEEP_ICON_BITMAP_H <= SCREEN_SLEEP_T
 #define SCREEN_MENU_TITLE_X   (20U)
 #define SCREEN_MENU_TITLE_Y   (14U)
 #define SCREEN_MENU_ITEM_X    (20U)
-#define SCREEN_MENU_ITEM_Y0   (50U)
-#define SCREEN_MENU_ITEM_STEP (26U)
-#define SCREEN_MENU_ITEM_ROWS (7U) /* максимум пунктов — уровень Expert */
+#define SCREEN_MENU_ITEM_Y0   (40U)
+#define SCREEN_MENU_ITEM_STEP (25U)
+#define SCREEN_MENU_ITEM_ROWS (8U) /* максимум пунктов — уровень User (8: с "Заставкой"); Expert — 7 */
+_Static_assert(SCREEN_MENU_ITEM_Y0 + (SCREEN_MENU_ITEM_ROWS - 1U) * SCREEN_MENU_ITEM_STEP + 18U <= SCREEN_HEIGHT,
+               "последняя строка меню (шрифт 18) должна помещаться на экране");
 
 /* ---- Цвета ---- */
 #define COLOR_BG               DISPLAY_RGB565(0, 0, 0)
@@ -1361,10 +1375,67 @@ static void render_menu(void)
     }
 }
 
+/* ---- Заставка в Standby ---- */
+
+/** сейчас ли заставка Standby реально нарисована поверх главного экрана */
+static bool s_standby_splash_shown;
+
+/**
+ * @brief Нужна ли сейчас заставка Standby (только главный экран — вызывающий
+ *        Screen_Update() в сервисном меню сюда не заходит).
+ *
+ * Канал не учитывается, если инструмент не подключён (Error_IsChannelIdle())
+ * или выключен пользователем (!State_IsEnabled(), нагрева и так нет — на
+ * экране "ВЫКЛ"). Остальные ("действующие") каналы должны ВСЕ быть в SLEEP,
+ * и таких должен быть хотя бы один — иначе это не Standby. Авария на
+ * подключённом канале (или сбой БП — Error_IsChannelBlocked() у подключённого
+ * канала) заставку запрещает: сообщение об ошибке не должно быть скрыто.
+ */
+static bool standby_splash_wanted(void)
+{
+    if (Settings_GetSplashMode() != SPLASH_MODE_START_STANDBY) {
+        return false;
+    }
+
+    bool any_sleeping = false;
+    for (int i = 0; i < CHANNEL_COUNT; i++) {
+        channel_id_t ch = (channel_id_t)i;
+        if (Error_IsChannelIdle(ch)) {
+            continue; /* инструмент не подключён */
+        }
+        if (Error_IsChannelBlocked(ch)) {
+            return false; /* авария/сбой БП — экран должен показывать ошибку */
+        }
+        if (!State_IsEnabled(ch)) {
+            continue; /* выключен аккордом UP+DN */
+        }
+        if (Sleep_GetMode(ch) != SLEEP_MODE_SLEEP) {
+            return false; /* хотя бы один действующий канал не спит */
+        }
+        any_sleeping = true;
+    }
+    return any_sleeping;
+}
+
+/** @brief Нарисовать заставку на весь экран (блокирует на время DMA-передачи, как clear_screen_for_mode_switch() — редкое событие). true — нарисовано. */
+static bool draw_standby_splash(void)
+{
+    while (Display_IsBusy()) { }
+    if (Display_SetWindow(0, 0, SPLASH_BITMAP_W - 1, SPLASH_BITMAP_H - 1) != DISPLAY_OK) {
+        return false;
+    }
+    if (Display_WritePixelsDMA(SplashScreen_Bitmap, (uint32_t)SPLASH_BITMAP_W * SPLASH_BITMAP_H) != DISPLAY_OK) {
+        return false;
+    }
+    while (Display_IsBusy()) { }
+    return true;
+}
+
 void Screen_Update(void)
 {
     screen_mode_t mode = InputFSM_GetScreenMode();
     if (mode != s_last_screen_mode) {
+        s_standby_splash_shown = false; /* смена режима экрана стирает и заливает всё заново — заставка (если была) уже не на экране */
         clear_screen_for_mode_switch(mode);
         s_last_screen_mode = mode;
     }
@@ -1372,6 +1443,20 @@ void Screen_Update(void)
     if (mode == SCREEN_MODE_SERVICE) {
         render_menu();
         return; /* меню заменяет собой весь главный экран — остальное не обновляем */
+    }
+
+    if (standby_splash_wanted()) {
+        if (!s_standby_splash_shown) {
+            TextField_InvalidateAll(); /* отменить недорисованное задание и обнулить строки — иначе TextField_Process() дорисует текст поверх заставки */
+            s_standby_splash_shown = draw_standby_splash();
+        }
+        if (s_standby_splash_shown) {
+            return; /* заставка держит весь экран — остальное не обновляем и не рисуем */
+        }
+        /* не удалось нарисовать (DMA/окно) — повторим на следующем Screen_Update(), а пока обновляем главный экран как обычно */
+    } else if (s_standby_splash_shown) {
+        s_standby_splash_shown = false;
+        clear_screen_for_mode_switch(SCREEN_MODE_MAIN); /* заставка стёрта заливкой фона, главный экран рисуется заново с нуля */
     }
 
     update_channel_content(CHANNEL_SOLDER, SCREEN_HALF_CENTER_LEFT_X);

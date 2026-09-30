@@ -185,7 +185,7 @@ void Settings_Init(void)
         s_channels[ch].ki                = SETTINGS_DEFAULT_KI;
         s_channels[ch].kd                = SETTINGS_DEFAULT_KD;
     }
-    s_flags = 0;
+    s_flags = (uint8_t)((uint8_t)SETTINGS_DEFAULT_SPLASH_MODE << SETTINGS_FLAG_SPLASH_SHIFT);
 
     s_dirty = false; /* дефолты ещё не считаются "изменением" — не пишем в EEPROM сами по себе */
 }
@@ -374,6 +374,24 @@ bool Settings_GetFlagBit(uint8_t bit_index)
 {
     if (bit_index > 7) return false;
     return (s_flags & (uint8_t)(1u << bit_index)) != 0;
+}
+
+void Settings_SetSplashMode(uint8_t mode)
+{
+    if (mode > SETTINGS_SPLASH_MODE_MAX) mode = SETTINGS_SPLASH_MODE_MAX;
+    uint8_t new_flags = (uint8_t)((s_flags & ~(SETTINGS_FLAG_SPLASH_MASK << SETTINGS_FLAG_SPLASH_SHIFT))
+                                  | (uint8_t)(mode << SETTINGS_FLAG_SPLASH_SHIFT));
+    if (new_flags != s_flags) {
+        s_dirty = true;
+        s_last_change_tick = HAL_GetTick();
+    }
+    s_flags = new_flags;
+}
+
+uint8_t Settings_GetSplashMode(void)
+{
+    uint8_t mode = (uint8_t)((s_flags >> SETTINGS_FLAG_SPLASH_SHIFT) & SETTINGS_FLAG_SPLASH_MASK);
+    return (mode > SETTINGS_SPLASH_MODE_MAX) ? (uint8_t)SETTINGS_SPLASH_MODE_MAX : mode; /* значение 3 невалидно — см. Settings_Load() */
 }
 
 /* ---- Персист в EEPROM ---- */
@@ -579,6 +597,13 @@ SettingsLoadStatus_t Settings_Load(void)
                 any_clamped = true;
             }
         }
+        if (((s_flags >> SETTINGS_FLAG_SPLASH_SHIFT) & SETTINGS_FLAG_SPLASH_MASK) > SETTINGS_SPLASH_MODE_MAX) {
+            /* Режим заставки = 3 — то же, что поле канала вне диапазона: приводим к
+             * дефолту и считаем данные невалидными (см. any_clamped ниже). */
+            s_flags = (uint8_t)((s_flags & ~(SETTINGS_FLAG_SPLASH_MASK << SETTINGS_FLAG_SPLASH_SHIFT))
+                                | (uint8_t)((uint8_t)SETTINGS_DEFAULT_SPLASH_MODE << SETTINGS_FLAG_SPLASH_SHIFT));
+            any_clamped = true;
+        }
         if (any_clamped) {
             /* Checksum сошёлся, но хотя бы одно поле оказалось вне
              * допустимого диапазона (редкое, но реальное совпадение
@@ -632,6 +657,7 @@ void Settings_ResetUserDefaults(channel_id_t ch)
 void Settings_ResetGlobalUserDefaults(void)
 {
     Settings_SetFlagBit(SETTINGS_FLAG_BUZZER_BIT, false);
+    Settings_SetSplashMode((uint8_t)SETTINGS_DEFAULT_SPLASH_MODE);
 }
 
 void Settings_ResetExpertDefaults(channel_id_t ch)

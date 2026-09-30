@@ -124,7 +124,7 @@ typedef enum {
  * settings.c), Kp/Ki/Kd = 500/90/300 (подобраны на паяльнике, единицы —
  * см. control.h), slope/bias = 75 / 208 (откалиброваны по термопаре, номинал
  * по формуле датчика — 72 / 217; см. SETTINGS_SLOPE_SCALE/SETTINGS_BIAS_SCALE),
- * flags=0.
+ * flags: Bzzz выкл, режим заставки SETTINGS_DEFAULT_SPLASH_MODE (см. splash_mode_t).
  */
 void Settings_Init(void);
 
@@ -194,6 +194,30 @@ uint16_t Settings_GetKd(channel_id_t ch);
 /** @brief Бит зуммера в общем байте флагов (Settings_GetFlagBit/SetFlagBit) — включён из сервисного меню (пункт "Bzzz") */
 #define SETTINGS_FLAG_BUZZER_BIT (0U)
 
+/**
+ * @brief Режим заставки (пункт меню "Заставка") — 2 бита общего байта флагов,
+ *        позиции SETTINGS_FLAG_SPLASH_SHIFT..+1. Общий на оба канала.
+ *
+ * Хранение "как есть" (0/1/2): у EEPROM, записанной прошивкой до появления
+ * этого пункта, биты нулевые, то есть читаются как SPLASH_MODE_OFF — заставка
+ * отключена, пока её не включат в меню. Значение 3 невалидно: при загрузке
+ * приводится к SETTINGS_DEFAULT_SPLASH_MODE (статус INVALID, как у клампинга полей каналов).
+ */
+typedef enum {
+    SPLASH_MODE_OFF = 0,        /**< заставки нет вообще */
+    SPLASH_MODE_START = 1,      /**< только при включении станции */
+    SPLASH_MODE_START_STANDBY = 2 /**< при включении и в Standby (все подключённые инструменты спят, хотя бы один подключён) */
+} splash_mode_t;
+
+#define SETTINGS_FLAG_SPLASH_SHIFT (1U)
+#define SETTINGS_FLAG_SPLASH_MASK  (0x3U)
+#define SETTINGS_SPLASH_MODE_MAX   (SPLASH_MODE_START_STANDBY)
+#define SETTINGS_DEFAULT_SPLASH_MODE (SPLASH_MODE_START) /* как было до появления пункта: заставка при включении */
+
+/** @brief Режим заставки. Set клампится к [0, SETTINGS_SPLASH_MODE_MAX]. */
+void    Settings_SetSplashMode(uint8_t mode);
+uint8_t Settings_GetSplashMode(void);
+
 /** @brief Весь байт флагов целиком (удобно для записи/чтения EEPROM одним блоком) */
 void    Settings_SetFlags(uint8_t value);
 uint8_t Settings_GetFlags(void);
@@ -260,7 +284,7 @@ SettingsLoadStatus_t Settings_Load(void);
 /**
  * @brief Точечный сброс полей уровня User сервисного меню (см. menu.h) для
  *        ОДНОГО канала — PresleepTime, PresleepTemp, Standby — к значениям по
- *        умолчанию (тем же, что в Settings_Init()). Глобальные поля (Bzzz)
+ *        умолчанию (тем же, что в Settings_Init()). Глобальные поля (Bzzz, Заставка)
  *        НЕ трогает — для них Settings_ResetGlobalUserDefaults().
  *
  * EEPROM НЕ стирается и другие каналы/поля не трогаются — обычный путь через
@@ -272,7 +296,7 @@ void Settings_ResetUserDefaults(channel_id_t ch);
 /**
  * @brief Сброс глобальных (общих на оба канала) полей уровня User сервисного
  *        меню к значениям по умолчанию: флаг Bzzz (SETTINGS_FLAG_BUZZER_BIT)
- *        в OFF. Пункт "Сброс" уровня User вызывает её вместе с
+ *        в OFF и режим заставки в SETTINGS_DEFAULT_SPLASH_MODE. Пункт "Сброс" уровня User вызывает её вместе с
  *        Settings_ResetUserDefaults(ch).
  */
 void Settings_ResetGlobalUserDefaults(void);

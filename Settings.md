@@ -30,7 +30,7 @@
 - preSleepTimeout = sleepTimeout = 10 мин
 - Kp / Ki / Kd = 500 / 90 / 300 (подобраны на паяльнике; при нулевых коэффициентах нагрев не включается)
 - slope/bias — разные по каналам (см. `SETTINGS_DEFAULT_SLOPE_SOLDER/_DESOLDER` в `settings.c`): паяльник 89 / 207 (калибровка на реальном железе), отсос 75 / 208 (временно, своя калибровка ещё не сделана); номинал по формуле датчика — 72 / 217
-- flags = 0
+- flags: Bzzz выкл; режим заставки = 1 (только при старте, `SETTINGS_DEFAULT_SPLASH_MODE`)
 
 ## Загрузка из EEPROM (`Settings_Load()`)
 
@@ -60,6 +60,7 @@
 ### Глобальные флаги
 
 - `SETTINGS_FLAG_BUZZER_BIT` — бит зуммера (пункт "Bzzz" в сервисном меню).
+- `SETTINGS_FLAG_SPLASH_SHIFT`/`_MASK` — режим заставки (пункт "Заставка"), 2 бита со сдвигом 1: `Settings_[Get\|Set]SplashMode()`, значения `splash_mode_t` 0/1/2. В EEPROM хранится как есть — у EEPROM, записанной до появления пункта, биты нулевые и читаются как 0 (заставка выкл) до первого выбора в меню. Значение 3 при загрузке заменяется дефолтом и даёт `SETTINGS_LOAD_INVALID`.
 - `Settings_[Get\|Set]Flags()` — весь байт целиком.
 - `Settings_[Get\|Set]FlagBit(bit_index, value)` — один бит (0..7).
 

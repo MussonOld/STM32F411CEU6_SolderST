@@ -18,10 +18,11 @@ typedef enum {
     ITEM_PRESLEEP_TIME,
     ITEM_PRESLEEP_TEMP,
     ITEM_STANDBY,
+    ITEM_SPLASH,
     ITEM_RESET,
     ITEM_EXPERT,
 } user_item_t;
-#define USER_MENU_ITEM_COUNT (7U)
+#define USER_MENU_ITEM_COUNT (8U)
 
 /* ---- Пункты уровня Expert ---- */
 typedef enum {
@@ -68,6 +69,12 @@ static uint32_t    s_reset_done_start_tick;
 static bool current_item_is_toggle(void)
 {
     return (s_level == MENU_LEVEL_USER) && (s_cursor == ITEM_BUZZER);
+}
+
+/** @brief "Заставка" — глобальный пункт с тремя значениями 0/1/2: только короткое UP/DN (±1 с упором в границы), без авто-повтора */
+static bool current_item_is_splash(void)
+{
+    return (s_level == MENU_LEVEL_USER) && (s_cursor == ITEM_SPLASH);
 }
 
 /**
@@ -196,6 +203,14 @@ menu_action_t Menu_HandleEvent(const button_event_t *ev)
                 }
                 return MENU_ACTION_NONE;
             }
+            if (current_item_is_splash()) {
+                if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
+                    int32_t v = (int32_t)Settings_GetSplashMode() + sign;
+                    if (v < 0) v = 0; /* верхнюю границу клампит Settings_SetSplashMode() */
+                    Settings_SetSplashMode((uint8_t)v);
+                }
+                return MENU_ACTION_NONE;
+            }
             if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
                 StepAccel_ApplyDelta(accel_get, accel_set, NULL, sign, 1);
             } else if (ev->type == BUTTON_EVENT_LONG_PRESS) {
@@ -263,7 +278,7 @@ menu_action_t Menu_HandleEvent(const button_event_t *ev)
                 }
                 return MENU_ACTION_NONE;
             }
-            /* Bzzz/PresleepTime/PresleepTemp/Standby — редактируемые */
+            /* Bzzz/PresleepTime/PresleepTemp/Standby/Заставка — редактируемые */
             s_state = MENU_STATE_EDITING;
             return MENU_ACTION_NONE;
         }
@@ -334,6 +349,7 @@ const char *Menu_GetItemLabel(uint8_t index)
             case ITEM_PRESLEEP_TIME: return "PresleepTime";
             case ITEM_PRESLEEP_TEMP: return "PresleepTemp";
             case ITEM_STANDBY:       return "Standby";
+            case ITEM_SPLASH:        return "Заставка";
             case ITEM_RESET:         return "Сброс";
             case ITEM_EXPERT:        return "Expert";
             default:                 return "";
@@ -371,6 +387,9 @@ void Menu_GetItemValueText(uint8_t index, char *buf, uint8_t buf_size)
                 break;
             case ITEM_STANDBY:
                 snprintf(buf, buf_size, "%u", (unsigned)Settings_GetSleepTimeout(ch));
+                break;
+            case ITEM_SPLASH:
+                snprintf(buf, buf_size, "%u", (unsigned)Settings_GetSplashMode());
                 break;
             default:
                 break; /* Выход/Expert — без значения */

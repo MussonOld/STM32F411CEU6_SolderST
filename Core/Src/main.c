@@ -145,15 +145,25 @@ int main(void)
   /* USER CODE BEGIN 2 */
   Display_Init();
 
+  /* Настройки читаем ДО заставки — режим заставки (пункт меню "Заставка")
+   * лежит в них. Статус загрузки в Error отдаём позже, после заставки (см.
+   * ниже): таймер транзитного сообщения об EEPROM стартует в
+   * Error_ReportEepromStatus(), и 2 секунды заставки не должны его съедать. */
+  State_Init();
+  Settings_Init();   /* дефолты в RAM на случай сбоя чтения ниже */
+  SettingsLoadStatus_t settings_load_status = Settings_Load(); /* поверх дефолтов — то, что реально сохранено в EEPROM (или ошибка/стёртый чип, см. settings.c) */
+
   /* Заставка на SPLASH_HOLD_MS при включении (Icons/Designer.png, 320x240 —
    * совпадает с размером экрана при DISPLAY_ROTATION_0, без масштабирования,
-   * см. splash.h). Блокирующее ожидание оправдано: это разовая пауза ДО
-   * входа в главный цикл, опрашивать пока ещё нечего (кнопки/АЦП/Control
-   * ещё не инициализированы). */
-  Display_SetWindow(0, 0, 319, 239);
-  Display_WritePixelsDMA(SplashScreen_Bitmap, (uint32_t)SPLASH_BITMAP_W * SPLASH_BITMAP_H);
-  while (Display_IsBusy()) { } /* см. комментарий у чёрной заливки ниже */
-  HAL_Delay(SPLASH_HOLD_MS);
+   * см. splash.h), если режим заставки не SPLASH_MODE_OFF. Блокирующее
+   * ожидание оправдано: это разовая пауза ДО входа в главный цикл,
+   * опрашивать пока ещё нечего (кнопки/АЦП/Control ещё не инициализированы). */
+  if (Settings_GetSplashMode() != SPLASH_MODE_OFF) {
+    Display_SetWindow(0, 0, 319, 239);
+    Display_WritePixelsDMA(SplashScreen_Bitmap, (uint32_t)SPLASH_BITMAP_W * SPLASH_BITMAP_H);
+    while (Display_IsBusy()) { } /* см. комментарий у чёрной заливки ниже */
+    HAL_Delay(SPLASH_HOLD_MS);
+  }
 
   Display_SetWindow(0, 0, 319, 239);
   Display_FillColorDMA(DISPLAY_RGB565(0, 0, 0), 320 * 240);
@@ -161,10 +171,8 @@ int main(void)
 
   TextField_Init();
 
-  State_Init();
-  Settings_Init();   /* дефолты в RAM на случай сбоя чтения ниже */
   Error_Init();
-  Error_ReportEepromStatus(Settings_Load()); /* поверх дефолтов — то, что реально сохранено в EEPROM (или ошибка/стёртый чип, см. settings.c); статус — в Error, для сообщения в инфозоне */
+  Error_ReportEepromStatus(settings_load_status); /* статус — в Error, для сообщения в инфозоне */
   Error_ReportPsuStatus(HAL_GPIO_ReadPin(Pok_GPIO_Port, Pok_Pin) == GPIO_PIN_RESET); /* разовое чтение сразу — иначе фейл-сейф Error_Init() мигнёт "БП не исправен" в первые ~10мс, даже если питание в норме, см. error.h */
   InputFSM_SyncStateFromSettings(); /* без этого State.setpoint_temp==0 до первого нажатия SET/UP/DN — см. fsm.h */
 
