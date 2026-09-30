@@ -1172,7 +1172,8 @@ static void update_sleep_status(channel_id_t ch, uint8_t line, uint16_t right_ed
     /* Таймер сна не показывается, когда канал выключен ИЛИ инструмент не
      * подключен (Error_IsChannelIdle(), см. error.h) — у отсутствующего
      * инструмента нет ни таймера, ни статуса сна (ни "Предсон"/"Спит", ни
-     * иконки). Модуль Sleep при этом продолжает считать простой сам по себе. */
+     * иконки). Sleep сам держит такой канал в AWAKE без таймера, так что
+     * проверка здесь — страховка на долю такта до его реакции. */
     bool enabled = State_IsEnabled(ch) && !Error_IsChannelIdle(ch);
     sleep_mode_t mode = enabled ? Sleep_GetMode(ch) : SLEEP_MODE_AWAKE;
     uint32_t remaining = enabled ? Sleep_GetRemainingSeconds(ch) : 0;

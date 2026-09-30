@@ -9,10 +9,14 @@
  * а не от начала простоя — либо сразу от начала простоя, если
  * PreSleepTimeout==0 (выключен). Если PreSleepTimeout>0, а SleepTimeout==0
  * — канал зависает в PRESLEEP бессрочно (SleepTimeout выключен).
+ *
+ * Пока инструмент не подключен (Error_IsChannelIdle()), канал не опрашивается
+ * вовсе и остаётся в AWAKE без таймера — см. начало poll_channel().
  */
 
 #include "sleep.h"
 #include "settings.h"
+#include "error.h" /* Error_IsChannelIdle() — "инструмент не подключен", см. poll_channel() */
 #include "state.h" /* State_IsEnabled() — гейт для Beep_EnteredSleep(), см. notify_if_entered_sleep() */
 #include "beep.h"
 #include "main.h" /* Dock_Pin/Dock_GPIO_Port, Btn_Pump_Pin/Btn_Pump_GPIO_Port */
@@ -91,6 +95,22 @@ void Sleep_Init(void)
 static void poll_channel(channel_id_t ch)
 {
     sleep_channel_t *c = &s_channels[ch];
+
+    /* ---- Инструмент не подключен: всё начинается с подключения ----
+     * Пока Error_IsChannelIdle() — состояние Dock/Btn_Pump ничего не значит
+     * (Dock подтянут к питанию и без паяльника читается как "в подставке"),
+     * поэтому его не читаем и не дебаунсим, а всё состояние канала держим
+     * сброшенным. Так таймер простоя, режимы PRESLEEP/SLEEP и сигнал
+     * Beep_EnteredSleep() не могут возникнуть у отсутствующего инструмента,
+     * а после подключения дебаунс и отсчёт простоя начинаются с нуля
+     * (обычный фронт "занят -> простаивает" ниже). */
+    if (Error_IsChannelIdle(ch)) {
+        c->debounced_idle     = false;
+        c->raw_idle_candidate = false;
+        c->stable_count       = 0;
+        stop_reset_timer(c);
+        return;
+    }
 
     /* ---- Дебаунс (см. buttons.c: N стабильных опросов подряд) ---- */
     bool raw = read_raw_idle(ch);
