@@ -282,6 +282,14 @@ void Settings_Poll(void);
 SettingsLoadStatus_t Settings_Load(void);
 
 /**
+ * @brief true — есть изменения, ещё не записанные в EEPROM (ждут таймер
+ *        SETTINGS_SAVE_DELAY_MS либо повтор после неудачной записи). Сбрасывается
+ *        успешной Settings_Save(). Для Screen: пока true, заставка Standby запрещена
+ *        (пользователь только что нажимал кнопки — см. standby_splash_wanted()).
+ */
+bool Settings_HasPendingChanges(void);
+
+/**
  * @brief Точечный сброс полей уровня User сервисного меню (см. menu.h) для
  *        ОДНОГО канала — PresleepTime, PresleepTemp, Standby — к значениям по
  *        умолчанию (тем же, что в Settings_Init()). Глобальные поля (Bzzz, Заставка)

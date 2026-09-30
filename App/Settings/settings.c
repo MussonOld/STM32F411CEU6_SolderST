@@ -524,6 +524,11 @@ bool Settings_Save(void)
     return true;
 }
 
+bool Settings_HasPendingChanges(void)
+{
+    return s_dirty;
+}
+
 void Settings_Poll(void)
 {
     if (!s_dirty) {
