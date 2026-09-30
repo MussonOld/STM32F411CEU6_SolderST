@@ -1,0 +1,35 @@
+# CI: проверяет каждый push/PR в двух независимых джобах —
+#   firmware-build — компилируется ли прошивка целиком (tools/ci-build.sh);
+#   buttons-tests  — проходят ли хост-тесты драйвера кнопок (tests/buttons).
+# Обе — быстрая проверка «не сломано ли», не замена ручной проверки на
+# железе перед прошивкой.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  firmware-build:
+    name: Firmware build (arm-none-eabi-gcc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ARM toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-arm-none-eabi
+
+      - name: Build
+        run: ./tools/ci-build.sh
+
+  buttons-tests:
+    name: Buttons host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests
+        run: make -C tests/buttons

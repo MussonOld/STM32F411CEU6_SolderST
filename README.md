@@ -1,5 +1,7 @@
 # STM32F411CEU6_SolderST
 
+[![CI](https://github.com/MussonOld/STM32F411CEU6_SolderST/actions/workflows/ci.yml/badge.svg)](https://github.com/MussonOld/STM32F411CEU6_SolderST/actions/workflows/ci.yml)
+
 Прошивка паяльной станции на базе **STM32F411CEU6** (STM32CubeIDE).
 
 ## Статус проекта
@@ -41,6 +43,7 @@ App/
 ├── Fonts/           — растровые шрифты для дисплея (+ скрипт конвертации bdf2c_TFT.py)
 └── Common/          — общие типы и утилиты (channel.h, fixed_point.h, step_accel — многофазный авто-повтор UP/DN, общий для FSM и Menu)
 tests/              — хост-тесты на обычном gcc (см. `Buttons.md`), в прошивку и в проект CubeIDE не входят
+tools/ci-build.sh   — сборка прошивки обычным arm-none-eabi-gcc для CI (не замена CubeIDE), см. .github/workflows/ci.yml
 ```
 
 ## Важные особенности реализации

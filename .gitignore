@@ -27,3 +27,6 @@ Thumbs.db
 
 # Хост-тесты
 tests/*/build/
+
+# Локальный прогон CI-сборки (tools/ci-build.sh)
+build/ci/
