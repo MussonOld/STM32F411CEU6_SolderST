@@ -607,20 +607,33 @@ static bool erase_sleep_icon(uint16_t x, uint16_t y)
  *        Блокирующий построчный вывод — редкое событие (смена
  *        видимости), не каждый кадр, как и у циферблата.
  */
+/** @brief |a - b| <= t — точка (a, b) лежит у диагонали толщиной 2*t+1. */
+static bool near_diagonal(uint16_t a, uint16_t b, uint16_t t)
+{
+    return (uint16_t)((a > b) ? (a - b) : (b - a)) <= t;
+}
+
+/** @brief Пиксели одной строки крестика (две диагонали) в row_buf[SCREEN_IDLE_CROSS_SIZE]. */
+static void fill_idle_cross_row(display_color_t *row_buf, uint16_t row)
+{
+    const uint16_t size = SCREEN_IDLE_CROSS_SIZE;
+    const uint16_t t = SCREEN_IDLE_CROSS_THICKNESS;
+
+    for (uint16_t col = 0; col < size; col++) {
+        uint16_t anti_col = (uint16_t)(size - 1U - col);
+        bool on_diag = near_diagonal(row, col, t) || near_diagonal(row, anti_col, t);
+        row_buf[col] = on_diag ? COLOR_IDLE_CROSS : COLOR_BG;
+    }
+}
+
 static bool draw_idle_cross(uint16_t x, uint16_t y)
 {
     static display_color_t s_row_buf[SCREEN_IDLE_CROSS_SIZE]; /* см. докстринг — не на стеке */
     const uint16_t size = SCREEN_IDLE_CROSS_SIZE;
-    const uint16_t t = SCREEN_IDLE_CROSS_THICKNESS;
 
     while (Display_IsBusy()) { }
     for (uint16_t row = 0; row < size; row++) {
-        for (uint16_t col = 0; col < size; col++) {
-            uint16_t anti_col = (uint16_t)(size - 1U - col);
-            bool on_main_diag = (uint16_t)((row > col) ? (row - col) : (col - row)) <= t;
-            bool on_anti_diag = (uint16_t)((row > anti_col) ? (row - anti_col) : (anti_col - row)) <= t;
-            s_row_buf[col] = (on_main_diag || on_anti_diag) ? COLOR_IDLE_CROSS : COLOR_BG;
-        }
+        fill_idle_cross_row(s_row_buf, row);
         if (Display_SetWindow(x, (uint16_t)(y + row), (uint16_t)(x + size - 1U), (uint16_t)(y + row)) != DISPLAY_OK) {
             return false;
         }
@@ -931,11 +944,6 @@ static void print_fault_message_2line(uint8_t line1, uint8_t line2, uint16_t cen
 }
 
 /**
- * @brief Обновить содержимое канала: title-цвет, current/fault_msg (ровно
- *        одно из двух непусто), target (всегда число)
- * @param center_x Центр половины экрана этого канала
- */
-/**
  * @brief Целое для вывода в CURRENT с гистерезисом (см. SCREEN_TEMP_HYST_C).
  */
 static int32_t temp_for_display(channel_id_t ch, fixed_t cur)
@@ -961,163 +969,241 @@ bool Screen_GetShownTemp(channel_id_t ch, int32_t *out_temp)
     return true;
 }
 
-static void update_channel_content(channel_id_t ch, uint16_t center_x)
+/* Линии TextField одного канала. Раньше выбирались шестью тернарниками в самой
+ * update_channel_content() — теперь одна таблица, функциям ниже достаточно
+ * указателя на неё. */
+typedef struct {
+    uint8_t current;      /* число (Comic_60_dig) */
+    uint8_t fault_msg;    /* 1-я строка сообщения аварии */
+    uint8_t fault_msg2;   /* 2-я строка сообщения аварии */
+    uint8_t disabled_msg; /* "ВЫКЛ" */
+    uint8_t target;       /* уставка (временное отладочное поле) */
+    uint8_t sleep_temp;   /* текущая температура в PRESLEEP/SLEEP */
+} channel_lines_t;
+
+static const channel_lines_t s_channel_lines[CHANNEL_COUNT] = {
+    [CHANNEL_SOLDER] = {
+        LINE_SOLDER_CURRENT, LINE_SOLDER_FAULT_MSG, LINE_SOLDER_FAULT_MSG2,
+        LINE_SOLDER_DISABLED_MSG, LINE_SOLDER_TARGET, LINE_SOLDER_SLEEP_TEMP,
+    },
+    [CHANNEL_DESOLDER] = {
+        LINE_DESOLDER_CURRENT, LINE_DESOLDER_FAULT_MSG, LINE_DESOLDER_FAULT_MSG2,
+        LINE_DESOLDER_DISABLED_MSG, LINE_DESOLDER_TARGET, LINE_DESOLDER_SLEEP_TEMP,
+    },
+};
+
+/* X левого края растров, центрируемых по оси половины экрана этого канала. */
+static uint16_t idle_cross_x(uint16_t center_x)     { return (uint16_t)(center_x - SCREEN_IDLE_CROSS_SIZE / 2U); }
+static uint16_t asleep_icon_x(uint16_t center_x)    { return (uint16_t)(center_x - SLEEP_ICON_BITMAP_W / 2U); }
+static uint16_t presleep_icon_x(uint16_t center_x)  { return (uint16_t)(center_x - PRESLEEP_ICON_BITMAP_W / 2U); }
+
+typedef bool (*raster_op_fn)(uint16_t x, uint16_t y);
+
+/**
+ * @brief Что сейчас показывать на месте CURRENT канала.
+ *
+ * Приоритет состояний: авария > idle > выключен аккордом >
+ * спит (SLEEP_MODE_SLEEP) > предсон (SLEEP_MODE_PRESLEEP) > обычное число.
+ * idle/fault физически не пересекаются (Error_GetToolFault() — одно значение
+ * на канал, см. error.h), остальные пары — независимые подсистемы
+ * (State/Sleep), поэтому порядок проверок важен.
+ */
+static channel_content_t classify_channel_content(channel_id_t ch, const char *fault_msg)
 {
-    uint8_t line_current      = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_CURRENT      : LINE_DESOLDER_CURRENT;
-    uint8_t line_fault_msg    = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_FAULT_MSG    : LINE_DESOLDER_FAULT_MSG;
-    uint8_t line_fault_msg2   = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_FAULT_MSG2   : LINE_DESOLDER_FAULT_MSG2;
-    uint8_t line_disabled_msg = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_DISABLED_MSG : LINE_DESOLDER_DISABLED_MSG;
-    uint8_t line_target       = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_TARGET      : LINE_DESOLDER_TARGET;
-    uint8_t line_sleep_temp   = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_SLEEP_TEMP  : LINE_DESOLDER_SLEEP_TEMP;
-    uint16_t cross_x = (uint16_t)(center_x - SCREEN_IDLE_CROSS_SIZE / 2U);
-    uint16_t asleep_icon_x = (uint16_t)(center_x - SLEEP_ICON_BITMAP_W / 2U);
-    uint16_t presleep_icon_x = (uint16_t)(center_x - PRESLEEP_ICON_BITMAP_W / 2U);
+    if (fault_msg != NULL)       return CHANNEL_CONTENT_FAULT;
+    if (Error_IsChannelIdle(ch)) return CHANNEL_CONTENT_IDLE; /* инструмент не подключен — не авария, крестик (см. draw_idle_cross()) */
+    if (!State_IsEnabled(ch))    return CHANNEL_CONTENT_DISABLED;
 
-    const char *fault_msg = Error_GetChannelFaultMessage(ch); /* не NULL только для аварий: RTD_SHORT/RTD_OPEN/HEATER_OPEN/ERR ADS1220 */
-    bool enabled = State_IsEnabled(ch);
-    bool idle    = Error_IsChannelIdle(ch); /* инструмент не подключен — не авария, крестик (см. draw_idle_cross()) */
-    bool faulted = Error_IsChannelFaulted(ch); /* нужно для перекраски title/current в конце функции, см. apply_channel_colors() */
+    sleep_mode_t mode = Sleep_GetMode(ch);
+    if (mode == SLEEP_MODE_SLEEP)    return CHANNEL_CONTENT_ASLEEP;
+    if (mode == SLEEP_MODE_PRESLEEP) return CHANNEL_CONTENT_PRESLEEP;
+    return CHANNEL_CONTENT_NORMAL;
+}
 
-    /* Приоритет состояний: авария > idle > выключен аккордом >
-     * спит (SLEEP_MODE_SLEEP) > предсон (SLEEP_MODE_PRESLEEP) > обычное число. idle/fault физически не
-     * пересекаются (Error_GetToolFault() — одно значение на канал, см.
-     * error.h), остальные пары — независимые подсистемы (State/Sleep),
-     * поэтому порядок ниже важен. */
-    channel_content_t content;
-    if (fault_msg != NULL)      content = CHANNEL_CONTENT_FAULT;
-    else if (idle)              content = CHANNEL_CONTENT_IDLE;
-    else if (!enabled)          content = CHANNEL_CONTENT_DISABLED;
-    else if (Sleep_GetMode(ch) == SLEEP_MODE_SLEEP) content = CHANNEL_CONTENT_ASLEEP;
-    else if (Sleep_GetMode(ch) == SLEEP_MODE_PRESLEEP) content = CHANNEL_CONTENT_PRESLEEP;
-    else                        content = CHANNEL_CONTENT_NORMAL;
+/** @brief Показывает ли это состояние число температуры (CURRENT либо SLEEP_TEMP) — от этого зависит гистерезис. */
+static bool content_shows_temp(channel_content_t content)
+{
+    return content == CHANNEL_CONTENT_NORMAL || content == CHANNEL_CONTENT_PRESLEEP
+        || content == CHANNEL_CONTENT_ASLEEP;
+}
 
-    /* CURRENT (Comic_60_dig), FAULT_MSG/FAULT_MSG2 (AntiquaB_18_uni),
-     * DISABLED_MSG (AntiquaB_32_uni) и крестик (растр, см. draw_idle_cross())
-     * физически делят одну и ту же Y-полосу (см. докстринг файла) — в любой
-     * момент непусто ровно одно из них. TextField_Process() отрисовывает по
-     * одной dirty-строке за вызов, начиная с САМОГО МЕЛКОГО индекса (см.
-     * text_field.c) — у CURRENT индекс меньше, чем у FAULT_MSG/2/DISABLED_MSG.
-     * Если писать новое содержимое напрямую на кадре смены состояния, при
-     * ПОЯВЛЕНИИ более позднего по индексу поля порядок безопасен (CURRENT
-     * первым гасится на "", остальные рисуют текст на уже пустом месте), а
-     * вот при возврате К CURRENT порядок ломается: CURRENT (меньший индекс)
-     * рисуется первым и получает число, а прежнее поле гасится только
-     * ПОСЛЕ — и его стирание старого текста (та же Y-полоса!) затирает уже
-     * нарисованное. Статичным порядком индексов это не решить (для
-     * противоположного перехода порядок снова стал бы неверным) — поэтому на
-     * самом переходе сначала гасим ВСЕ ТЕКСТОВЫЕ поля и ждём, пока реально
-     * доиграет отрисовка (TextField_IsSettled()), и только потом на
-     * следующих вызовах рисуем настоящее новое содержимое.
-     *
-     * Крестик рисуется СЫРЫМ Display_WritePixelsDMA в обход TextField
-     * (см. s_idle_icon_shown) — TextField не знает про эти пиксели и не
-     * сотрёт их сам ни на выходе из IDLE, ни держа старое число под
-     * ним, поэтому erase_idle_cross() вызывается явно на выходе из IDLE,
-     * ДО того как эта фаза гашения текстовых полей вообще запускается —
-     * иначе крестик остаётся видимым поверх нового текста ещё один кадр. */
-    if (s_last_content[ch] == CHANNEL_CONTENT_IDLE && content != CHANNEL_CONTENT_IDLE && s_idle_icon_shown[ch]) {
-        if (erase_idle_cross(cross_x, SCREEN_IDLE_CROSS_Y)) {
-            s_idle_icon_shown[ch] = false;
-        }
+/**
+ * @brief Стереть растровую иконку состояния на выходе из него.
+ *
+ * Крестик IDLE, иконки SLEEP и PRESLEEP рисуются СЫРЫМ Display_WritePixelsDMA в
+ * обход TextField (см. s_idle_icon_shown и пр.) — TextField не знает про эти
+ * пиксели и не сотрёт их сам ни на выходе из состояния, ни держа старое
+ * число под ними, поэтому стирание вызывается явно на выходе, ДО того как
+ * фаза гашения текстовых полей (content_swap_settled()) вообще запускается —
+ * иначе иконка остаётся видимой поверх нового текста ещё один кадр. Растр
+ * PRESLEEP уже иконки SLEEP (58 против 70px), поэтому у каждой иконки свой
+ * прямоугольник стирания. Флаг сбрасывается только по факту успешного стирания.
+ */
+static void leave_raster_state(channel_content_t last, channel_content_t state, bool *shown,
+                               raster_op_fn erase, uint16_t x, uint16_t y)
+{
+    if (last == state && *shown && erase(x, y)) {
+        *shown = false;
     }
-    /* Иконка SLEEP — та же логика и та же причина (растр в обход TextField,
-     * см. докстринг выше про s_idle_icon_shown): гасим её явно на выходе из
-     * ASLEEP, до фазы гашения текстовых полей ниже. */
-    if (s_last_content[ch] == CHANNEL_CONTENT_ASLEEP && content != CHANNEL_CONTENT_ASLEEP && s_asleep_icon_shown[ch]) {
-        if (erase_asleep_icon(asleep_icon_x, SCREEN_ASLEEP_ICON_Y)) {
-            s_asleep_icon_shown[ch] = false;
-        }
-    }
-    /* Иконка PRESLEEP — то же самое при выходе из PRESLEEP (в SLEEP, обратно в
-     * NORMAL или в любое другое состояние). Её растр уже иконки SLEEP
-     * (58 против 70px), поэтому стирается своим прямоугольником, а не прямоугольником SLEEP. */
-    if (s_last_content[ch] == CHANNEL_CONTENT_PRESLEEP && content != CHANNEL_CONTENT_PRESLEEP && s_presleep_icon_shown[ch]) {
-        if (erase_presleep_icon(presleep_icon_x, SCREEN_PRESLEEP_ICON_Y)) {
-            s_presleep_icon_shown[ch] = false;
-        }
-    }
+}
 
+static void erase_icons_on_exit(channel_id_t ch, channel_content_t content, uint16_t center_x)
+{
+    channel_content_t last = s_last_content[ch];
+    if (last == content) {
+        return; /* выхода нет — ни одно из условий ниже выполниться не может */
+    }
+    leave_raster_state(last, CHANNEL_CONTENT_IDLE, &s_idle_icon_shown[ch],
+                       erase_idle_cross, idle_cross_x(center_x), SCREEN_IDLE_CROSS_Y);
+    leave_raster_state(last, CHANNEL_CONTENT_ASLEEP, &s_asleep_icon_shown[ch],
+                       erase_asleep_icon, asleep_icon_x(center_x), SCREEN_ASLEEP_ICON_Y);
+    leave_raster_state(last, CHANNEL_CONTENT_PRESLEEP, &s_presleep_icon_shown[ch],
+                       erase_presleep_icon, presleep_icon_x(center_x), SCREEN_PRESLEEP_ICON_Y);
+}
+
+/** @brief Нарисовать растр, если он ещё не на экране; флаг ставится только по факту успеха. */
+static void show_raster_once(bool *shown, raster_op_fn draw, uint16_t x, uint16_t y)
+{
+    if (!*shown && draw(x, y)) {
+        *shown = true;
+    }
+}
+
+/**
+ * @brief Фаза гашения на смене состояния. true — можно рисовать новое содержимое.
+ *
+ * CURRENT (Comic_60_dig), FAULT_MSG/FAULT_MSG2 (AntiquaB_18_uni),
+ * DISABLED_MSG (AntiquaB_32_uni) и растровые иконки (см. leave_raster_state())
+ * физически делят одну и ту же Y-полосу (см. докстринг файла) — в любой
+ * момент непусто ровно одно из них. TextField_Process() отрисовывает по
+ * одной dirty-строке за вызов, начиная с САМОГО МЕЛКОГО индекса (см.
+ * text_field.c) — у CURRENT индекс меньше, чем у FAULT_MSG/2/DISABLED_MSG.
+ * Если писать новое содержимое напрямую на кадре смены состояния, при
+ * ПОЯВЛЕНИИ более позднего по индексу поля порядок безопасен (CURRENT
+ * первым гасится на "", остальные рисуют текст на уже пустом месте), а
+ * вот при возврате К CURRENT порядок ломается: CURRENT (меньший индекс)
+ * рисуется первым и получает число, а прежнее поле гасится только
+ * ПОСЛЕ — и его стирание старого текста (та же Y-полоса!) затирает уже
+ * нарисованное. Статичным порядком индексов это не решить (для
+ * противоположного перехода порядок снова стал бы неверным) — поэтому на
+ * самом переходе сначала гасим ВСЕ ТЕКСТОВЫЕ поля и ждём, пока реально
+ * доиграет отрисовка (TextField_IsSettled()), и только потом на
+ * следующих вызовах рисуем настоящее новое содержимое.
+ */
+static bool content_swap_settled(channel_id_t ch, channel_content_t content,
+                                 const channel_lines_t *ln, uint16_t center_x)
+{
     if (!s_content_clearing[ch] && content != s_last_content[ch]) {
-        TextField_PrintfCentered(line_current, center_x, "");
-        TextField_PrintfCentered(line_fault_msg, center_x, "");
-        TextField_PrintfCentered(line_fault_msg2, center_x, "");
-        TextField_PrintfCentered(line_disabled_msg, center_x, "");
+        TextField_PrintfCentered(ln->current, center_x, "");
+        TextField_PrintfCentered(ln->fault_msg, center_x, "");
+        TextField_PrintfCentered(ln->fault_msg2, center_x, "");
+        TextField_PrintfCentered(ln->disabled_msg, center_x, "");
         s_content_clearing[ch] = true;
     }
 
-    if (s_content_clearing[ch]) {
-        if (TextField_IsSettled(line_current) && TextField_IsSettled(line_fault_msg)
-            && TextField_IsSettled(line_fault_msg2) && TextField_IsSettled(line_disabled_msg)) {
-            s_content_clearing[ch] = false;
-        }
+    if (s_content_clearing[ch]
+        && TextField_IsSettled(ln->current) && TextField_IsSettled(ln->fault_msg)
+        && TextField_IsSettled(ln->fault_msg2) && TextField_IsSettled(ln->disabled_msg)) {
+        s_content_clearing[ch] = false;
     }
 
-    if (!s_content_clearing[ch]) {
-        /* В фазах сна число тоже показывается (LINE_x_SLEEP_TEMP), с тем же
-         * гистерезисом — состояние гистерезиса при входе/выходе из PRESLEEP/SLEEP
-         * сохраняется, чтобы число не «прыгало» на границе фаз. */
-        if (content != CHANNEL_CONTENT_NORMAL && content != CHANNEL_CONTENT_PRESLEEP
-            && content != CHANNEL_CONTENT_ASLEEP) {
-            s_temp_shown_valid[ch] = false; /* число не показываем — при возврате начинаем без гистерезиса */
-        }
-        switch (content) {
-            case CHANNEL_CONTENT_FAULT:
-                /* Текущая температура НЕ выводится вообще — на её месте сообщение
-                 * в отдельном поле (Comic_60_dig кириллицу не содержит), в 2 строки. */
-                print_fault_message_2line(line_fault_msg, line_fault_msg2, center_x, fault_msg);
-                break;
-            case CHANNEL_CONTENT_IDLE:
-                /* Инструмент не подключен: ни красного, ни зуммера (см.
-                 * error.h) — растровый крестик пониженной контрастности
-                 * (см. COLOR_IDLE_CROSS) вместо текста. */
-                if (!s_idle_icon_shown[ch]) {
-                    if (draw_idle_cross(cross_x, SCREEN_IDLE_CROSS_Y)) {
-                        s_idle_icon_shown[ch] = true;
-                    }
-                }
-                break;
-            case CHANNEL_CONTENT_DISABLED:
-                /* Канал выключен коротким UP+DN (см. fsm.c) — "ВЫКЛ"
-                 * отдельным полем AntiquaB_32_uni (Comic_60_dig кириллицу не
-                 * содержит, как и у сообщений аварии). */
-                TextField_PrintfCentered(line_disabled_msg, center_x, "ВЫКЛ");
-                break;
-            case CHANNEL_CONTENT_ASLEEP:
-                /* SLEEP_MODE_SLEEP — растровая иконка (спящий смайлик, см.
-                 * sleep_icon.h), сырым Display_WritePixelsDMA в обход
-                 * TextField — тот же паттерн, что и у крестика IDLE (см.
-                 * draw_idle_cross()/s_idle_icon_shown). Нагрев в SLEEP
-                 * отключает Control — иконка только индицирует состояние. */
-                if (!s_asleep_icon_shown[ch]) {
-                    if (draw_asleep_icon(asleep_icon_x, SCREEN_ASLEEP_ICON_Y)) {
-                        s_asleep_icon_shown[ch] = true;
-                    }
-                }
-                TextField_PrintfCentered(line_sleep_temp, center_x, "%ld",
-                                          (long)temp_for_display(ch, State_GetCurrentTemp(ch)));
-                break;
-            case CHANNEL_CONTENT_PRESLEEP:
-                /* SLEEP_MODE_PRESLEEP — растровая иконка (зевающий смайлик, см.
-                 * presleep_icon.h) вместо большого числа, тот же паттерн, что и
-                 * у SLEEP. Нагрев продолжается (на сниженной уставке, см.
-                 * Control_PresleepSetpoint()), поэтому текущая температура
-                 * остаётся видна — под иконкой, как и в SLEEP. */
-                if (!s_presleep_icon_shown[ch]) {
-                    if (draw_presleep_icon(presleep_icon_x, SCREEN_PRESLEEP_ICON_Y)) {
-                        s_presleep_icon_shown[ch] = true;
-                    }
-                }
-                TextField_PrintfCentered(line_sleep_temp, center_x, "%ld",
-                                          (long)temp_for_display(ch, State_GetCurrentTemp(ch)));
-                break;
-            case CHANNEL_CONTENT_NORMAL:
-            default: {
-                fixed_t cur = State_GetCurrentTemp(ch);
-                int32_t cur_int = temp_for_display(ch, cur);
-                TextField_PrintfCentered(line_current, center_x, "%ld", (long)cur_int);
-                break;
-            }
-        }
+    return !s_content_clearing[ch];
+}
+
+/** @brief Текущая температура под иконкой сна/предсна (LINE_x_SLEEP_TEMP), с тем же гистерезисом, что и у CURRENT. */
+static void print_sleep_temp(channel_id_t ch, const channel_lines_t *ln, uint16_t center_x)
+{
+    TextField_PrintfCentered(ln->sleep_temp, center_x, "%ld",
+                             (long)temp_for_display(ch, State_GetCurrentTemp(ch)));
+}
+
+/** @brief Нарисовать содержимое канала для УЖЕ установившегося состояния (после фазы гашения). */
+static void draw_channel_content(channel_id_t ch, channel_content_t content,
+                                 const channel_lines_t *ln, uint16_t center_x, const char *fault_msg)
+{
+    /* В фазах сна число тоже показывается (LINE_x_SLEEP_TEMP), с тем же
+     * гистерезисом — состояние гистерезиса при входе/выходе из PRESLEEP/SLEEP
+     * сохраняется, чтобы число не «прыгало» на границе фаз. */
+    if (!content_shows_temp(content)) {
+        s_temp_shown_valid[ch] = false; /* число не показываем — при возврате начинаем без гистерезиса */
+    }
+    switch (content) {
+        case CHANNEL_CONTENT_FAULT:
+            /* Текущая температура НЕ выводится вообще — на её месте сообщение
+             * в отдельном поле (Comic_60_dig кириллицу не содержит), в 2 строки. */
+            print_fault_message_2line(ln->fault_msg, ln->fault_msg2, center_x, fault_msg);
+            break;
+        case CHANNEL_CONTENT_IDLE:
+            /* Инструмент не подключен: ни красного, ни зуммера (см.
+             * error.h) — растровый крестик пониженной контрастности
+             * (см. COLOR_IDLE_CROSS) вместо текста. */
+            show_raster_once(&s_idle_icon_shown[ch], draw_idle_cross, idle_cross_x(center_x), SCREEN_IDLE_CROSS_Y);
+            break;
+        case CHANNEL_CONTENT_DISABLED:
+            /* Канал выключен коротким UP+DN (см. fsm.c) — "ВЫКЛ"
+             * отдельным полем AntiquaB_32_uni (Comic_60_dig кириллицу не
+             * содержит, как и у сообщений аварии). */
+            TextField_PrintfCentered(ln->disabled_msg, center_x, "ВЫКЛ");
+            break;
+        case CHANNEL_CONTENT_ASLEEP:
+            /* SLEEP_MODE_SLEEP — растровая иконка (спящий смайлик, см.
+             * sleep_icon.h) сырым Display_WritePixelsDMA в обход TextField —
+             * тот же паттерн, что и у крестика IDLE. Нагрев в SLEEP
+             * отключает Control — иконка только индицирует состояние. */
+            show_raster_once(&s_asleep_icon_shown[ch], draw_asleep_icon, asleep_icon_x(center_x), SCREEN_ASLEEP_ICON_Y);
+            print_sleep_temp(ch, ln, center_x);
+            break;
+        case CHANNEL_CONTENT_PRESLEEP:
+            /* SLEEP_MODE_PRESLEEP — растровая иконка (зевающий смайлик, см.
+             * presleep_icon.h) вместо большого числа, тот же паттерн, что и
+             * у SLEEP. Нагрев продолжается (на сниженной уставке, см.
+             * Control_PresleepSetpoint()), поэтому текущая температура
+             * остаётся видна — под иконкой, как и в SLEEP. */
+            show_raster_once(&s_presleep_icon_shown[ch], draw_presleep_icon, presleep_icon_x(center_x), SCREEN_PRESLEEP_ICON_Y);
+            print_sleep_temp(ch, ln, center_x);
+            break;
+        case CHANNEL_CONTENT_NORMAL:
+        default:
+            TextField_PrintfCentered(ln->current, center_x, "%ld",
+                                     (long)temp_for_display(ch, State_GetCurrentTemp(ch)));
+            break;
+    }
+}
+
+/**
+ * @brief Уставка для показа: в PRESLEEP реально применяется min(уставка,
+ *        PresleepTemp), см. Control_PresleepSetpoint() — для визуального
+ *        контроля показываем именно её. Из PRESLEEP канал выходит только по
+ *        активности на входах Sleep — инструмент снят с подставки (Dock) или
+ *        нажата кнопка помпы (Btn_Pump), а также при включении канала
+ *        (Sleep_ForceAwake()); тогда снова показывается уставка.
+ */
+static uint16_t target_for_display(channel_id_t ch, bool enabled)
+{
+    uint16_t target = Settings_GetTarget(ch);
+    if (enabled && !Error_IsChannelBlocked(ch) && Sleep_GetMode(ch) == SLEEP_MODE_PRESLEEP) {
+        target = (uint16_t)FIXED_TO_INT(Control_PresleepSetpoint(ch, FIXED_FROM_INT(target)));
+    }
+    return target;
+}
+
+/**
+ * @brief Обновить содержимое канала: title-цвет, current/fault_msg (ровно
+ *        одно из двух непусто), target (всегда число)
+ * @param center_x Центр половины экрана этого канала
+ */
+static void update_channel_content(channel_id_t ch, uint16_t center_x)
+{
+    const channel_lines_t *ln = &s_channel_lines[ch];
+    const char *fault_msg = Error_GetChannelFaultMessage(ch); /* не NULL только для аварий: RTD_SHORT/RTD_OPEN/HEATER_OPEN/ERR ADS1220 */
+    bool enabled = State_IsEnabled(ch);
+    bool faulted = Error_IsChannelFaulted(ch); /* нужно для перекраски title/current в конце функции, см. apply_channel_colors() */
+    channel_content_t content = classify_channel_content(ch, fault_msg);
+
+    erase_icons_on_exit(ch, content, center_x);
+
+    if (content_swap_settled(ch, content, ln, center_x)) {
+        draw_channel_content(ch, content, ln, center_x, fault_msg);
     }
 
     /* Температура в фазах сна гасится сразу, как только канал вышел из
@@ -1125,23 +1211,13 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
      * делит область с CURRENT/FAULT_MSG/DISABLED_MSG/иконками, порядок
      * отрисовки с ними неважен. */
     if (content != CHANNEL_CONTENT_PRESLEEP && content != CHANNEL_CONTENT_ASLEEP) {
-        TextField_PrintfCentered(line_sleep_temp, center_x, "");
+        TextField_PrintfCentered(ln->sleep_temp, center_x, "");
     }
 
     /* Целевая — всегда числом, независимо от неисправности (см. шапку
      * файла); физически не пересекается с CURRENT/FAULT_MSG/DISABLED_MSG
      * областью (см. SCREEN_TARGET_Y) — стадию гашения выше не ждёт. */
-    uint16_t target = Settings_GetTarget(ch);
-    if (enabled && !Error_IsChannelBlocked(ch) && Sleep_GetMode(ch) == SLEEP_MODE_PRESLEEP) {
-        /* В PRESLEEP реально применяется min(уставка, PresleepTemp), см.
-         * Control_PresleepSetpoint() — для визуального контроля показываем именно её.
-         * Из PRESLEEP канал выходит только по активности на входах Sleep —
-         * инструмент снят с подставки (Dock) или нажата кнопка помпы (Btn_Pump),
-         * а также при включении канала (Sleep_ForceAwake()); тогда снова
-         * показывается уставка. */
-        target = (uint16_t)FIXED_TO_INT(Control_PresleepSetpoint(ch, FIXED_FROM_INT(target)));
-    }
-    TextField_PrintfCentered(line_target, center_x, "%u", (unsigned)target);
+    TextField_PrintfCentered(ln->target, center_x, "%u", (unsigned)target_for_display(ch, enabled));
 
     if (faulted != (s_last_content[ch] == CHANNEL_CONTENT_FAULT)) {
         apply_channel_colors(ch);
@@ -1182,171 +1258,184 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
  * (новый buf, посчитанный чуть выше, туда ещё не долетел). См. докстринг
  * TextField_GetShownWidth()/TextField_IsSettled() в text_field.h.
  */
-static void update_sleep_status(channel_id_t ch, uint8_t line, uint16_t right_edge_x)
+/** @brief Что показывать в инфозоне для таймера сна: текст, нужна ли иконка циферблата, цвет. */
+typedef struct {
+    char            text[16];
+    bool            timer_visible;
+    display_color_t color;
+} sleep_status_view_t;
+
+static void format_sleep_timer(char *buf, size_t size, uint32_t remaining)
+{
+    snprintf(buf, size, "%lu:%02lu", (unsigned long)(remaining / 60U), (unsigned long)(remaining % 60U));
+}
+
+/**
+ * @brief Посчитать вид таймера сна канала (см. таблицу состояний в докстринге
+ *        update_sleep_status()). Цвет зависит не от mode напрямую, а от того,
+ *        КАКОЙ порог сейчас отсчитывается.
+ */
+static void sleep_status_view(channel_id_t ch, sleep_status_view_t *v)
 {
     /* Таймер сна не показывается, когда канал выключен ИЛИ инструмент не
      * подключен (Error_IsChannelIdle(), см. error.h) — у отсутствующего
      * инструмента нет ни таймера, ни статуса сна (ни "Предсон"/"Спит", ни
      * иконки). Sleep сам держит такой канал в AWAKE без таймера, так что
-     * проверка здесь — страховка на долю такта до его реакции. */
-    bool enabled = State_IsEnabled(ch) && !Error_IsChannelIdle(ch);
-    sleep_mode_t mode = enabled ? Sleep_GetMode(ch) : SLEEP_MODE_AWAKE;
-    uint32_t remaining = enabled ? Sleep_GetRemainingSeconds(ch) : 0;
-    uint32_t min = remaining / 60U;
-    uint32_t sec = remaining % 60U;
-    bool timer_visible = true;
-    char buf[16];
+     * проверка здесь — страховка на долю такта до его реакции. Выключенный
+     * аккордом UP+DN канал "уснуть" не может (физически не греет и так):
+     * ведём себя как AWAKE без простоя — пусто, без иконки; Sleep_GetMode()/
+     * Sleep_GetRemainingSeconds() для него не зовём вовсе. */
+    bool active = State_IsEnabled(ch) && !Error_IsChannelIdle(ch);
+    sleep_mode_t mode = active ? Sleep_GetMode(ch) : SLEEP_MODE_AWAKE;
+    uint32_t remaining = active ? Sleep_GetRemainingSeconds(ch) : 0;
 
-    /* Канал выключен коротким UP+DN — таймеру сна нечего отсчитывать
-     * (физически не греет и так, "уснуть" ему не с чего): ведём себя как
-     * AWAKE без простоя (mode/remaining уже принудительно приведены выше),
-     * дальше switch отработает штатной веткой SLEEP_MODE_AWAKE/remaining==0
-     * — пусто, без иконки. Sleep_GetMode()/Sleep_GetRemainingSeconds() не
-     * зовём вовсе, когда выключено — модуль Sleep ничего не знает про
-     * State_IsEnabled() и продолжает свой отсчёт по физическому простою
-     * независимо от него, так что спрашивать его здесь бессмысленно. */
+    v->text[0] = '\0';
+    v->timer_visible = true;
+    v->color = COLOR_SLEEP_AWAKE;
 
     switch (mode) {
         case SLEEP_MODE_AWAKE:
             if (remaining == 0) {
-                buf[0] = '\0';
-                timer_visible = false; /* нечего показывать — таймер не идёт */
+                v->timer_visible = false; /* нечего показывать — таймер не идёт; цвет не важен */
             } else {
-                snprintf(buf, sizeof(buf), "%lu:%02lu", (unsigned long)min, (unsigned long)sec);
+                format_sleep_timer(v->text, sizeof(v->text), remaining);
+                /* Если PreSleepTimeout включён, это отсчёт ДО НЕГО (жёлтый,
+                 * "первый" таймер); если выключен, Sleep_GetRemainingSeconds() в
+                 * AWAKE уже считает от простоя напрямую до SLEEP (см. sleep.c) —
+                 * фактически "второй" таймер, красный, стартует сразу по простою
+                 * вместо первого. */
+                v->color = (Settings_GetPreSleepTimeout(ch) > 0) ? COLOR_SLEEP_PRESLEEP : COLOR_SLEEP_SLEEP;
             }
             break;
         case SLEEP_MODE_PRESLEEP:
-            if (remaining == 0) snprintf(buf, sizeof(buf), "Предсон");
-            else snprintf(buf, sizeof(buf), "%lu:%02lu", (unsigned long)min, (unsigned long)sec);
+            /* remaining==0 -> SleepTimeout выключен, PRESLEEP бессрочно, "второго"
+             * таймера нет — жёлтый статичный "Предсон". remaining>0 -> первый
+             * (PreSleep) уже сработал, это отсчёт "второго" (Sleep) таймера —
+             * красный, а не жёлтая "Предсон". */
+            if (remaining == 0) {
+                snprintf(v->text, sizeof(v->text), "Предсон");
+                v->color = COLOR_SLEEP_PRESLEEP;
+            } else {
+                format_sleep_timer(v->text, sizeof(v->text), remaining);
+                v->color = COLOR_SLEEP_SLEEP;
+            }
             break;
         case SLEEP_MODE_SLEEP:
-            /* SLEEP показывает иконка на месте температуры
-             * (CHANNEL_CONTENT_ASLEEP, см. update_channel_content()), в
-             * инфозоне показывать нечего — как и у AWAKE/remaining==0. */
-            buf[0] = '\0';
-            timer_visible = false;
-            break;
-        default:
-            buf[0] = '\0';
-            break;
-    }
-    TextField_PrintfRightAligned(line, right_edge_x, "%s", buf);
-
-    /* Трогаем иконку только когда строка settled — см. докстринг функции
-     * выше и TextField_IsSettled() в text_field.h. Пока не settled (buf
-     * только что запрошен, но предыдущее задание для этой строки ещё не
-     * доиграно), просто ничего не делаем — иконка остаётся там, где её
-     * оставило предыдущее settled-состояние, и это безопасно по
-     * определению. */
-    if (TextField_IsSettled(line)) {
-        uint16_t new_icon_x = s_sleep_icon_x[ch];
-        if (timer_visible) {
-            /* Строка settled -> shown_text уже равен buf -> ширина финальная,
-             * реально нарисованная. Никакого max() с шириной buf не нужно —
-             * это одна и та же ширина. */
-            uint16_t shown_w = TextField_GetShownWidth(line);
-            new_icon_x = (uint16_t)(right_edge_x - shown_w - SLEEP_ICON_GAP_X - SLEEP_ICON_W);
-        }
-        bool icon_moved = timer_visible && s_sleep_icon_shown[ch] && (new_icon_x != s_sleep_icon_x[ch]);
-        if (timer_visible != s_sleep_icon_shown[ch] || icon_moved) {
-            /* Состояние (s_sleep_icon_shown[]/s_sleep_icon_x[]) фиксируем
-             * ТОЛЬКО по факту успеха каждой операции — не "оптимистично".
-             * Если стирание/рисование не удалось, оставляем состояние как
-             * было (или как получилось после частичного успеха), чтобы
-             * следующий settled-вызов сам повторил недостающий шаг, а не
-             * решил, что экран уже соответствует желаемому виду. */
-            if (s_sleep_icon_shown[ch]) {
-                if (erase_sleep_icon(s_sleep_icon_x[ch], SLEEP_ICON_Y)) {
-                    s_sleep_icon_shown[ch] = false; /* точно стёрта, старое место чистое */
-                }
-            }
-            if (timer_visible && !s_sleep_icon_shown[ch]) {
-                if (draw_sleep_icon(new_icon_x, SLEEP_ICON_Y)) {
-                    s_sleep_icon_x[ch] = new_icon_x;
-                    s_sleep_icon_shown[ch] = true;
-                }
-            }
-        }
-    }
-
-    display_color_t color = COLOR_SLEEP_AWAKE;
-    switch (mode) {
-        case SLEEP_MODE_AWAKE:
-            /* remaining==0 -> не простаивает, ничего не считаем, цвет не важен
-             * (buf пуст). remaining>0 -> если PreSleepTimeout включён, это
-             * отсчёт ДО НЕГО (жёлтый, "первый" таймер); если выключен,
-             * Sleep_GetRemainingSeconds() в AWAKE уже считает от простоя
-             * напрямую до SLEEP (см. sleep.c) — фактически "второй" таймер,
-             * красный, стартует сразу по простою вместо первого. */
-            if (remaining != 0) {
-                color = (Settings_GetPreSleepTimeout(ch) > 0) ? COLOR_SLEEP_PRESLEEP : COLOR_SLEEP_SLEEP;
-            }
-            break;
-        case SLEEP_MODE_PRESLEEP:
-            /* remaining==0 -> SleepTimeout выключен, PRESLEEP бессрочно,
-             * "второго" таймера нет — жёлтый статичный "Предсон". remaining>0
-             * -> первый (PreSleep) уже сработал, это отсчёт "второго"
-             * (Sleep) таймера — красный, а не жёлтая "Предсон". */
-            color = (remaining == 0) ? COLOR_SLEEP_PRESLEEP : COLOR_SLEEP_SLEEP;
-            break;
-        case SLEEP_MODE_SLEEP:
-            color = COLOR_SLEEP_SLEEP;
+            /* SLEEP показывает иконка на месте температуры (CHANNEL_CONTENT_ASLEEP,
+             * см. update_channel_content()), в инфозоне показывать нечего. */
+            v->timer_visible = false;
+            v->color = COLOR_SLEEP_SLEEP;
             break;
         default:
             break;
     }
-    if (color != s_last_sleep_color[ch]) {
-        TextField_SetColors(line, color, COLOR_BG);
-        s_last_sleep_color[ch] = color;
+}
+
+/** @brief Стереть иконку циферблата со старого места и, если нужна, нарисовать на новом. Флаги — по факту успеха каждой операции. */
+static void redraw_sleep_icon(channel_id_t ch, bool timer_visible, uint16_t new_icon_x)
+{
+    if (s_sleep_icon_shown[ch] && erase_sleep_icon(s_sleep_icon_x[ch], SLEEP_ICON_Y)) {
+        s_sleep_icon_shown[ch] = false; /* точно стёрта, старое место чистое */
+    }
+    if (timer_visible && !s_sleep_icon_shown[ch] && draw_sleep_icon(new_icon_x, SLEEP_ICON_Y)) {
+        s_sleep_icon_x[ch] = new_icon_x;
+        s_sleep_icon_shown[ch] = true;
+    }
+}
+
+/**
+ * @brief Привести иконку циферблата к желаемому виду (нужна/не нужна, позиция).
+ *
+ * Трогаем иконку только когда строка settled — см. докстринг
+ * update_sleep_status() и TextField_IsSettled() в text_field.h: пока не settled
+ * (текст только что запрошен, но предыдущее задание для этой строки ещё не
+ * доиграно), иконка остаётся там, где её оставило предыдущее settled-состояние,
+ * и это безопасно по определению.
+ *
+ * Состояние (s_sleep_icon_shown[]/s_sleep_icon_x[]) фиксируем ТОЛЬКО по факту
+ * успеха каждой операции — не "оптимистично". Если стирание/рисование не
+ * удалось, оставляем состояние как было (или как получилось после частичного
+ * успеха), чтобы следующий settled-вызов сам повторил недостающий шаг.
+ */
+static void sync_sleep_icon(channel_id_t ch, uint8_t line, uint16_t right_edge_x, bool timer_visible)
+{
+    if (!TextField_IsSettled(line)) {
+        return;
+    }
+
+    uint16_t new_icon_x = s_sleep_icon_x[ch];
+    if (timer_visible) {
+        /* Строка settled -> shown_text уже равен buf -> ширина финальная,
+         * реально нарисованная. Никакого max() с шириной buf не нужно —
+         * это одна и та же ширина. */
+        uint16_t shown_w = TextField_GetShownWidth(line);
+        new_icon_x = (uint16_t)(right_edge_x - shown_w - SLEEP_ICON_GAP_X - SLEEP_ICON_W);
+    }
+
+    /* Нужна правка: видимость не совпала, либо иконка видна и должна сдвинуться
+     * (при timer_visible == s_sleep_icon_shown[] "иконка видна" == timer_visible). */
+    bool stale = (timer_visible != s_sleep_icon_shown[ch])
+              || (timer_visible && new_icon_x != s_sleep_icon_x[ch]);
+    if (stale) {
+        redraw_sleep_icon(ch, timer_visible, new_icon_x);
+    }
+}
+
+static void update_sleep_status(channel_id_t ch, uint8_t line, uint16_t right_edge_x)
+{
+    sleep_status_view_t view;
+    sleep_status_view(ch, &view);
+
+    TextField_PrintfRightAligned(line, right_edge_x, "%s", view.text);
+    sync_sleep_icon(ch, line, right_edge_x, view.timer_visible);
+
+    if (view.color != s_last_sleep_color[ch]) {
+        TextField_SetColors(line, view.color, COLOR_BG);
+        s_last_sleep_color[ch] = view.color;
     }
 }
 
 /**
  * @brief Отрисовать экран сервисного меню целиком (заменяет главный экран)
  */
-static void render_menu(void)
+typedef const char *(*menu_text_line_fn)(uint8_t line_index);
+
+/** @brief Экран-сообщение меню: первые count строк — текст из getter, остальные пустые, цвет обычный. */
+static void render_menu_message(menu_text_line_fn getter, uint8_t count)
 {
-    TextField_Printf(LINE_MENU_TITLE, "%s", Menu_GetTitle());
-
-    if (Menu_IsShowingExpertWarning()) {
-        for (uint8_t i = 0; i < SCREEN_MENU_ITEM_ROWS; i++) {
-            uint8_t line = (uint8_t)(LINE_MENU_ITEM_0 + i);
-            if (i < 4) {
-                TextField_Printf(line, "%s", Menu_GetExpertWarningLine(i));
-            } else {
-                TextField_Printf(line, "");
-            }
-            TextField_SetColors(line, COLOR_MENU_NORMAL, COLOR_BG);
+    for (uint8_t i = 0; i < SCREEN_MENU_ITEM_ROWS; i++) {
+        uint8_t line = (uint8_t)(LINE_MENU_ITEM_0 + i);
+        if (i < count) {
+            TextField_Printf(line, "%s", getter(i));
+        } else {
+            TextField_Printf(line, "");
         }
-        return;
+        TextField_SetColors(line, COLOR_MENU_NORMAL, COLOR_BG);
     }
+}
 
-    if (Menu_IsShowingResetConfirm()) {
-        for (uint8_t i = 0; i < SCREEN_MENU_ITEM_ROWS; i++) {
-            uint8_t line = (uint8_t)(LINE_MENU_ITEM_0 + i);
-            if (i < 3) {
-                TextField_Printf(line, "%s", Menu_GetResetConfirmLine(i));
-            } else {
-                TextField_Printf(line, "");
-            }
-            TextField_SetColors(line, COLOR_MENU_NORMAL, COLOR_BG);
-        }
-        return;
+static display_color_t menu_item_color(uint8_t i, uint8_t cursor, bool editing)
+{
+    if (i != cursor) {
+        return COLOR_MENU_NORMAL;
     }
+    return editing ? COLOR_MENU_EDITING : COLOR_MENU_CURSOR;
+}
 
-    if (Menu_IsShowingResetDone()) {
-        for (uint8_t i = 0; i < SCREEN_MENU_ITEM_ROWS; i++) {
-            uint8_t line = (uint8_t)(LINE_MENU_ITEM_0 + i);
-            if (i < 3) {
-                TextField_Printf(line, "%s", Menu_GetResetDoneLine(i));
-            } else {
-                TextField_Printf(line, "");
-            }
-            TextField_SetColors(line, COLOR_MENU_NORMAL, COLOR_BG);
-        }
-        return;
+/** @brief Строка пункта: "Название  значение" либо просто "Название" (у пунктов без значения). */
+static void print_menu_item(uint8_t line, uint8_t i)
+{
+    char value[16];
+    Menu_GetItemValueText(i, value, sizeof(value));
+    if (value[0] != '\0') {
+        TextField_Printf(line, "%s  %s", Menu_GetItemLabel(i), value);
+    } else {
+        TextField_Printf(line, "%s", Menu_GetItemLabel(i));
     }
+}
 
+static void render_menu_items(void)
+{
     uint8_t count = Menu_GetItemCount();
     uint8_t cursor = Menu_GetCursor();
     bool editing = Menu_IsEditing();
@@ -1355,24 +1444,26 @@ static void render_menu(void)
         uint8_t line = (uint8_t)(LINE_MENU_ITEM_0 + i);
 
         if (i < count) {
-            char value[16];
-            Menu_GetItemValueText(i, value, sizeof(value));
-            if (value[0] != '\0') {
-                TextField_Printf(line, "%s  %s", Menu_GetItemLabel(i), value);
-            } else {
-                TextField_Printf(line, "%s", Menu_GetItemLabel(i));
-            }
+            print_menu_item(line, i);
         } else {
             TextField_Printf(line, ""); /* уровень User короче Expert — лишние строки пустые */
         }
+        TextField_SetColors(line, menu_item_color(i, cursor, editing), COLOR_BG);
+    }
+}
 
-        display_color_t color;
-        if (i == cursor) {
-            color = editing ? COLOR_MENU_EDITING : COLOR_MENU_CURSOR;
-        } else {
-            color = COLOR_MENU_NORMAL;
-        }
-        TextField_SetColors(line, color, COLOR_BG);
+static void render_menu(void)
+{
+    TextField_Printf(LINE_MENU_TITLE, "%s", Menu_GetTitle());
+
+    if (Menu_IsShowingExpertWarning()) {
+        render_menu_message(Menu_GetExpertWarningLine, 4);
+    } else if (Menu_IsShowingResetConfirm()) {
+        render_menu_message(Menu_GetResetConfirmLine, 3);
+    } else if (Menu_IsShowingResetDone()) {
+        render_menu_message(Menu_GetResetDoneLine, 3);
+    } else {
+        render_menu_items();
     }
 }
 

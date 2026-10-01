@@ -1,6 +1,7 @@
 # CI: проверяет каждый push/PR в двух независимых джобах —
 #   firmware-build — компилируется ли прошивка целиком (tools/ci-build.sh);
-#   buttons-tests  — проходят ли хост-тесты драйвера кнопок (tests/buttons).
+#   buttons-tests  — проходят ли хост-тесты драйвера кнопок (tests/buttons);
+#   screen-golden  — не изменились ли обращения экрана к дисплею (tests/screen_golden).
 # Обе — быстрая проверка «не сломано ли», не замена ручной проверки на
 # железе перед прошивкой.
 name: CI
@@ -33,3 +34,12 @@ jobs:
 
       - name: Run tests
         run: make -C tests/buttons
+
+  screen-golden:
+    name: Screen golden-master test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run golden test
+        run: make -C tests/screen_golden check
