@@ -70,6 +70,6 @@
 
 ## Связь с другими модулями
 
-- Рендерится через `Screen` (`render_menu()` в `screen.c`) — см. `Screen.md`.
+- Рендерится через `Screen` (`ScreenMenu_Render()` в `screen_menu.c`) — см. `Screen.md`.
 - События кнопок и глобальные жесты выхода обрабатываются в `Fsm` — см. `FSM.md`.
 - Значения читаются/пишутся через `Settings` — см. `Settings.md`.

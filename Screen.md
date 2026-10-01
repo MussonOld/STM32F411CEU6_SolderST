@@ -27,9 +27,23 @@
 
 Заставка при включении — в `main.c`, читает тот же режим (0 — не показывать); настройки для этого загружаются до неё.
 
+## Модули (`App/Screen/`)
+
+`screen.c` вырос до 1500 строк, поэтому разбит по зонам ответственности (поведение не менялось — трасса обращений к дисплею проверяется `tests/screen_golden`):
+
+| Файл | Что внутри |
+|---|---|
+| `screen.c` | `Screen_Init()`/`Screen_Update()`, смена режима экрана (`clear_screen_for_mode_switch()`), разделитель, пресеты, инфо-сообщение, заставка Standby |
+| `screen_channel.c/.h` | оба канала: содержимое CURRENT-блока (`update_channel_content()` и его шаги), уставка, гейдж мощности, цвета активного канала, таймер сна в инфозоне, `Screen_GetShownTemp()` |
+| `screen_icons.c/.h` | растровые иконки (`ScreenIcons_*`): циферблат, крестик «не подключен», смайлики SLEEP/PRESLEEP, иконки заголовков |
+| `screen_menu.c/.h` | экран сервисного меню (`ScreenMenu_Render()`) |
+| `screen_layout.h` | приватный заголовок: индексы строк TextField, геометрия, цвета |
+
+Порядок обращений `Screen_Update()` к модулям: `ScreenChannel_UpdateContent()` → пресеты → `ScreenChannel_UpdateActiveColors()` → инфо-сообщение → `ScreenChannel_UpdateSleepStatus()`. Он закреплён golden-тестом (`make -C tests/screen_golden check`; после намеренного изменения вида экрана эталон обновляется `make -C tests/screen_golden golden`).
+
 ## Сервисное меню
 
-При `SCREEN_MODE_SERVICE` меню **полностью заменяет** главный экран (`render_menu()` рисуется вместо `update_channel_content()`, остальное не обновляется).
+При `SCREEN_MODE_SERVICE` меню **полностью заменяет** главный экран (`ScreenMenu_Render()` рисуется вместо `ScreenChannel_UpdateContent()`, остальное не обновляется).
 
 - Заголовок меню — `Menu_GetTitle()`.
 - Если показывается предупреждение о входе в Expert-уровень (`Menu_IsShowingExpertWarning()`) — выводится текст предупреждения (4 строки, `Menu_GetExpertWarningLine(0..3)`), остальные строки очищаются. Каждая строка предупреждения (как и любая другая) обязана помещаться по ширине от `SCREEN_MENU_ITEM_X` до правого края экрана — иначе `gfx` обрежет её (см. `UI.md`).
