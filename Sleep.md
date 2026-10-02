@@ -68,3 +68,7 @@
 - Отображается в инфозоне главного экрана через `Screen` (`update_sleep_status()`) — см. `Screen.md`.
 - `Fsm` вызывает `Sleep_ForceAwake(ch)` при включении канала аккордом UP+DN — см. `FSM.md`.
 - Влияние на нагрев/уставку — решение `Control` (см. `Control.md`): в SLEEP нагрев отключён, в PRESLEEP уставка = `min(уставка, PresleepTemp)`.
+
+## Реализация
+
+`poll_channel()` в `sleep.c` — тонкая обёртка над шагами: канал без инструмента сбрасывается (`reset_channel()`), иначе `debounce_idle()` → `apply_idle_edge()` (фронты запускают/сбрасывают таймер) → `mode_for_elapsed()` (чистая функция: время простоя и два таймаута → режим) → сигнал `notify_if_entered_sleep()`. Поведение, включая границы порогов с точностью до миллисекунды, переполнение `HAL_GetTick()` и тик 0, закреплено golden-тестом (`make -C tests/sleep_golden check`; после намеренного изменения логики сна эталон обновляется `make -C tests/sleep_golden golden`).

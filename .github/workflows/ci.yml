@@ -2,7 +2,8 @@
 #   firmware-build — компилируется ли прошивка целиком (tools/ci-build.sh);
 #   buttons-tests  — проходят ли хост-тесты драйвера кнопок (tests/buttons);
 #   screen-golden  — не изменились ли обращения экрана к дисплею (tests/screen_golden);
-#   menu-golden    — не изменилось ли поведение меню (tests/menu_golden).
+#   menu-golden    — не изменилось ли поведение меню (tests/menu_golden);
+#   sleep-golden   — не изменилось ли поведение таймеров сна (tests/sleep_golden).
 # Обе — быстрая проверка «не сломано ли», не замена ручной проверки на
 # железе перед прошивкой.
 name: CI
@@ -53,3 +54,12 @@ jobs:
 
       - name: Run golden test
         run: make -C tests/menu_golden check
+
+  sleep-golden:
+    name: Sleep golden-master test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run golden test
+        run: make -C tests/sleep_golden check

@@ -1,7 +1,7 @@
 /**
  * Заглушка HAL для хост-тестов (не входит в сборку прошивки).
- * Даёт ровно то, что нужно buttons.c и Core/Inc/main.h: номера пинов,
- * GPIOx->IDR и HAL_GetTick(). Значения задаёт тест.
+ * Даёт ровно то, что нужно buttons.c, sleep.c и Core/Inc/main.h: номера пинов,
+ * GPIOx->IDR, HAL_GetTick() и HAL_GPIO_ReadPin(). Значения задаёт тест.
  */
 #ifndef STUB_STM32F4XX_HAL_H
 #define STUB_STM32F4XX_HAL_H
@@ -37,5 +37,9 @@ extern GPIO_TypeDef test_gpioa, test_gpiob, test_gpioc;
 #define GPIOC (&test_gpioc)
 
 uint32_t HAL_GetTick(void);
+
+/* Для sleep.c (tests/sleep_golden): чтение уровня пина — реализацию даёт тест. */
+typedef enum { GPIO_PIN_RESET = 0, GPIO_PIN_SET = 1 } GPIO_PinState;
+GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin);
 
 #endif /* STUB_STM32F4XX_HAL_H */

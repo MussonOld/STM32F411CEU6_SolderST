@@ -1,0 +1,8 @@
+RESULT steps=300000 seed=1 hash=7fcd015db2108da9 events=1221391
+RESULT steps=300000 seed=2 hash=db4fdc14a62e22d0 events=1221710
+RESULT steps=300000 seed=3 hash=54d50d68a09ee2c0 events=1221106
+RESULT steps=300000 seed=4 hash=15180e56fdeb7abe events=1221430
+RESULT steps=300000 seed=5 hash=da454dd876e3fa33 events=1221266
+RESULT steps=300000 seed=6 hash=474e18bb2d12da87 events=1221793
+RESULT steps=300000 seed=7 hash=b99600df5196ecad events=1220927
+RESULT steps=300000 seed=8 hash=717ded89ede8fb6f events=1221566

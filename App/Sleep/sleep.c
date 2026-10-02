@@ -81,15 +81,92 @@ static void notify_if_entered_sleep(channel_id_t ch, sleep_mode_t prev_mode, sle
     }
 }
 
+/** @brief Запустить единый таймер простоя от текущего момента. */
+static void start_idle_timer(sleep_channel_t *c)
+{
+    c->idle_start_tick = HAL_GetTick();
+    if (c->idle_start_tick == 0) c->idle_start_tick = 1; /* см. комментарий в структуре: 0 зарезервирован под "не идёт" */
+}
+
+/** @brief Инструмент не подключен — дебаунс и таймер сброшены (см. poll_channel()). */
+static void reset_channel(sleep_channel_t *c)
+{
+    c->debounced_idle     = false;
+    c->raw_idle_candidate = false;
+    c->stable_count       = 0;
+    stop_reset_timer(c);
+}
+
 void Sleep_Init(void)
 {
     for (int i = 0; i < CHANNEL_COUNT; i++) {
-        sleep_channel_t *c = &s_channels[i];
-        c->debounced_idle      = false;
-        c->raw_idle_candidate  = false;
-        c->stable_count        = 0;
+        reset_channel(&s_channels[i]);
+    }
+}
+
+/**
+ * @brief Дебаунс (см. buttons.c: N стабильных опросов подряд). Возвращает
+ *        дебаунсенный уровень "простаивает": новый, если сырой уровень
+ *        SLEEP_DEBOUNCE_TICKS опросов подряд не менялся, иначе прежний.
+ */
+static bool debounce_idle(sleep_channel_t *c, bool raw)
+{
+    if (raw == c->raw_idle_candidate) {
+        if (c->stable_count < SLEEP_DEBOUNCE_TICKS) {
+            c->stable_count++;
+        }
+    } else {
+        c->raw_idle_candidate = raw;
+        c->stable_count = 1;
+    }
+
+    return (c->stable_count >= SLEEP_DEBOUNCE_TICKS) ? c->raw_idle_candidate
+                                                     : c->debounced_idle;
+}
+
+/** @brief Фронты дебаунсенного уровня: занят -> простаивает запускает таймер, простаивает -> занят сбрасывает его. */
+static void apply_idle_edge(sleep_channel_t *c, bool debounced)
+{
+    if (debounced && !c->debounced_idle) {
+        start_idle_timer(c);
+        c->mode = SLEEP_MODE_AWAKE;
+    } else if (!debounced && c->debounced_idle) {
         stop_reset_timer(c);
     }
+    c->debounced_idle = debounced;
+}
+
+/**
+ * @brief Режим по времени простоя — последовательная (двухступенчатая) проверка порогов.
+ *
+ * PreSleepTimeout отсчитывается от начала простоя. SleepTimeout вступает в
+ * игру только ПОСЛЕ того, как отработал PreSleepTimeout (отсчитывается от
+ * момента входа в PRESLEEP, а не от начала простоя) — либо сразу от начала
+ * простоя, если PreSleepTimeout==0 (выключен). Если SleepTimeout==0 при
+ * включённом PreSleepTimeout — зависаем в PRESLEEP бессрочно; если выключены
+ * оба — AWAKE.
+ */
+static sleep_mode_t mode_for_elapsed(uint32_t elapsed_ms, uint16_t presleep_timeout_min, uint16_t sleep_timeout_min)
+{
+    uint32_t presleep_total_ms = (uint32_t)presleep_timeout_min * 60000UL;
+    uint32_t sleep_total_ms = (uint32_t)sleep_timeout_min * 60000UL;
+
+    if (presleep_timeout_min > 0) {
+        if (elapsed_ms < presleep_total_ms) {
+            return SLEEP_MODE_AWAKE;
+        }
+        if (sleep_timeout_min == 0) {
+            return SLEEP_MODE_PRESLEEP; /* SleepTimeout выключен — зависаем в PRESLEEP бессрочно */
+        }
+        /* PreSleep уже отработал — SleepTimeout считается от МОМЕНТА ВХОДА В PRESLEEP, а не от начала простоя. */
+        uint32_t elapsed_since_presleep_ms = elapsed_ms - presleep_total_ms;
+        return (elapsed_since_presleep_ms >= sleep_total_ms) ? SLEEP_MODE_SLEEP : SLEEP_MODE_PRESLEEP;
+    }
+
+    if (sleep_timeout_min > 0) { /* PreSleepTimeout выключен — SleepTimeout считает прямо от начала простоя */
+        return (elapsed_ms >= sleep_total_ms) ? SLEEP_MODE_SLEEP : SLEEP_MODE_AWAKE;
+    }
+    return SLEEP_MODE_AWAKE; /* оба порога выключены */
 }
 
 static void poll_channel(channel_id_t ch)
@@ -103,86 +180,23 @@ static void poll_channel(channel_id_t ch)
      * сброшенным. Так таймер простоя, режимы PRESLEEP/SLEEP и сигнал
      * Beep_EnteredSleep() не могут возникнуть у отсутствующего инструмента,
      * а после подключения дебаунс и отсчёт простоя начинаются с нуля
-     * (обычный фронт "занят -> простаивает" ниже). */
+     * (обычный фронт "занят -> простаивает" в apply_idle_edge()). */
     if (Error_IsChannelIdle(ch)) {
-        c->debounced_idle     = false;
-        c->raw_idle_candidate = false;
-        c->stable_count       = 0;
-        stop_reset_timer(c);
+        reset_channel(c);
         return;
     }
 
-    /* ---- Дебаунс (см. buttons.c: N стабильных опросов подряд) ---- */
-    bool raw = read_raw_idle(ch);
-    if (raw == c->raw_idle_candidate) {
-        if (c->stable_count < SLEEP_DEBOUNCE_TICKS) {
-            c->stable_count++;
-        }
-    } else {
-        c->raw_idle_candidate = raw;
-        c->stable_count = 1;
-    }
+    apply_idle_edge(c, debounce_idle(c, read_raw_idle(ch)));
 
-    bool debounced = (c->stable_count >= SLEEP_DEBOUNCE_TICKS) ? c->raw_idle_candidate
-                                                                 : c->debounced_idle;
-
-    /* ---- Переход занят -> простаивает: запускаем единый таймер простоя ---- */
-    if (debounced && !c->debounced_idle) {
-        c->idle_start_tick = HAL_GetTick();
-        if (c->idle_start_tick == 0) c->idle_start_tick = 1; /* см. комментарий в структуре: 0 зарезервирован под "не идёт" */
-        c->mode = SLEEP_MODE_AWAKE;
-    }
-    /* ---- Переход простаивает -> занят: сброс таймера, назад в AWAKE ---- */
-    else if (!debounced && c->debounced_idle) {
-        stop_reset_timer(c);
-    }
-    c->debounced_idle = debounced;
-
-    if (!debounced || c->idle_start_tick == 0) {
+    if (!c->debounced_idle || c->idle_start_tick == 0) {
         return; /* инструмент используется — таймеру сейчас нечего делать */
     }
 
-    sleep_mode_t prev_mode = c->mode; /* для края AWAKE/PRESLEEP -> SLEEP ниже, см. Beep_EnteredSleep() */
+    sleep_mode_t prev_mode = c->mode; /* для края AWAKE/PRESLEEP -> SLEEP, см. Beep_EnteredSleep() */
+    uint32_t elapsed_ms = HAL_GetTick() - c->idle_start_tick; /* корректно и при переполнении HAL_GetTick() */
 
-    uint32_t now = HAL_GetTick();
-    uint32_t elapsed_ms = now - c->idle_start_tick; /* корректно и при переполнении HAL_GetTick() */
-
-    /* ---- Последовательная (двухступенчатая) проверка порогов ----
-     * PreSleepTimeout отсчитывается от начала простоя. SleepTimeout
-     * вступает в игру только ПОСЛЕ того, как отработал PreSleepTimeout
-     * (отсчитывается от момента входа в PRESLEEP, а не от начала простоя) —
-     * либо сразу от начала простоя, если PreSleepTimeout==0 (выключен). */
-    uint16_t presleep_timeout_min = Settings_GetPreSleepTimeout(ch);
-    uint16_t sleep_timeout_min = Settings_GetSleepTimeout(ch);
-
-    if (presleep_timeout_min > 0) {
-        uint32_t presleep_total_ms = (uint32_t)presleep_timeout_min * 60000UL;
-        if (elapsed_ms < presleep_total_ms) {
-            c->mode = SLEEP_MODE_AWAKE;
-            return;
-        }
-        /* PreSleep уже отработал — SleepTimeout ждёт своей очереди и
-         * считается от МОМЕНТА ВХОДА В PRESLEEP, а не от начала простоя. */
-        if (sleep_timeout_min > 0) {
-            uint32_t elapsed_since_presleep_ms = elapsed_ms - presleep_total_ms;
-            uint32_t sleep_total_ms = (uint32_t)sleep_timeout_min * 60000UL;
-            c->mode = (elapsed_since_presleep_ms >= sleep_total_ms) ? SLEEP_MODE_SLEEP : SLEEP_MODE_PRESLEEP;
-        } else {
-            c->mode = SLEEP_MODE_PRESLEEP; /* SleepTimeout выключен — зависаем в PRESLEEP бессрочно */
-        }
-        notify_if_entered_sleep(ch, prev_mode, c->mode);
-        return;
-    }
-
-    /* PreSleepTimeout выключен — SleepTimeout считает прямо от начала простоя */
-    if (sleep_timeout_min > 0) {
-        uint32_t sleep_total_ms = (uint32_t)sleep_timeout_min * 60000UL;
-        c->mode = (elapsed_ms >= sleep_total_ms) ? SLEEP_MODE_SLEEP : SLEEP_MODE_AWAKE;
-        notify_if_entered_sleep(ch, prev_mode, c->mode);
-        return;
-    }
-
-    c->mode = SLEEP_MODE_AWAKE; /* оба порога выключены */
+    c->mode = mode_for_elapsed(elapsed_ms, Settings_GetPreSleepTimeout(ch), Settings_GetSleepTimeout(ch));
+    notify_if_entered_sleep(ch, prev_mode, c->mode);
 }
 
 void Sleep_Poll(void)
@@ -210,8 +224,7 @@ void Sleep_ForceAwake(channel_id_t ch)
          * фронт занят->простаивает в poll_channel() тут не сработает,
          * т.к. debounced_idle уже true и не меняется. Перезапускаем
          * таймер вручную от текущего момента. */
-        c->idle_start_tick = HAL_GetTick();
-        if (c->idle_start_tick == 0) c->idle_start_tick = 1; /* см. комментарий в структуре */
+        start_idle_timer(c);
     } else {
         /* Вход реально не простаивает — таймеру нечего считать. */
         c->idle_start_tick = 0;
