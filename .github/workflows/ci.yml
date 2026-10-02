@@ -3,7 +3,8 @@
 #   buttons-tests  — проходят ли хост-тесты драйвера кнопок (tests/buttons);
 #   screen-golden  — не изменились ли обращения экрана к дисплею (tests/screen_golden);
 #   menu-golden    — не изменилось ли поведение меню (tests/menu_golden);
-#   sleep-golden   — не изменилось ли поведение таймеров сна (tests/sleep_golden).
+#   sleep-golden   — не изменилось ли поведение таймеров сна (tests/sleep_golden);
+#   buttons-golden — не изменилась ли классификация нажатий драйвера кнопок (tests/buttons_golden).
 # Обе — быстрая проверка «не сломано ли», не замена ручной проверки на
 # железе перед прошивкой.
 name: CI
@@ -63,3 +64,12 @@ jobs:
 
       - name: Run golden test
         run: make -C tests/sleep_golden check
+
+  buttons-golden:
+    name: Buttons golden-master test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run golden test
+        run: make -C tests/buttons_golden check
