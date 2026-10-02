@@ -1,0 +1,8 @@
+RESULT steps=200000 seed=1 hash=bbe812bf86a350e5 events=3988349
+RESULT steps=200000 seed=2 hash=7531ec4209820cb7 events=3985036
+RESULT steps=200000 seed=3 hash=01f645f4c4f2583e events=3979229
+RESULT steps=200000 seed=4 hash=c9ee96e1cc3db45b events=3981884
+RESULT steps=200000 seed=5 hash=b12c7b1bee43cb07 events=3988096
+RESULT steps=200000 seed=6 hash=afa16e166b754782 events=3980899
+RESULT steps=200000 seed=7 hash=bee9809a5b0380a4 events=3981441
+RESULT steps=200000 seed=8 hash=b690138eea68a447 events=3983143

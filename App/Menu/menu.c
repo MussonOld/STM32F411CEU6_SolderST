@@ -1,6 +1,10 @@
 /**
  * @file menu.c
  * @brief Реализация menu.h — см. правила в шапке заголовка.
+ *
+ * Пункты обоих уровней описаны таблицами s_user_items/s_expert_items (подпись,
+ * роль, геттер/сеттер Settings); Menu_HandleEvent() только разбирает кнопку и
+ * состояние и делегирует по роли пункта под курсором.
  */
 
 #include "menu.h"
@@ -64,17 +68,71 @@ static step_accel_t s_accel;
 
 static uint32_t    s_reset_done_start_tick;
 
-/* ---- Классификация текущего пункта ---- */
+/* ---- Таблицы пунктов ----
+ *
+ * Каждый пункт — одна строка таблицы: подпись, роль (что делают SET2 и UP/DN)
+ * и, у пунктов со значением, геттер/сеттер Settings для активного канала.
+ * Подписи, тексты значений, редактирование и реакция на SET2 берутся отсюда —
+ * поэтому добавление пункта (как было с "Заставкой") сводится к строке в
+ * таблице и одному значению enum выше. */
+typedef enum {
+    ROLE_EXIT,   /* "Выход": SET2 (коротко) — выйти из меню (User) / вернуться на уровень User (Expert) */
+    ROLE_TOGGLE, /* "Bzzz": ON/OFF, короткое UP/DN переключает */
+    ROLE_CHOICE, /* "Заставка": число 0..2, только короткое UP/DN ±1 с упором в границы, без авто-повтора */
+    ROLE_NUMBER, /* числовой параметр канала: короткое UP/DN ±1, удержание — авто-повтор (step_accel) */
+    ROLE_RESET,  /* "Сброс": SET2 (коротко) — запросить подтверждение */
+    ROLE_EXPERT, /* "Expert": SET2 (длинное) — предупреждение, затем вход в Expert */
+} item_role_t;
 
-static bool current_item_is_toggle(void)
+typedef struct {
+    const char *label;
+    item_role_t role;
+    uint16_t  (*get)(channel_id_t ch); /* NULL — у пункта нет числового значения (Выход/Сброс/Expert/Bzzz) */
+    void      (*set)(channel_id_t ch, uint16_t value); /* только ROLE_NUMBER; клампинг — внутри Settings_Set*() */
+} item_desc_t;
+
+/** @brief "Заставка" — глобальная (не по каналам), поэтому канал игнорируется */
+static uint16_t get_splash_mode(channel_id_t ch)
 {
-    return (s_level == MENU_LEVEL_USER) && (s_cursor == ITEM_BUZZER);
+    (void)ch;
+    return Settings_GetSplashMode();
 }
 
-/** @brief "Заставка" — глобальный пункт с тремя значениями 0/1/2: только короткое UP/DN (±1 с упором в границы), без авто-повтора */
-static bool current_item_is_splash(void)
+static const item_desc_t s_user_items[USER_MENU_ITEM_COUNT] = {
+    [ITEM_EXIT]          = { "Выход",        ROLE_EXIT,   NULL,                      NULL },
+    [ITEM_BUZZER]        = { "Bzzz",         ROLE_TOGGLE, NULL,                      NULL },
+    [ITEM_PRESLEEP_TIME] = { "PresleepTime", ROLE_NUMBER, Settings_GetPreSleepTimeout, Settings_SetPreSleepTimeout },
+    [ITEM_PRESLEEP_TEMP] = { "PresleepTemp", ROLE_NUMBER, Settings_GetPresleepTemp,    Settings_SetPresleepTemp },
+    [ITEM_STANDBY]       = { "Standby",      ROLE_NUMBER, Settings_GetSleepTimeout,    Settings_SetSleepTimeout },
+    [ITEM_SPLASH]        = { "Заставка",     ROLE_CHOICE, get_splash_mode,             NULL },
+    [ITEM_RESET]         = { "Сброс",        ROLE_RESET,  NULL,                        NULL },
+    [ITEM_EXPERT]        = { "Expert",       ROLE_EXPERT, NULL,                        NULL },
+};
+
+static const item_desc_t s_expert_items[EXPERT_MENU_ITEM_COUNT] = {
+    [EXPERT_ITEM_EXIT]  = { "Выход", ROLE_EXIT,   NULL,               NULL },
+    [EXPERT_ITEM_KP]    = { "Kp",    ROLE_NUMBER, Settings_GetKp,    Settings_SetKp },
+    [EXPERT_ITEM_KI]    = { "Ki",    ROLE_NUMBER, Settings_GetKi,    Settings_SetKi },
+    [EXPERT_ITEM_KD]    = { "Kd",    ROLE_NUMBER, Settings_GetKd,    Settings_SetKd },
+    [EXPERT_ITEM_SLOPE] = { "Slope", ROLE_NUMBER, Settings_GetSlope, Settings_SetSlope },
+    [EXPERT_ITEM_BIAS]  = { "Bias",  ROLE_NUMBER, Settings_GetBias,  Settings_SetBias },
+    [EXPERT_ITEM_RESET] = { "Сброс", ROLE_RESET,  NULL,               NULL },
+};
+
+/** Индекс вне списка уровня: пустая подпись, значения нет, пункт не числовой — ведёт себя "как нет такого пункта". */
+static const item_desc_t s_no_item = { "", ROLE_EXIT, NULL, NULL };
+
+static const item_desc_t *item_at(menu_level_t level, uint8_t index)
 {
-    return (s_level == MENU_LEVEL_USER) && (s_cursor == ITEM_SPLASH);
+    if (level == MENU_LEVEL_USER) {
+        return (index < USER_MENU_ITEM_COUNT) ? &s_user_items[index] : &s_no_item;
+    }
+    return (index < EXPERT_MENU_ITEM_COUNT) ? &s_expert_items[index] : &s_no_item;
+}
+
+static const item_desc_t *current_item(void)
+{
+    return item_at(s_level, s_cursor);
 }
 
 /**
@@ -83,22 +141,8 @@ static bool current_item_is_splash(void)
  */
 static uint16_t get_current_value(channel_id_t ch)
 {
-    if (s_level == MENU_LEVEL_USER) {
-        switch (s_cursor) {
-            case ITEM_PRESLEEP_TIME: return Settings_GetPreSleepTimeout(ch);
-            case ITEM_PRESLEEP_TEMP: return Settings_GetPresleepTemp(ch);
-            case ITEM_STANDBY:       return Settings_GetSleepTimeout(ch);
-            default: return 0;
-        }
-    }
-    switch (s_cursor) {
-        case EXPERT_ITEM_KP:    return Settings_GetKp(ch);
-        case EXPERT_ITEM_KI:    return Settings_GetKi(ch);
-        case EXPERT_ITEM_KD:    return Settings_GetKd(ch);
-        case EXPERT_ITEM_SLOPE: return Settings_GetSlope(ch);
-        case EXPERT_ITEM_BIAS:  return Settings_GetBias(ch);
-        default: return 0;
-    }
+    const item_desc_t *it = current_item();
+    return (it->role == ROLE_NUMBER && it->get != NULL) ? it->get(ch) : 0;
 }
 
 /**
@@ -107,22 +151,9 @@ static uint16_t get_current_value(channel_id_t ch)
  */
 static void set_current_value(channel_id_t ch, uint16_t value)
 {
-    if (s_level == MENU_LEVEL_USER) {
-        switch (s_cursor) {
-            case ITEM_PRESLEEP_TIME: Settings_SetPreSleepTimeout(ch, value); break;
-            case ITEM_PRESLEEP_TEMP: Settings_SetPresleepTemp(ch, value);    break;
-            case ITEM_STANDBY:       Settings_SetSleepTimeout(ch, value);    break;
-            default: break;
-        }
-        return;
-    }
-    switch (s_cursor) {
-        case EXPERT_ITEM_KP:    Settings_SetKp(ch, value);    break;
-        case EXPERT_ITEM_KI:    Settings_SetKi(ch, value);    break;
-        case EXPERT_ITEM_KD:    Settings_SetKd(ch, value);    break;
-        case EXPERT_ITEM_SLOPE: Settings_SetSlope(ch, value); break;
-        case EXPERT_ITEM_BIAS:  Settings_SetBias(ch, value);  break;
-        default: break;
+    const item_desc_t *it = current_item();
+    if (it->role == ROLE_NUMBER && it->set != NULL) {
+        it->set(ch, value);
     }
 }
 
@@ -173,133 +204,173 @@ void Menu_Init(void)
     StepAccel_Stop(&s_accel);
 }
 
-menu_action_t Menu_HandleEvent(const button_event_t *ev)
+/* ---- UP/DN одиночные ---- */
+
+static bool is_press(const button_event_t *ev)
 {
-    /* --- UP/DN одиночные --- */
-    if (ev->mask == BUTTON_MASK(BUTTON_UP) || ev->mask == BUTTON_MASK(BUTTON_DN)) {
-        button_id_t btn = (ev->mask == BUTTON_MASK(BUTTON_UP)) ? BUTTON_UP : BUTTON_DN;
-        int32_t sign = (btn == BUTTON_UP) ? 1 : -1;
+    return ev->type == BUTTON_EVENT_SHORT_PRESS || ev->type == BUTTON_EVENT_LONG_PRESS;
+}
 
-        if (s_state == MENU_STATE_LIST) {
-            if (ev->type == BUTTON_EVENT_SHORT_PRESS || ev->type == BUTTON_EVENT_LONG_PRESS) {
-                uint8_t count = (s_level == MENU_LEVEL_USER) ? USER_MENU_ITEM_COUNT : EXPERT_MENU_ITEM_COUNT;
-                /* UP двигает курсор ВВЕРХ по списку (к меньшему индексу — к
-                 * началу), DN — вниз (к большему индексу) — противоположно
-                 * знаку sign, который заточен под смысл "UP=+1" для
-                 * редактирования чисел ниже, а не под визуальную навигацию. */
-                if (btn == BUTTON_UP) {
-                    s_cursor = (uint8_t)((s_cursor + count - 1) % count);
-                } else {
-                    s_cursor = (uint8_t)((s_cursor + 1) % count);
-                }
-            }
-            return MENU_ACTION_NONE;
-        }
+/**
+ * @brief Сдвинуть курсор по кругу. UP двигает курсор ВВЕРХ по списку (к
+ *        меньшему индексу — к началу), DN — вниз (к большему индексу) —
+ *        противоположно знаку sign из редактирования чисел (UP=+1), это
+ *        визуальная навигация, а не изменение значения.
+ */
+static void move_cursor(button_id_t btn)
+{
+    uint8_t count = Menu_GetItemCount();
+    if (btn == BUTTON_UP) {
+        s_cursor = (uint8_t)((s_cursor + count - 1) % count);
+    } else {
+        s_cursor = (uint8_t)((s_cursor + 1) % count);
+    }
+}
 
-        if (s_state == MENU_STATE_EDITING) {
-            if (current_item_is_toggle()) {
-                if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
-                    toggle_buzzer();
-                }
-                return MENU_ACTION_NONE;
+/** @brief "Заставка": шаг ±1 с упором в границы (верхнюю клампит Settings_SetSplashMode()) */
+static void step_choice(int32_t sign)
+{
+    int32_t v = (int32_t)Settings_GetSplashMode() + sign;
+    if (v < 0) v = 0;
+    Settings_SetSplashMode((uint8_t)v);
+}
+
+/** @brief UP/DN в режиме редактирования — по роли текущего пункта */
+static void edit_current_item(const button_event_t *ev, button_id_t btn)
+{
+    int32_t sign = (btn == BUTTON_UP) ? 1 : -1;
+    bool is_short = (ev->type == BUTTON_EVENT_SHORT_PRESS);
+
+    switch (current_item()->role) {
+        case ROLE_TOGGLE:
+            if (is_short) {
+                toggle_buzzer();
             }
-            if (current_item_is_splash()) {
-                if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
-                    int32_t v = (int32_t)Settings_GetSplashMode() + sign;
-                    if (v < 0) v = 0; /* верхнюю границу клампит Settings_SetSplashMode() */
-                    Settings_SetSplashMode((uint8_t)v);
-                }
-                return MENU_ACTION_NONE;
+            break;
+        case ROLE_CHOICE:
+            if (is_short) {
+                step_choice(sign);
             }
-            if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
+            break;
+        default: /* числовой: короткое — шаг 1, длинное — авто-повтор до отпускания (Menu_Poll) */
+            if (is_short) {
                 StepAccel_ApplyDelta(accel_get, accel_set, NULL, sign, 1);
             } else if (ev->type == BUTTON_EVENT_LONG_PRESS) {
                 accel_start(btn);
             }
-            return MENU_ACTION_NONE;
-        }
+            break;
+    }
+}
 
-        /* MENU_STATE_EXPERT_WARNING — UP/DN игнорируем, это модальное предупреждение */
+static void handle_up_dn(const button_event_t *ev)
+{
+    button_id_t btn = (ev->mask == BUTTON_MASK(BUTTON_UP)) ? BUTTON_UP : BUTTON_DN;
+
+    switch (s_state) {
+        case MENU_STATE_LIST:
+            if (is_press(ev)) {
+                move_cursor(btn);
+            }
+            break;
+        case MENU_STATE_EDITING:
+            edit_current_item(ev, btn);
+            break;
+        default:
+            break; /* EXPERT_WARNING/RESET_CONFIRM/RESET_DONE — модальные, UP/DN игнорируем */
+    }
+}
+
+/* ---- SET2 ---- */
+
+static void set2_on_expert_warning(const button_event_t *ev)
+{
+    if (ev->type == BUTTON_EVENT_LONG_PRESS) {
+        s_level = MENU_LEVEL_EXPERT;
+        s_cursor = 0;
+        s_state = MENU_STATE_LIST;
+    }
+    /* короткое SET2 на предупреждении — не подтверждает, игнор */
+}
+
+static void set2_on_reset_confirm(const button_event_t *ev)
+{
+    if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
+        s_state = MENU_STATE_LIST; /* отмена — возвращаемся к списку, курсор остаётся на "Сброс" */
+    } else if (ev->type == BUTTON_EVENT_LONG_PRESS) {
+        perform_reset();
+        s_state = MENU_STATE_RESET_DONE;
+        s_reset_done_start_tick = HAL_GetTick();
+    }
+}
+
+static menu_action_t set2_on_exit_item(const button_event_t *ev)
+{
+    if (ev->type != BUTTON_EVENT_SHORT_PRESS) {
         return MENU_ACTION_NONE;
     }
+    if (s_level == MENU_LEVEL_USER) {
+        return MENU_ACTION_EXIT_TO_MAIN;
+    }
+    s_level = MENU_LEVEL_USER; /* "Выход" уровня Expert — назад на уровень User */
+    s_cursor = 0;
+    return MENU_ACTION_NONE;
+}
 
-    /* --- SET2 --- */
-    if (ev->mask == BUTTON_MASK(BUTTON_SET2)) {
-        if (s_state == MENU_STATE_EXPERT_WARNING) {
-            if (ev->type == BUTTON_EVENT_LONG_PRESS) {
-                s_level = MENU_LEVEL_EXPERT;
-                s_cursor = 0;
-                s_state = MENU_STATE_LIST;
-            }
-            /* короткое SET2 на предупреждении — не подтверждает, игнор */
-            return MENU_ACTION_NONE;
-        }
-
-        if (s_state == MENU_STATE_RESET_CONFIRM) {
-            if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
-                s_state = MENU_STATE_LIST; /* отмена — возвращаемся к списку, курсор остаётся на "Сброс" */
-            } else if (ev->type == BUTTON_EVENT_LONG_PRESS) {
-                perform_reset();
-                s_state = MENU_STATE_RESET_DONE;
-                s_reset_done_start_tick = HAL_GetTick();
-            }
-            return MENU_ACTION_NONE;
-        }
-
-        if (s_state == MENU_STATE_RESET_DONE) {
-            /* сообщение показывается фиксированное время (см. Menu_Poll()),
-             * до истечения таймера SET2 не обрабатываем */
-            return MENU_ACTION_NONE;
-        }
-
-        if (s_state == MENU_STATE_EDITING) {
-            s_state = MENU_STATE_LIST;
-            s_accel.active = false;
-            return MENU_ACTION_NONE;
-        }
-
-        /* MENU_STATE_LIST */
-        if (s_level == MENU_LEVEL_USER) {
-            if (s_cursor == ITEM_EXIT) {
-                if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
-                    return MENU_ACTION_EXIT_TO_MAIN;
-                }
-                return MENU_ACTION_NONE;
-            }
-            if (s_cursor == ITEM_RESET) {
-                if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
-                    s_state = MENU_STATE_RESET_CONFIRM;
-                }
-                return MENU_ACTION_NONE;
-            }
-            if (s_cursor == ITEM_EXPERT) {
-                if (ev->type == BUTTON_EVENT_LONG_PRESS) {
-                    s_state = MENU_STATE_EXPERT_WARNING; /* короткое — игнор, только длинное показывает предупреждение */
-                }
-                return MENU_ACTION_NONE;
-            }
-            /* Bzzz/PresleepTime/PresleepTemp/Standby/Заставка — редактируемые */
-            s_state = MENU_STATE_EDITING;
-            return MENU_ACTION_NONE;
-        }
-
-        /* MENU_LEVEL_EXPERT */
-        if (s_cursor == EXPERT_ITEM_EXIT) {
-            if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
-                s_level = MENU_LEVEL_USER;
-                s_cursor = 0;
-            }
-            return MENU_ACTION_NONE;
-        }
-        if (s_cursor == EXPERT_ITEM_RESET) {
+/** @brief SET2 в списке — по роли пункта под курсором */
+static menu_action_t set2_in_list(const button_event_t *ev)
+{
+    switch (current_item()->role) {
+        case ROLE_EXIT:
+            return set2_on_exit_item(ev);
+        case ROLE_RESET:
             if (ev->type == BUTTON_EVENT_SHORT_PRESS) {
                 s_state = MENU_STATE_RESET_CONFIRM;
             }
-            return MENU_ACTION_NONE;
-        }
-        /* Kp/Ki/Kd/Slope/Bias — редактируемые */
-        s_state = MENU_STATE_EDITING;
+            break;
+        case ROLE_EXPERT:
+            if (ev->type == BUTTON_EVENT_LONG_PRESS) {
+                s_state = MENU_STATE_EXPERT_WARNING; /* короткое — игнор, только длинное показывает предупреждение */
+            }
+            break;
+        default: /* Bzzz/PresleepTime/PresleepTemp/Standby/Заставка и Kp/Ki/Kd/Slope/Bias — редактируемые */
+            s_state = MENU_STATE_EDITING;
+            break;
+    }
+    return MENU_ACTION_NONE;
+}
+
+static menu_action_t handle_set2(const button_event_t *ev)
+{
+    switch (s_state) {
+        case MENU_STATE_EXPERT_WARNING:
+            set2_on_expert_warning(ev);
+            break;
+        case MENU_STATE_RESET_CONFIRM:
+            set2_on_reset_confirm(ev);
+            break;
+        case MENU_STATE_RESET_DONE:
+            /* сообщение показывается фиксированное время (см. Menu_Poll()),
+             * до истечения таймера SET2 не обрабатываем */
+            break;
+        case MENU_STATE_EDITING:
+            s_state = MENU_STATE_LIST;
+            s_accel.active = false;
+            break;
+        case MENU_STATE_LIST:
+        default:
+            return set2_in_list(ev);
+    }
+    return MENU_ACTION_NONE;
+}
+
+menu_action_t Menu_HandleEvent(const button_event_t *ev)
+{
+    if (ev->mask == BUTTON_MASK(BUTTON_UP) || ev->mask == BUTTON_MASK(BUTTON_DN)) {
+        handle_up_dn(ev);
         return MENU_ACTION_NONE;
+    }
+    if (ev->mask == BUTTON_MASK(BUTTON_SET2)) {
+        return handle_set2(ev);
     }
 
     /* SET1/SET3 (длинные — короткие перехвачены в fsm.c как глобальный выход)
@@ -342,29 +413,7 @@ uint8_t Menu_GetItemCount(void)
 
 const char *Menu_GetItemLabel(uint8_t index)
 {
-    if (s_level == MENU_LEVEL_USER) {
-        switch (index) {
-            case ITEM_EXIT:          return "Выход";
-            case ITEM_BUZZER:        return "Bzzz";
-            case ITEM_PRESLEEP_TIME: return "PresleepTime";
-            case ITEM_PRESLEEP_TEMP: return "PresleepTemp";
-            case ITEM_STANDBY:       return "Standby";
-            case ITEM_SPLASH:        return "Заставка";
-            case ITEM_RESET:         return "Сброс";
-            case ITEM_EXPERT:        return "Expert";
-            default:                 return "";
-        }
-    }
-    switch (index) {
-        case EXPERT_ITEM_EXIT:  return "Выход";
-        case EXPERT_ITEM_KP:    return "Kp";
-        case EXPERT_ITEM_KI:    return "Ki";
-        case EXPERT_ITEM_KD:    return "Kd";
-        case EXPERT_ITEM_SLOPE: return "Slope";
-        case EXPERT_ITEM_BIAS:  return "Bias";
-        case EXPERT_ITEM_RESET: return "Сброс";
-        default:                return "";
-    }
+    return item_at(s_level, index)->label;
 }
 
 void Menu_GetItemValueText(uint8_t index, char *buf, uint8_t buf_size)
@@ -372,39 +421,13 @@ void Menu_GetItemValueText(uint8_t index, char *buf, uint8_t buf_size)
     if (buf == NULL || buf_size == 0) return;
     buf[0] = '\0';
 
-    channel_id_t ch = InputFSM_GetActiveChannel();
+    const item_desc_t *it = item_at(s_level, index);
 
-    if (s_level == MENU_LEVEL_USER) {
-        switch (index) {
-            case ITEM_BUZZER:
-                snprintf(buf, buf_size, "%s", Settings_GetFlagBit(SETTINGS_FLAG_BUZZER_BIT) ? "ON" : "OFF");
-                break;
-            case ITEM_PRESLEEP_TIME:
-                snprintf(buf, buf_size, "%u", (unsigned)Settings_GetPreSleepTimeout(ch));
-                break;
-            case ITEM_PRESLEEP_TEMP:
-                snprintf(buf, buf_size, "%u", (unsigned)Settings_GetPresleepTemp(ch));
-                break;
-            case ITEM_STANDBY:
-                snprintf(buf, buf_size, "%u", (unsigned)Settings_GetSleepTimeout(ch));
-                break;
-            case ITEM_SPLASH:
-                snprintf(buf, buf_size, "%u", (unsigned)Settings_GetSplashMode());
-                break;
-            default:
-                break; /* Выход/Expert — без значения */
-        }
-        return;
-    }
-
-    switch (index) {
-        case EXPERT_ITEM_KP:    snprintf(buf, buf_size, "%u", (unsigned)Settings_GetKp(ch));    break;
-        case EXPERT_ITEM_KI:    snprintf(buf, buf_size, "%u", (unsigned)Settings_GetKi(ch));    break;
-        case EXPERT_ITEM_KD:    snprintf(buf, buf_size, "%u", (unsigned)Settings_GetKd(ch));    break;
-        case EXPERT_ITEM_SLOPE: snprintf(buf, buf_size, "%u", (unsigned)Settings_GetSlope(ch)); break;
-        case EXPERT_ITEM_BIAS:  snprintf(buf, buf_size, "%u", (unsigned)Settings_GetBias(ch));  break;
-        default: break; /* Выход/Сброс — без значения */
-    }
+    if (it->role == ROLE_TOGGLE) {
+        snprintf(buf, buf_size, "%s", Settings_GetFlagBit(SETTINGS_FLAG_BUZZER_BIT) ? "ON" : "OFF");
+    } else if (it->get != NULL) {
+        snprintf(buf, buf_size, "%u", (unsigned)it->get(InputFSM_GetActiveChannel()));
+    } /* иначе (Выход/Сброс/Expert) — без значения */
 }
 
 uint8_t Menu_GetCursor(void)
