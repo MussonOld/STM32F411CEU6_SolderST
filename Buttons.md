@@ -68,3 +68,8 @@ make -C tests/buttons
 
 - Гейтинг вызова `Buttons_Poll()` (~10 мс) реализован в `main.c` через `poll10ms_last_tick` — см. `README.md`.
 - События разбираются в `Fsm` (`InputFSM_Poll()`, вызывается после `Buttons_Poll()`) — см. `FSM.md`. `BUTTON_EVENT_VIOLATION` там игнорируется молча, без индикации — так и задумано.
+
+## Реализация
+
+`Buttons_Poll()` → `update_debounce()` → при нажатых кнопках `step_episode()`, который только диспетчеризует по состоянию эпизода: `finish_episode_on_handover()` («передача с руки на руку»), затем `start_episode()` / `step_pending_chord()` / `step_solo()` / `step_chord()`; при отпускании — `finalize_episode()`. Поведение закреплено двумя наборами тестов: сценарными (`make -C tests/buttons`) и golden-тестом на случайных потоках нажатий с точными границами порогов (`make -C tests/buttons_golden check`; после намеренного изменения логики эталон обновляется `make -C tests/buttons_golden golden`).
+

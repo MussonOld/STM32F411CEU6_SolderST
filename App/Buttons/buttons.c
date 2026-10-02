@@ -161,132 +161,153 @@ static void finalize_episode(void)
 }
 
 /**
+ * @brief "Передача с руки на руку": прежняя одиночная кнопка отпущена, а
+ *        другая подтверждена в том же опросе — down_mask по-прежнему один бит,
+ *        но уже чужой.
+ *
+ * Без этого эпизод продолжал бы жить с маской ПРЕЖНЕЙ кнопки: новое нажатие
+ * терялось (или long-press уходил с чужой маской). Закрываем эпизод прежней
+ * кнопки как обычно (short, если long не сработал); новый эпизод для новой
+ * кнопки начнёт start_episode() в том же опросе.
+ */
+static void finish_episode_on_handover(uint8_t down_mask, uint8_t count)
+{
+    if ((s_episode == EPISODE_PENDING_CHORD || s_episode == EPISODE_SOLO) &&
+        count == 1 && down_mask != s_active_mask) {
+        finalize_episode();
+    }
+}
+
+/**
+ * @brief Начало нового эпизода (s_episode == EPISODE_NONE, down_mask != 0)
+ */
+static void start_episode(uint8_t down_mask, uint8_t count, uint32_t now)
+{
+    s_first_down_tick = now;
+    s_long_fired = false;
+
+    if (count == 1) {
+        uint8_t only_bit = down_mask;
+        s_active_mask = only_bit;
+        if (only_bit == BUTTON_MASK(BUTTON_UP) || only_bit == BUTTON_MASK(BUTTON_DN)) {
+            s_episode = EPISODE_PENDING_CHORD;
+        } else {
+            s_episode = EPISODE_SOLO;
+        }
+    } else if (down_mask == BUTTONS_CHORD_UP_DN_MASK) {
+        /* UP и DN подтверждены антидребезгом в одном и том же опросе
+         * (почти одновременное нажатие) — это валидный аккорд, а не
+         * нарушение. Раньше такой случай попадал в ветку ниже. */
+        s_episode = EPISODE_CHORD;
+        s_active_mask = BUTTONS_CHORD_UP_DN_MASK;
+    } else {
+        /* Сразу 2+ кнопки в момент старта эпизода (в пределах одного
+         * опроса), кроме пары UP+DN — нарушение по правилу "> 2
+         * недопустимо" либо "любая пара кроме UP+DN недопустима". */
+        raise_violation(down_mask);
+    }
+}
+
+/**
+ * @brief Одна кнопка (UP или DN) нажата, ждём партнёра по аккорду в окне
+ */
+static void step_pending_chord(uint8_t down_mask, uint8_t count, uint32_t now)
+{
+    uint32_t elapsed = now - s_first_down_tick;
+
+    if (count == 1) {
+        if (elapsed > BUTTONS_CHORD_WINDOW_MS) {
+            /* партнёр не подошёл вовремя — это обычное одиночное
+             * нажатие UP или DN, дальше живёт как EPISODE_SOLO */
+            s_episode = EPISODE_SOLO;
+        }
+        return;
+    }
+
+    /* 2 кнопки: валидный аккорд — только UP+DN и только в окне; всё остальное
+     * (пара не UP+DN, партнёр после окна, 3+ кнопки) — нарушение */
+    if (count == 2 && down_mask == BUTTONS_CHORD_UP_DN_MASK && elapsed <= BUTTONS_CHORD_WINDOW_MS) {
+        s_episode = EPISODE_CHORD;
+        s_active_mask = BUTTONS_CHORD_UP_DN_MASK;
+    } else {
+        raise_violation(down_mask);
+    }
+}
+
+/**
+ * @brief Одиночная кнопка удерживается: long-press (TOOLS — нарушение)
+ */
+static void step_solo(uint8_t down_mask, uint8_t count, uint32_t now)
+{
+    if (count > 1) {
+        /* к одиночной кнопке присоединилась ещё одна — нарушение */
+        raise_violation(down_mask);
+        return;
+    }
+
+    uint32_t elapsed = now - s_first_down_tick;
+
+    if (s_active_mask == BUTTON_MASK(BUTTON_TOOLS)) {
+        /* TOOLS — только короткое нажатие; удержание дольше порога
+         * само по себе нарушение, long-событие для неё не бывает */
+        if (elapsed >= BUTTONS_LONG_PRESS_MS) {
+            raise_violation(down_mask);
+        }
+    } else if (elapsed >= BUTTONS_LONG_PRESS_MS && !s_long_fired) {
+        push_event(BUTTON_EVENT_LONG_PRESS, s_active_mask);
+        s_long_fired = true;
+    }
+}
+
+/**
+ * @brief Аккорд UP+DN удерживается: chord-long
+ */
+static void step_chord(uint8_t down_mask, uint32_t now)
+{
+    /* Легитимно: down_mask — это UP, DN, либо UP|DN (частичное
+     * отпускание аккорда в процессе). Нарушение — только если
+     * появился бит вне пары UP/DN. */
+    if ((down_mask & (uint8_t)~BUTTONS_CHORD_UP_DN_MASK) != 0) {
+        raise_violation(down_mask);
+        return;
+    }
+
+    if (down_mask == BUTTONS_CHORD_UP_DN_MASK) {
+        uint32_t elapsed = now - s_first_down_tick;
+        if (elapsed >= BUTTONS_LONG_PRESS_MS && !s_long_fired) {
+            push_event(BUTTON_EVENT_CHORD_LONG, s_active_mask);
+            s_long_fired = true;
+        }
+    }
+    /* если down_mask — только один бит из пары, обе кнопки ещё не
+     * отпущены полностью: ждём down_mask == 0 в finalize_episode() */
+}
+
+/**
  * @brief Один шаг FSM эпизода при down_mask != 0
  */
 static void step_episode(uint8_t down_mask, uint32_t now)
 {
     uint8_t count = popcount8(down_mask);
 
-    /* "Передача с руки на руку": прежняя одиночная кнопка отпущена, а другая
-     * подтверждена в том же опросе — down_mask по-прежнему один бит, но уже
-     * чужой. Без этого эпизод продолжал бы жить с маской ПРЕЖНЕЙ кнопки:
-     * новое нажатие терялось (или long-press уходил с чужой маской). Закрываем
-     * эпизод прежней кнопки как обычно (short, если long не сработал) и ниже
-     * начинаем новый эпизод уже для новой. */
-    if ((s_episode == EPISODE_PENDING_CHORD || s_episode == EPISODE_SOLO) &&
-        count == 1 && down_mask != s_active_mask) {
-        finalize_episode();
-    }
-
-    if (s_episode == EPISODE_NONE) {
-        /* Начало нового эпизода */
-        s_first_down_tick = now;
-        s_long_fired = false;
-
-        if (count == 1) {
-            uint8_t only_bit = down_mask;
-            if (only_bit == BUTTON_MASK(BUTTON_UP) || only_bit == BUTTON_MASK(BUTTON_DN)) {
-                s_episode = EPISODE_PENDING_CHORD;
-                s_active_mask = only_bit;
-            } else {
-                s_episode = EPISODE_SOLO;
-                s_active_mask = only_bit;
-            }
-        } else if (down_mask == BUTTONS_CHORD_UP_DN_MASK) {
-            /* UP и DN подтверждены антидребезгом в одном и том же опросе
-             * (почти одновременное нажатие) — это валидный аккорд, а не
-             * нарушение. Раньше такой случай попадал в ветку ниже. */
-            s_episode = EPISODE_CHORD;
-            s_active_mask = BUTTONS_CHORD_UP_DN_MASK;
-        } else {
-            /* Сразу 2+ кнопки в момент старта эпизода (в пределах одного
-             * опроса), кроме пары UP+DN — нарушение по правилу "> 2
-             * недопустимо" либо "любая пара кроме UP+DN недопустима". */
-            raise_violation(down_mask);
-        }
-        return;
-    }
+    finish_episode_on_handover(down_mask, count);
 
     switch (s_episode) {
-        case EPISODE_PENDING_CHORD: {
-            uint32_t elapsed = now - s_first_down_tick;
-
-            if (count == 1) {
-                if (elapsed > BUTTONS_CHORD_WINDOW_MS) {
-                    /* партнёр не подошёл вовремя — это обычное одиночное
-                     * нажатие UP или DN, дальше живёт как EPISODE_SOLO */
-                    s_episode = EPISODE_SOLO;
-                }
-            } else if (count == 2) {
-                if (down_mask == BUTTONS_CHORD_UP_DN_MASK) {
-                    if (elapsed <= BUTTONS_CHORD_WINDOW_MS) {
-                        s_episode = EPISODE_CHORD;
-                        s_active_mask = BUTTONS_CHORD_UP_DN_MASK;
-                    } else {
-                        /* партнёр подошёл, но окно уже вышло — нарушение */
-                        raise_violation(down_mask);
-                    }
-                } else {
-                    /* пара кнопок, но не UP+DN — нарушение */
-                    raise_violation(down_mask);
-                }
-            } else {
-                /* 3+ кнопки — нарушение */
-                raise_violation(down_mask);
-            }
-            break;
-        }
-
-        case EPISODE_SOLO: {
-            if (count > 1) {
-                /* к одиночной кнопке присоединилась ещё одна — нарушение */
-                raise_violation(down_mask);
-                break;
-            }
-
-            uint32_t elapsed = now - s_first_down_tick;
-
-            if (s_active_mask == BUTTON_MASK(BUTTON_TOOLS)) {
-                /* TOOLS — только короткое нажатие; удержание дольше порога
-                 * само по себе нарушение, long-событие для неё не бывает */
-                if (elapsed >= BUTTONS_LONG_PRESS_MS) {
-                    raise_violation(down_mask);
-                }
-            } else if (elapsed >= BUTTONS_LONG_PRESS_MS && !s_long_fired) {
-                push_event(BUTTON_EVENT_LONG_PRESS, s_active_mask);
-                s_long_fired = true;
-            }
-            break;
-        }
-
-        case EPISODE_CHORD: {
-            /* Легитимно: down_mask — это UP, DN, либо UP|DN (частичное
-             * отпускание аккорда в процессе). Нарушение — только если
-             * появился бит вне пары UP/DN. */
-            if ((down_mask & (uint8_t)~BUTTONS_CHORD_UP_DN_MASK) != 0) {
-                raise_violation(down_mask);
-                break;
-            }
-
-            if (down_mask == BUTTONS_CHORD_UP_DN_MASK) {
-                uint32_t elapsed = now - s_first_down_tick;
-                if (elapsed >= BUTTONS_LONG_PRESS_MS && !s_long_fired) {
-                    push_event(BUTTON_EVENT_CHORD_LONG, s_active_mask);
-                    s_long_fired = true;
-                }
-            }
-            /* если down_mask — только один бит из пары, обе кнопки ещё не
-             * отпущены полностью: ждём down_mask == 0 в finalize_episode() */
-            break;
-        }
-
-        case EPISODE_VIOLATION:
-            /* ничего не делаем — ждём полного отпускания */
-            break;
-
         case EPISODE_NONE:
-        default:
+            start_episode(down_mask, count, now);
             break;
+        case EPISODE_PENDING_CHORD:
+            step_pending_chord(down_mask, count, now);
+            break;
+        case EPISODE_SOLO:
+            step_solo(down_mask, count, now);
+            break;
+        case EPISODE_CHORD:
+            step_chord(down_mask, now);
+            break;
+        case EPISODE_VIOLATION:
+        default:
+            break; /* VIOLATION: ничего не делаем — ждём полного отпускания */
     }
 }
 
