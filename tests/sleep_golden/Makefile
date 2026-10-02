@@ -22,7 +22,10 @@ build/golden: harness.c $(SLEEP_SRC) FORCE
 	$(CC) $(CFLAGS) -I$(SLEEP_DIR) $(INC) harness.c $(SLEEP_SRC) -o $@
 
 check: build/golden
-	@set -e; for s in 1 2 3 4 5 6 7 8; do ./build/golden 300000 $$s; done > build/result.txt; \
+	@rm -f build/result.txt; \
+	for s in 1 2 3 4 5 6 7 8; do \
+	  ./build/golden 300000 $$s >> build/result.txt || { tail -1 build/result.txt; echo "golden: INVARIANT/RUN FAILED (seed $$s)"; exit 1; }; \
+	done; \
 	if diff -u golden.txt build/result.txt; then echo "golden: OK (8 seeds x 300000 steps)"; else echo "golden: MISMATCH"; exit 1; fi
 
 golden: build/golden

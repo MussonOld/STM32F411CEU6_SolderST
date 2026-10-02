@@ -10,13 +10,14 @@
  * PreSleepTimeout==0 (выключен). Если PreSleepTimeout>0, а SleepTimeout==0
  * — канал зависает в PRESLEEP бессрочно (SleepTimeout выключен).
  *
- * Пока инструмент не подключен (Error_IsChannelIdle()), канал не опрашивается
- * вовсе и остаётся в AWAKE без таймера — см. начало poll_channel().
+ * Пока канал заблокирован (Error_IsChannelBlocked(): инструмент не подключен,
+ * неисправен либо авария БП — нагрев и управление и так запрещены), он не
+ * опрашивается вовсе и остаётся в AWAKE без таймера — см. начало poll_channel().
  */
 
 #include "sleep.h"
 #include "settings.h"
-#include "error.h" /* Error_IsChannelIdle() — "инструмент не подключен", см. poll_channel() */
+#include "error.h" /* Error_IsChannelBlocked() — канал заблокирован (не подключен/авария/БП), см. poll_channel() */
 #include "state.h" /* State_IsEnabled() — гейт для Beep_EnteredSleep(), см. notify_if_entered_sleep() */
 #include "beep.h"
 #include "main.h" /* Dock_Pin/Dock_GPIO_Port, Btn_Pump_Pin/Btn_Pump_GPIO_Port */
@@ -88,7 +89,7 @@ static void start_idle_timer(sleep_channel_t *c)
     if (c->idle_start_tick == 0) c->idle_start_tick = 1; /* см. комментарий в структуре: 0 зарезервирован под "не идёт" */
 }
 
-/** @brief Инструмент не подключен — дебаунс и таймер сброшены (см. poll_channel()). */
+/** @brief Канал заблокирован — дебаунс и таймер сброшены (см. poll_channel()). */
 static void reset_channel(sleep_channel_t *c)
 {
     c->debounced_idle     = false;
@@ -173,15 +174,18 @@ static void poll_channel(channel_id_t ch)
 {
     sleep_channel_t *c = &s_channels[ch];
 
-    /* ---- Инструмент не подключен: всё начинается с подключения ----
-     * Пока Error_IsChannelIdle() — состояние Dock/Btn_Pump ничего не значит
-     * (Dock подтянут к питанию и без паяльника читается как "в подставке"),
-     * поэтому его не читаем и не дебаунсим, а всё состояние канала держим
-     * сброшенным. Так таймер простоя, режимы PRESLEEP/SLEEP и сигнал
-     * Beep_EnteredSleep() не могут возникнуть у отсутствующего инструмента,
-     * а после подключения дебаунс и отсчёт простоя начинаются с нуля
-     * (обычный фронт "занят -> простаивает" в apply_idle_edge()). */
-    if (Error_IsChannelIdle(ch)) {
+    /* ---- Канал заблокирован: таймеров сна нет ----
+     * Error_IsChannelBlocked() — то же условие, что запрещает нагрев и
+     * пресеты: инструмент не подключен (Dock подтянут к питанию и без
+     * паяльника читается как "в подставке"), неисправен (авария RTD/
+     * нагревателя/АЦП) либо авария БП. Пока оно истинно, состояние
+     * Dock/Btn_Pump ничего не значит, поэтому его не читаем и не
+     * дебаунсим, а всё состояние канала держим сброшенным: таймер простоя,
+     * режимы PRESLEEP/SLEEP и сигнал Beep_EnteredSleep() не могут
+     * возникнуть. Когда блокировка снялась (инструмент подключили/авария
+     * ушла), дебаунс и отсчёт простоя начинаются с нуля (обычный фронт
+     * "занят -> простаивает" в apply_idle_edge()). */
+    if (Error_IsChannelBlocked(ch)) {
         reset_channel(c);
         return;
     }

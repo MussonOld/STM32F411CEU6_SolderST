@@ -525,15 +525,16 @@ static void format_sleep_timer(char *buf, size_t size, uint32_t remaining)
  */
 static void sleep_status_view(channel_id_t ch, sleep_status_view_t *v)
 {
-    /* Таймер сна не показывается, когда канал выключен ИЛИ инструмент не
-     * подключен (Error_IsChannelIdle(), см. error.h) — у отсутствующего
-     * инструмента нет ни таймера, ни статуса сна (ни "Предсон"/"Спит", ни
-     * иконки). Sleep сам держит такой канал в AWAKE без таймера, так что
-     * проверка здесь — страховка на долю такта до его реакции. Выключенный
+    /* Таймер сна не показывается, когда канал выключен ИЛИ заблокирован
+     * (Error_IsChannelBlocked(), см. error.h: инструмент не подключен,
+     * неисправен либо авария БП) — у такого канала нет ни таймера, ни
+     * статуса сна (ни "Предсон"/"Спит", ни иконки). Sleep сам держит
+     * заблокированный канал в AWAKE без таймера, так что проверка здесь —
+     * страховка на долю такта до его реакции. Выключенный
      * аккордом UP+DN канал "уснуть" не может (физически не греет и так):
      * ведём себя как AWAKE без простоя — пусто, без иконки; Sleep_GetMode()/
      * Sleep_GetRemainingSeconds() для него не зовём вовсе. */
-    bool active = State_IsEnabled(ch) && !Error_IsChannelIdle(ch);
+    bool active = State_IsEnabled(ch) && !Error_IsChannelBlocked(ch);
     sleep_mode_t mode = active ? Sleep_GetMode(ch) : SLEEP_MODE_AWAKE;
     uint32_t remaining = active ? Sleep_GetRemainingSeconds(ch) : 0;
 

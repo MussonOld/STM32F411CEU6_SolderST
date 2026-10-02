@@ -29,12 +29,14 @@
 #include "fsm.h"
 #include "settings.h"
 #include "text_field.h"
+#include "screen_layout.h" /* LINE_INFO_SLEEP_*: инвариант "у заблокированного канала нет таймера сна" */
 
 /* ------------------------------------------------------------------ трасса */
 static uint64_t g_hash = 1469598103934665603ULL;
 static uint64_t g_events;
 static long g_frame;
 static long g_dump_frame = -2;
+static bool g_nofault; /* NOFAULT=1: аварий/блокировок нет вовсе (ГСЧ тот же) — режим сверки со старым поведением */
 
 static void mix_u64(uint64_t v)
 {
@@ -138,6 +140,9 @@ static void world_step(void)
     if (chance(3)) W.item_count = chance(50) ? 8 : 7;
     if (chance(6)) W.editing = chance(30);
     if (chance(3)) { W.expert_warn = chance(20); W.reset_confirm = !W.expert_warn && chance(30); W.reset_done = !W.expert_warn && !W.reset_confirm && chance(40); }
+    if (g_nofault) {
+        for (int c = 0; c < CHANNEL_COUNT; c++) { W.faulted[c] = false; W.fault_msg[c] = 0; W.blocked[c] = false; }
+    }
     W.settled_mask = chance(70) ? ~0u : rnd();
     W.dma_fail = chance(3);
     W.win_fail = chance(3);
@@ -149,7 +154,8 @@ fixed_t Control_GetSmoothedPowerPct(channel_id_t ch) { return W.power[ch]; }
 fixed_t Control_PresleepSetpoint(channel_id_t ch, fixed_t sp) { return sp > FIXED_FROM_INT(120 + 5 * (int)ch) ? FIXED_FROM_INT(120 + 5 * (int)ch) : sp; }
 const char *Error_GetChannelFaultMessage(channel_id_t ch) { return k_fault_msgs[W.fault_msg[ch]]; }
 const char *Error_GetInfoZoneMessage(void) { return k_info_msgs[W.info_msg]; }
-bool Error_IsChannelBlocked(channel_id_t ch) { return W.blocked[ch] || W.faulted[ch]; }
+/* как в error.c: БП (W.blocked — глобальный флаг канала в этой модели) либо любой tool_fault != NONE (авария ИЛИ "не подключен") */
+bool Error_IsChannelBlocked(channel_id_t ch) { return W.blocked[ch] || W.faulted[ch] || (W.idle[ch] && !W.faulted[ch]); }
 bool Error_IsChannelFaulted(channel_id_t ch) { return W.faulted[ch]; }
 bool Error_IsChannelIdle(channel_id_t ch) { return W.idle[ch] && !W.faulted[ch]; /* idle и fault не пересекаются, см. error.h */ }
 channel_id_t InputFSM_GetActiveChannel(void) { return W.active; }
@@ -204,7 +210,18 @@ void TextField_Printf(uint8_t line, const char *fmt, ...)
 void TextField_PrintfCentered(uint8_t line, uint16_t cx, const char *fmt, ...)
 { FMT_BODY(s) ev("PrintC", "%u,%u,'%s'", line, cx, s); }
 void TextField_PrintfRightAligned(uint8_t line, uint16_t rx, const char *fmt, ...)
-{ FMT_BODY(s) ev("PrintR", "%u,%u,'%s'", line, rx, s); }
+{
+    FMT_BODY(s)
+    ev("PrintR", "%u,%u,'%s'", line, rx, s);
+    /* Инвариант: у заблокированного канала (не подключен / авария / БП) в инфозоне нет таймера сна. Нарушение = баг. */
+    if ((line == LINE_INFO_SLEEP_SOLDER && Error_IsChannelBlocked(CHANNEL_SOLDER))
+     || (line == LINE_INFO_SLEEP_DESOLDER && Error_IsChannelBlocked(CHANNEL_DESOLDER))) {
+        if (s[0] != '\0') {
+            printf("INVARIANT VIOLATED frame %ld: blocked channel shows sleep status '%s' on line %u\n", g_frame, s, line);
+            exit(2);
+        }
+    }
+}
 
 bool Display_IsBusy(void) { return false; }
 Display_Status_t Display_SetWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
@@ -224,6 +241,7 @@ int main(int argc, char **argv)
     long frames = (argc > 1) ? atol(argv[1]) : 20000;
     uint64_t seed = (argc > 2) ? strtoull(argv[2], NULL, 10) : 1;
     bool trace = getenv("TRACE") != NULL;
+    g_nofault = getenv("NOFAULT") != NULL;
     if (getenv("DUMP")) g_dump_frame = atol(getenv("DUMP"));
     g_rng ^= seed * 0x9E3779B97F4A7C15ULL;
     for (int i = 0; i < 8; i++) (void)rnd();

@@ -60,7 +60,11 @@ static bool chance(unsigned pct) { return (rnd() % 100U) < pct; }
 /* ------------------------------------------------------------ модель мира */
 static uint32_t g_tick;
 static bool g_dock = true, g_pump = true;       /* сырые уровни: 1 = "простой" у обоих входов */
-static bool g_absent[CHANNEL_COUNT];           /* Error_IsChannelIdle(): инструмент не подключен */
+static bool g_absent[CHANNEL_COUNT];           /* Error_IsChannelIdle(): инструмент не подключен (TOOL_FAULT_DISCONNECTED) */
+static bool g_faulted[CHANNEL_COUNT];          /* авария инструмента (любой tool_fault_t кроме NONE и DISCONNECTED) */
+static bool g_psu;                             /* авария БП — блокирует оба канала */
+static bool g_nofault;                         /* NOFAULT=1: аварий нет вовсе (и ГСЧ их не опрашивает) — режим сверки со старым эталоном */
+static long g_beeps;
 static bool g_enabled[CHANNEL_COUNT];
 static uint16_t g_presleep[CHANNEL_COUNT], g_sleep[CHANNEL_COUNT]; /* минуты */
 
@@ -74,15 +78,36 @@ GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *port, uint16_t pin)
     return GPIO_PIN_RESET;
 }
 bool Error_IsChannelIdle(channel_id_t ch) { return g_absent[ch]; }
+bool Error_IsChannelBlocked(channel_id_t ch) { return g_psu || g_absent[ch] || g_faulted[ch]; } /* как в error.c: БП либо любой tool_fault != NONE */
 bool State_IsEnabled(channel_id_t ch) { return g_enabled[ch]; }
 uint16_t Settings_GetPreSleepTimeout(channel_id_t ch) { return g_presleep[ch]; }
 uint16_t Settings_GetSleepTimeout(channel_id_t ch) { return g_sleep[ch]; }
-void Beep_EnteredSleep(void) { ev("BEEP", "t=%u", (unsigned)g_tick); }
+void Beep_EnteredSleep(void) { g_beeps++; ev("BEEP", "t=%u", (unsigned)g_tick); }
 
 static void observe(void)
 {
     for (int c = 0; c < CHANNEL_COUNT + 1; c++) { /* +1: заведомо неверный канал */
         ev("ch", "%d,%d,%u", c, (int)Sleep_GetMode((channel_id_t)c), (unsigned)Sleep_GetRemainingSeconds((channel_id_t)c));
+    }
+}
+
+/** Инвариант: у заблокированного канала (авария инструмента / БП / не подключен) таймеров сна нет —
+ *  режим AWAKE, остаток 0, и сигнал "уснул" не возможен. Нарушение = баг, прогон прерывается. */
+static void check_blocked_invariant(long beeps_before)
+{
+    bool all_blocked = true;
+    for (int c = 0; c < CHANNEL_COUNT; c++) {
+        channel_id_t ch = (channel_id_t)c;
+        if (!Error_IsChannelBlocked(ch)) { all_blocked = false; continue; }
+        if (Sleep_GetMode(ch) != SLEEP_MODE_AWAKE || Sleep_GetRemainingSeconds(ch) != 0U) {
+            printf("INVARIANT VIOLATED step %ld: blocked channel %d has mode=%d remaining=%u\n", g_step, c,
+                   (int)Sleep_GetMode(ch), (unsigned)Sleep_GetRemainingSeconds(ch));
+            exit(2);
+        }
+    }
+    if (all_blocked && g_beeps != beeps_before) {
+        printf("INVARIANT VIOLATED step %ld: beep while every channel is blocked\n", g_step);
+        exit(2);
     }
 }
 
@@ -120,7 +145,8 @@ static uint32_t aimed_dt(void)
 static void zero_edge_scenario(void)
 {
     ev("zero_edge", "");
-    for (int c = 0; c < CHANNEL_COUNT; c++) g_absent[c] = false;
+    for (int c = 0; c < CHANNEL_COUNT; c++) { g_absent[c] = false; g_faulted[c] = false; }
+    g_psu = false;
     g_dock = false; g_pump = false;
     g_tick = 0xFFFFFFFFU - 60U;
     for (int i = 0; i < 4; i++) { g_tick += 10U; Sleep_Poll(); }
@@ -135,6 +161,7 @@ int main(int argc, char **argv)
     long steps = (argc > 1) ? atol(argv[1]) : 300000;
     uint64_t seed = (argc > 2) ? strtoull(argv[2], NULL, 10) : 1;
     if (getenv("DUMP")) g_dump_step = atol(getenv("DUMP"));
+    g_nofault = getenv("NOFAULT") != NULL;
     g_rng ^= seed * 0x9E3779B97F4A7C15ULL;
     for (int i = 0; i < 8; i++) (void)rnd();
 
@@ -161,10 +188,12 @@ int main(int argc, char **argv)
         }
         for (int c = 0; c < CHANNEL_COUNT; c++) {
             if (chance(2)) g_absent[c] = chance(25);
+            if (!g_nofault && chance(2)) g_faulted[c] = chance(20);
             if (chance(2)) g_enabled[c] = chance(80);
             if (chance(2)) g_presleep[c] = chance(25) ? 0 : (uint16_t)(1 + rnd() % 4U);
             if (chance(2)) g_sleep[c]    = chance(25) ? 0 : (uint16_t)(1 + rnd() % 4U);
         }
+        if (!g_nofault && chance(1)) g_psu = chance(30);
         /* --- вызовы модуля --- */
         if (chance(1)) { Sleep_Init(); ev("init", ""); }
         if (chance(1)) zero_edge_scenario();
@@ -175,8 +204,11 @@ int main(int argc, char **argv)
         }
         ev("poll", "%u,%d%d,%d%d,%d%d,%u/%u,%u/%u", (unsigned)g_tick, g_dock, g_pump, g_absent[0], g_absent[1],
            g_enabled[0], g_enabled[1], g_presleep[0], g_sleep[0], g_presleep[1], g_sleep[1]);
+        if (!g_nofault) ev("fault", "%d%d,%d", g_faulted[0], g_faulted[1], g_psu); /* только в режиме с авариями — иначе трасса совпадает со старым эталоном */
+        long beeps_before = g_beeps;
         Sleep_Poll();
         if (chance(30)) Sleep_Poll(); /* два опроса подряд на том же тике — дебаунс считает опросы, не время */
+        check_blocked_invariant(beeps_before);
         observe();
     }
     printf("RESULT steps=%ld seed=%llu hash=%016llx events=%llu\n", steps, (unsigned long long)seed,

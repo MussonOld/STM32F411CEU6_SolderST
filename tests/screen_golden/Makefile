@@ -23,10 +23,12 @@ build/golden: harness.c $(SCREEN_SRC) $(DATA_SRC) FORCE
 	$(CC) $(CFLAGS) -I$(SCREEN_DIR) $(INC) harness.c $(SCREEN_SRC) $(DATA_SRC) -o $@
 
 check: build/golden
-	@set -e; for s in 1 2 3 4 5 6 7 8; do ./build/golden 30000 $$s; done > build/result.txt; \
+	@rm -f build/result.txt; \
+	for s in 1 2 3 4 5 6 7 8; do \
+	  ./build/golden 30000 $$s >> build/result.txt || { tail -1 build/result.txt; echo "golden: INVARIANT/RUN FAILED (seed $$s)"; exit 1; }; \
+	done; \
 	if diff -u golden.txt build/result.txt; then echo "golden: OK (8 seeds x 30000 frames)"; else echo "golden: MISMATCH"; exit 1; fi
 
-# Перезаписать эталон — ТОЛЬКО после намеренного изменения вида экрана (рефакторинг его менять не должен)
 golden: build/golden
 	@for s in 1 2 3 4 5 6 7 8; do ./build/golden 30000 $$s; done > golden.txt; echo "golden.txt обновлён"
 
