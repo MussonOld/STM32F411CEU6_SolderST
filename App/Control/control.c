@@ -144,9 +144,66 @@ static bool effective_setpoint(channel_id_t ch, fixed_t *out_setpoint)
     return true;
 }
 
+/* Коэффициент PID из Settings (целое, сотые доли) в Q16.16: raw / CONTROL_PID_SCALE. */
+static fixed_t pid_gain(uint16_t raw)
+{
+    return fixed_div(FIXED_FROM_INT(raw), FIXED_FROM_INT(CONTROL_PID_SCALE));
+}
+
+/* Асимметричное гашение интеграла при перелёте (идея из UniSolder PID_OVSGain):
+ * пока true_error>=0 копим/клампим как обычно; как только true_error<0 (уже
+ * перелетели настоящую уставку), потолок интеграла падает пропорционально
+ * величине перелёта — на CONTROL_OVERSHOOT_GAIN процентов i_max за каждый
+ * градус перелёта. При overshoot >= i_max/CONTROL_OVERSHOOT_GAIN градусов
+ * потолок уходит в 0, интеграл гасится мгновенно, а не обычным темпом Ki*dt.
+ * Не влияет на поведение без перелёта. */
+static fixed_t limit_integral_on_overshoot(fixed_t i, fixed_t i_max, fixed_t true_error)
+{
+    if (true_error >= 0) {
+        return i;
+    }
+    fixed_t overshoot = -true_error; /* °C, >0 */
+    fixed_t reduction = fixed_mul(overshoot, FIXED_FROM_INT(CONTROL_OVERSHOOT_GAIN));
+    fixed_t ceiling = i_max - reduction;
+    if (ceiling < 0) ceiling = 0;
+    return (i > ceiling) ? ceiling : i;
+}
+
+/* Интеграл: только в полосе вокруг настоящей уставки (анти-виндап), иначе
+ * сброс. Клампится так, чтобы Ki*I лежало в [0, 100] %. */
+static void update_integral(channel_id_t ch, fixed_t error, fixed_t true_error, fixed_t ki, fixed_t dt_s)
+{
+    fixed_t band = FIXED_FROM_INT(CONTROL_INTEGRAL_BAND_C);
+    if (!(ki > 0 && true_error <= band && true_error >= -band)) {
+        s_integral[ch] = 0;
+        return;
+    }
+
+    fixed_t i_max = fixed_div(FIXED_FROM_INT(100), ki);
+    fixed_t i = s_integral[ch] + fixed_mul(error, dt_s);
+    if (i < 0)     i = 0;
+    if (i > i_max) i = i_max;
+
+    s_integral[ch] = limit_integral_on_overshoot(i, i_max, true_error);
+}
+
+/* Выход PID в процентах 0..100 (с округлением). Вычисления — в int64: Kp до
+ * 100 %/°C при ошибке до сотен градусов в Q16.16 не помещается в int32. */
+static uint8_t pid_output_pct(fixed_t kp, fixed_t ki, fixed_t kd, fixed_t error, fixed_t integral, fixed_t dTdt)
+{
+    int64_t out = (((int64_t)kp * error) >> FIXED_SHIFT)
+                + (((int64_t)ki * integral) >> FIXED_SHIFT)
+                - (((int64_t)kd * dTdt) >> FIXED_SHIFT);
+
+    int64_t max = (int64_t)FIXED_FROM_INT(100);
+    if (out < 0)   out = 0;
+    if (out > max) out = max;
+
+    return (uint8_t)FIXED_TO_INT((fixed_t)out + (FIXED_ONE >> 1)); /* округление */
+}
+
 /* Один шаг PID на новый отсчёт АЦП: обновляет s_integral и s_duty_pct.
- * dt_s > 0. Вычисления выхода — в int64: Kp до 100 %/°C при ошибке до
- * сотен градусов в Q16.16 не помещается в int32. */
+ * dt_s > 0. */
 static void pid_step(channel_id_t ch, fixed_t setpoint, fixed_t true_setpoint, fixed_t temp, fixed_t dt_s)
 {
     fixed_t error = setpoint - temp;
@@ -161,71 +218,100 @@ static void pid_step(channel_id_t ch, fixed_t setpoint, fixed_t true_setpoint, f
      * насыщенным весь последний отрезок подъёма, что и даёт перелёт. */
     fixed_t true_error = true_setpoint - temp;
 
-    fixed_t kp = fixed_div(FIXED_FROM_INT(Settings_GetKp(ch)), FIXED_FROM_INT(CONTROL_PID_SCALE));
-    fixed_t ki = fixed_div(FIXED_FROM_INT(Settings_GetKi(ch)), FIXED_FROM_INT(CONTROL_PID_SCALE));
-    fixed_t kd = fixed_div(FIXED_FROM_INT(Settings_GetKd(ch)), FIXED_FROM_INT(CONTROL_PID_SCALE));
+    fixed_t kp = pid_gain(Settings_GetKp(ch));
+    fixed_t ki = pid_gain(Settings_GetKi(ch));
+    fixed_t kd = pid_gain(Settings_GetKd(ch));
 
-    /* Интеграл: только в полосе вокруг настоящей уставки (анти-виндап),
-     * иначе сброс. Клампится так, чтобы Ki*I лежало в [0, 100] %. */
-    fixed_t band = FIXED_FROM_INT(CONTROL_INTEGRAL_BAND_C);
-    if (ki > 0 && true_error <= band && true_error >= -band) {
-        fixed_t i_max = fixed_div(FIXED_FROM_INT(100), ki);
-        fixed_t i = s_integral[ch] + fixed_mul(error, dt_s);
-        if (i < 0)     i = 0;
-        if (i > i_max) i = i_max;
-
-        /* Асимметричное гашение при перелёте (идея из UniSolder PID_OVSGain):
-         * пока true_error>=0 копим/клампим как обычно; как только
-         * true_error<0 (уже перелетели настоящую уставку), потолок интеграла
-         * падает пропорционально величине перелёта — на CONTROL_OVERSHOOT_GAIN
-         * процентов i_max за каждый градус перелёта. При overshoot >=
-         * i_max/CONTROL_OVERSHOOT_GAIN градусов потолок уходит в 0, интеграл
-         * гасится мгновенно, а не обычным темпом Ki*dt. Не влияет на
-         * поведение без перелёта. */
-        if (true_error < 0) {
-            fixed_t overshoot = -true_error; /* °C, >0 */
-            fixed_t reduction = fixed_mul(overshoot, FIXED_FROM_INT(CONTROL_OVERSHOOT_GAIN));
-            fixed_t ceiling = i_max - reduction;
-            if (ceiling < 0) ceiling = 0;
-            if (i > ceiling) i = ceiling;
-        }
-
-        s_integral[ch] = i;
-    } else {
-        s_integral[ch] = 0;
-    }
-
-    int64_t out = (((int64_t)kp * error) >> FIXED_SHIFT)
-                + (((int64_t)ki * s_integral[ch]) >> FIXED_SHIFT)
-                - (((int64_t)kd * s_dTdt[ch]) >> FIXED_SHIFT);
-
-    int64_t max = (int64_t)FIXED_FROM_INT(100);
-    if (out < 0)   out = 0;
-    if (out > max) out = max;
-
-    s_duty_pct[ch] = (uint8_t)FIXED_TO_INT((fixed_t)out + (FIXED_ONE >> 1)); /* округление */
+    update_integral(ch, error, true_error, ki, dt_s);
+    s_duty_pct[ch] = pid_output_pct(kp, ki, kd, error, s_integral[ch], s_dTdt[ch]);
 }
 
-static void poll_channel(channel_id_t ch)
+/* Сглаженная dT/dt: первый отсчёт после сброса берётся как есть, дальше —
+ * экспоненциальный фильтр alpha = dt / (tau + dt). dt_ms > 0. */
+static void update_dTdt(channel_id_t ch, fixed_t temp, uint32_t dt_ms, fixed_t dt_s)
+{
+    fixed_t raw = fixed_div(temp - s_prev_temp[ch], dt_s); /* °C/с */
+
+    if (!s_dTdt_valid[ch]) {
+        s_dTdt[ch] = raw;
+        s_dTdt_valid[ch] = true;
+        return;
+    }
+    fixed_t alpha = fixed_div(FIXED_FROM_INT((int32_t)dt_ms),
+                              FIXED_FROM_INT((int32_t)(CONTROL_DTDT_FILTER_MS + dt_ms)));
+    s_dTdt[ch] += fixed_mul(alpha, raw - s_dTdt[ch]);
+}
+
+/* Двухстадийная уставка (см. control.h): пока температура ниже
+ * промежуточного рубежа, PID работает против него, а не против настоящей
+ * уставки — чистая функция (temp, setpoint), без отдельного состояния.
+ *
+ * Величину отступа масштабируем по факту оставшегося пути (setpoint - temp),
+ * а не берём фиксированным потолком CONTROL_APPROACH_OFFSET_C напрямую: на
+ * большом прыжке (остаток >> 2*OFFSET, напр. холодный старт на высокую
+ * уставку) offset упирается в потолок. На малом остатке (холодный старт на
+ * низкую уставку, где offset — заметная доля всего пути) offset сам
+ * уменьшается и гладко идёт к 0 по мере приближения temp к setpoint. Без
+ * этого при фиксированном offset в момент переключения стадии
+ * working_setpoint скачком увеличивался на OFFSET (PID уже притормозил,
+ * подходя к промежуточному рубежу, и тут же получал новый скачок error) — на
+ * маленьких уставках это добавляло свежий разгон почти у финиша и давало
+ * перелёт. */
+static fixed_t working_setpoint_for(fixed_t setpoint, fixed_t temp)
+{
+    fixed_t remaining   = setpoint - temp; /* >0, пока не долетели */
+    fixed_t offset_cap  = FIXED_FROM_INT(CONTROL_APPROACH_OFFSET_C);
+    fixed_t offset      = remaining >> 1;
+    if (offset > offset_cap) offset = offset_cap;
+    if (offset < 0)          offset = 0;
+
+    fixed_t approach = setpoint - offset;
+    return (temp < approach) ? approach : setpoint;
+}
+
+/* Пересчёт только на реально новый отсчёт АЦП (иначе dT=0 исказит dT/dt).
+ * Первому отсчёту после сброса базы нет — ждём. */
+static void process_new_sample(channel_id_t ch, fixed_t setpoint, fixed_t temp, uint32_t update_tick)
+{
+    if (s_prev_temp_valid[ch]) {
+        uint32_t dt_ms = update_tick - s_last_update_tick[ch];
+        if (dt_ms > 0) {
+            fixed_t dt_s = fixed_div(FIXED_FROM_INT((int32_t)dt_ms), FIXED_FROM_INT(1000));
+            update_dTdt(ch, temp, dt_ms, dt_s);
+            pid_step(ch, working_setpoint_for(setpoint, temp), setpoint, temp, dt_s);
+        }
+    }
+
+    s_prev_temp[ch]        = temp;
+    s_prev_temp_valid[ch]  = true;
+    s_last_update_tick[ch] = update_tick;
+}
+
+/* Можно ли греть канал сейчас; если да — эффективная уставка в *setpoint.
+ * Порядок проверок и короткое замыкание сохранены. */
+static bool heating_allowed(channel_id_t ch, fixed_t *setpoint)
 {
     /* Нет валидного отсчёта АЦП — греть вслепую нельзя, fail-safe off. Тот же
      * отказ, если Diag ещё не оценил ПОСЛЕДНИЙ отсчёт (иначе Error относился бы
      * к предыдущему измерению): при порядке ADS1220 -> Diag -> Control из main.c
      * не срабатывает никогда, но делает порядок проверяемым, а не негласным. */
     if (!ADS1220_IsDataValid(ch) || !Diag_IsSampleEvaluated(ch)) {
-        force_off(ch);
-        return;
+        return false;
     }
 
     /* Авария (КЗ/обрыв RTD, обрыв нагревателя, БП, EEPROM и т.п.) —
      * см. error.h. Блокирует канал независимо от прочих условий. */
     if (Error_IsChannelBlocked(ch)) {
-        force_off(ch);
-        return;
+        return false;
     }
 
+    return effective_setpoint(ch, setpoint);
+}
+
+static void poll_channel(channel_id_t ch)
+{
     fixed_t setpoint;
-    if (!effective_setpoint(ch, &setpoint)) {
+    if (!heating_allowed(ch, &setpoint)) {
         force_off(ch);
         return;
     }
@@ -234,61 +320,8 @@ static void poll_channel(channel_id_t ch)
     State_SetCurrentTemp(ch, temp); /* Control пишет current_temp, см. state.h */
 
     uint32_t update_tick = ADS1220_GetLastUpdateTick(ch);
-    bool has_new_sample = (update_tick != s_last_update_tick[ch]);
-
-    if (has_new_sample) {
-        /* Пересчитываем только на реально новый отсчёт АЦП (иначе dT=0
-         * исказит dT/dt). Первому отсчёту после сброса базы нет — ждём. */
-        if (s_prev_temp_valid[ch]) {
-            uint32_t dt_ms = update_tick - s_last_update_tick[ch];
-            if (dt_ms > 0) {
-                fixed_t dt_s = fixed_div(FIXED_FROM_INT((int32_t)dt_ms), FIXED_FROM_INT(1000));
-                fixed_t raw  = fixed_div(temp - s_prev_temp[ch], dt_s); /* °C/с */
-
-                if (!s_dTdt_valid[ch]) {
-                    s_dTdt[ch] = raw;
-                    s_dTdt_valid[ch] = true;
-                } else {
-                    /* Экспоненциальный фильтр: alpha = dt / (tau + dt). */
-                    fixed_t alpha = fixed_div(FIXED_FROM_INT((int32_t)dt_ms),
-                                              FIXED_FROM_INT((int32_t)(CONTROL_DTDT_FILTER_MS + dt_ms)));
-                    s_dTdt[ch] += fixed_mul(alpha, raw - s_dTdt[ch]);
-                }
-
-                /* Двухстадийная уставка (см. control.h): пока температура
-                 * ниже промежуточного рубежа, PID работает против него, а
-                 * не против настоящей уставки — чистая функция (temp,
-                 * setpoint), без отдельного состояния.
-                 *
-                 * Величину отступа масштабируем по факту оставшегося пути
-                 * (setpoint - temp), а не берём фиксированным потолком
-                 * CONTROL_APPROACH_OFFSET_C напрямую: на большом прыжке
-                 * (остаток >> 2*OFFSET, напр. холодный старт на высокую
-                 * уставку) offset упирается в потолок. На малом остатке (холодный старт на низкую
-                 * уставку, где offset — заметная доля всего пути) offset
-                 * сам уменьшается и гладко идёт к 0 по мере приближения
-                 * temp к setpoint. Без этого при фиксированном offset в
-                 * момент переключения стадии working_setpoint скачком
-                 * увеличивался на OFFSET (PID уже притормозил, подходя к
-                 * промежуточному рубежу, и тут же получал новый скачок
-                 * error) — на маленьких уставках это добавляло свежий
-                 * разгон почти у финиша и давало перелёт. */
-                fixed_t remaining   = setpoint - temp; /* >0, пока не долетели */
-                fixed_t offset_cap  = FIXED_FROM_INT(CONTROL_APPROACH_OFFSET_C);
-                fixed_t offset      = remaining >> 1;
-                if (offset > offset_cap) offset = offset_cap;
-                if (offset < 0)          offset = 0;
-
-                fixed_t approach = setpoint - offset;
-                fixed_t working_setpoint = (temp < approach) ? approach : setpoint;
-
-                pid_step(ch, working_setpoint, setpoint, temp, dt_s);
-            }
-        }
-
-        s_prev_temp[ch]        = temp;
-        s_prev_temp_valid[ch]  = true;
-        s_last_update_tick[ch] = update_tick;
+    if (update_tick != s_last_update_tick[ch]) {
+        process_new_sample(ch, setpoint, temp, update_tick);
     }
 
     pwm_stage(ch);

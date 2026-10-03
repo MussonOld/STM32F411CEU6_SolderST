@@ -41,5 +41,6 @@ uint32_t HAL_GetTick(void);
 /* Для sleep.c (tests/sleep_golden): чтение уровня пина — реализацию даёт тест. */
 typedef enum { GPIO_PIN_RESET = 0, GPIO_PIN_SET = 1 } GPIO_PinState;
 GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin);
+void HAL_GPIO_WritePin(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin, GPIO_PinState PinState); /* для control.c (tests/control_golden) */
 
 #endif /* STUB_STM32F4XX_HAL_H */

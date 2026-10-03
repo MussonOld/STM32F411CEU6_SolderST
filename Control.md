@@ -65,3 +65,8 @@ Kp / Ki / Kd = 500 / 90 / 300 (в единицах `raw`, т.е. 5 / 0.9 / 3.0),
 - Читает `State` (уставка, включён ли канал), `Settings` (Kp/Ki/Kd, PresleepTemp), `Sleep`, `Error` (`Error_IsChannelBlocked()`), `ADS1220` (температура, свежесть отсчёта).
 - Пишет `State.current_temp` / `State.heater_active`.
 - Замер целостности нагревателя (`Diag`) выполняется в паузах между импульсами ШИМ, когда оба выхода неактивны — см. `Error.md`.
+
+## Реализация
+
+`poll_channel()` — короткая цепочка: `heating_allowed()` (отсчёт АЦП валиден и оценён Diag → нет блокировки → эффективная уставка по режиму сна; иначе `force_off()`) → температура в State → `process_new_sample()` на реально новый отсчёт → `pwm_stage()`. `process_new_sample()`: `update_dTdt()` (фильтр dT/dt), `working_setpoint_for()` (двухстадийная уставка), `pid_step()`. `pid_step()`: `update_integral()` (полоса анти-виндапа, клампинг, `limit_integral_on_overshoot()`) и `pid_output_pct()` (P + I − D в int64, насыщение 0..100 %, округление). Арифметика, порядок вычислений и все пороги прежние; регулятор закреплён golden-тестом в замкнутом контуре с тепловой моделью, который сверяет выход и внутреннее состояние PID на каждом шаге (`make -C tests/control_golden check`; после намеренного изменения алгоритма эталон обновляется `make -C tests/control_golden golden`). Тест включает `control.c` целиком, поэтому статические переменные регулятора (`s_duty_pct`, `s_integral`, `s_dTdt` и др.) должны сохранять имена.
+
