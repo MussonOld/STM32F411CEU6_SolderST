@@ -1,0 +1,8 @@
+RESULT iters=20000 seed=1 hash=e5bd74fd02e26dd2 events=392120
+RESULT iters=20000 seed=2 hash=62f21a0aa58c64d5 events=386788
+RESULT iters=20000 seed=3 hash=fe8fc695fd31cc67 events=395272
+RESULT iters=20000 seed=4 hash=239bc1363b122062 events=390560
+RESULT iters=20000 seed=5 hash=953d75dbabe0cfd2 events=391109
+RESULT iters=20000 seed=6 hash=ae651f0ef3193ecd events=389877
+RESULT iters=20000 seed=7 hash=16b284d154b64acc events=389287
+RESULT iters=20000 seed=8 hash=7ca7cf860b94b9a8 events=386737

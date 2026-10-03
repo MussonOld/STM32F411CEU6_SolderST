@@ -5,7 +5,8 @@
 #   menu-golden    — не изменилось ли поведение меню (tests/menu_golden);
 #   sleep-golden   — не изменилось ли поведение таймеров сна (tests/sleep_golden);
 #   buttons-golden — не изменилась ли классификация нажатий драйвера кнопок (tests/buttons_golden);
-#   settings-golden — не изменилась ли загрузка/запись настроек (tests/settings_golden).
+#   settings-golden — не изменилась ли загрузка/запись настроек (tests/settings_golden);
+#   gfx-golden     — не изменился ли вывод текстового рендера (tests/gfx_golden).
 # Обе — быстрая проверка «не сломано ли», не замена ручной проверки на
 # железе перед прошивкой.
 name: CI
@@ -83,3 +84,12 @@ jobs:
 
       - name: Run golden test
         run: make -C tests/settings_golden check
+
+  gfx-golden:
+    name: Gfx golden-master test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run golden test
+        run: make -C tests/gfx_golden check

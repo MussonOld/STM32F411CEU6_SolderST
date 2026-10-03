@@ -173,86 +173,96 @@ static bool glyph_fits_on_screen(int32_t left, uint16_t w)
     return (left >= 0) && ((left + (int32_t)w) <= (int32_t)screen_w);
 }
 
-static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx,
-                              display_color_t fg, display_color_t bg)
+/** @brief Залить первые count пикселей буфера глифа цветом. */
+static void fill_glyph_buffer(display_color_t color, uint32_t count)
 {
-    uint8_t  width        = font->widths[idx];
-    int8_t   xoff          = font->xoffset[idx];
-    int8_t   yoff          = font->yoffset[idx];
-    uint8_t  advance       = font->dwidth[idx];
-    uint16_t offset         = font->offsets[idx];
-    uint8_t  bytes_per_col = (font->height + 7) / 8;
+    for (uint32_t i = 0; i < count; i++) {
+        s_glyph_buffer[i] = color;
+    }
+}
 
-    if (width == 0) {
-        /* Пробел и подобные не имеют своего битмапа, но должны стереть
-         * то, что было на этом месте раньше (иначе при сокращении числа
-         * цифр остаётся "призрак" старого символа) — заливаем ячейку bg. */
-        if (advance == 0) {
-            return advance;
-        }
-        if (!glyph_fits_on_screen(x, advance)) {
-            return advance; /* за краем экрана — тихо пропускаем, курсор двигаем */
-        }
-        uint32_t px_count = (uint32_t)advance * font->height;
-        if (px_count > GFX_GLYPH_BUFFER_PIXELS) {
-            assert(px_count <= GFX_GLYPH_BUFFER_PIXELS &&
-                   "Glyph cell exceeds GFX_GLYPH_BUFFER_PIXELS - increase the buffer");
-            draw_glyph_overflow_marker(x, y, advance, font->height, fg);
-            return advance;
-        }
-        for (uint32_t i = 0; i < px_count; i++) {
-            s_glyph_buffer[i] = bg;
-        }
-        if (Display_SetWindow(x, y, x + advance - 1, y + font->height - 1) != DISPLAY_OK) {
-            s_job.state = GFX_JOB_ERROR_RETRY;
-            return advance; /* курсор всё равно двигаем; Gfx_Process() проверит состояние сразу после возврата */
-        }
-        write_pixels_or_fail(s_glyph_buffer, px_count);
+/**
+ * @brief Не влезает ли ячейка в буфер глифа.
+ *
+ * В debug (DEBUG определён CubeIDE по умолчанию) роняем сборку сразу здесь —
+ * иначе ошибка обнаруживается только на экране, произвольно поздно. В release
+ * assert отключён (NDEBUG); тихий пропуск глифа для показаний температуры
+ * опасен: результат выглядит как ПРАВДОПОДОБНОЕ, но неверное число ("50"
+ * вместо "450"), а не как очевидная поломка. Поэтому вместо пропуска вызывающий
+ * рисует видимый маркер ошибки (draw_glyph_overflow_marker()), заведомо
+ * укладывающийся в буфер.
+ */
+static bool cell_exceeds_buffer(uint32_t pixel_count)
+{
+    if (pixel_count <= GFX_GLYPH_BUFFER_PIXELS) {
+        return false;
+    }
+    assert(pixel_count <= GFX_GLYPH_BUFFER_PIXELS &&
+           "Glyph cell exceeds GFX_GLYPH_BUFFER_PIXELS - increase the buffer");
+    return true;
+}
+
+/**
+ * @brief Установить окно и запустить DMA-запись уже заполненного буфера ячейки.
+ *        Отказ SetWindow переводит задание в GFX_JOB_ERROR_RETRY (курсор вызывающий
+ *        всё равно двигает; Gfx_Process() проверит состояние сразу после возврата).
+ */
+static void blit_cell(uint16_t draw_x, uint16_t draw_y, uint16_t cell_width, uint16_t height, uint32_t pixel_count)
+{
+    if (Display_SetWindow(draw_x, draw_y, draw_x + cell_width - 1, draw_y + height - 1) != DISPLAY_OK) {
+        s_job.state = GFX_JOB_ERROR_RETRY;
+        return;
+    }
+    write_pixels_or_fail(s_glyph_buffer, pixel_count); /* асинхронно, не ждём; отказ запуска — см. write_pixels_or_fail() */
+}
+
+/**
+ * @brief Глиф без битмапа (пробел и подобные): залить ячейку advance x height цветом фона.
+ *
+ * Пробел не имеет своего битмапа, но должен стереть то, что было на этом
+ * месте раньше (иначе при сокращении числа цифр остаётся "призрак" старого
+ * символа).
+ */
+static uint16_t submit_blank_cell(uint16_t x, uint16_t y, const font_t *font, uint8_t advance,
+                                  display_color_t fg, display_color_t bg)
+{
+    if (advance == 0) {
         return advance;
     }
-
-    /* Ячейка перерисовки = объединение bbox символа (xoff..xoff+width) и
-     * шага курсора (0..advance). Пиксели предыдущего символа на этой позиции
-     * могли выходить за bbox нового (например широкая "0", затем узкая "1"
-     * с другим xoff) — если стирать только bbox нового символа, часть
-     * старых пикселей остаётся ("призрак"). Стирая всю ячейку целиком,
-     * гарантируем перекрытие независимо от формы предыдущего символа. */
-    int16_t  cell_left  = (xoff < 0) ? xoff : 0;
-    int16_t  cell_right = ((int16_t)xoff + width > advance) ? ((int16_t)xoff + width) : advance;
-    uint16_t cell_width = (uint16_t)(cell_right - cell_left);
-
-    if (!glyph_fits_on_screen((int32_t)x + cell_left, cell_width)) {
+    if (!glyph_fits_on_screen(x, advance)) {
         return advance; /* за краем экрана — тихо пропускаем, курсор двигаем */
     }
 
-    uint32_t pixel_count = (uint32_t)cell_width * font->height;
-    if (pixel_count > GFX_GLYPH_BUFFER_PIXELS) {
-        /* В debug (DEBUG определён CubeIDE по умолчанию) роняем сборку
-         * сразу здесь — иначе ошибка обнаруживается только на экране,
-         * произвольно поздно. В release assert отключён (NDEBUG); тихий
-         * пропуск глифа для показаний температуры опасен: результат
-         * выглядит как ПРАВДОПОДОБНОЕ, но неверное число ("50" вместо
-         * "450"), а не как очевидная поломка. Поэтому вместо пропуска —
-         * видимый маркер ошибки, заведомо укладывающийся в буфер. */
-        assert(pixel_count <= GFX_GLYPH_BUFFER_PIXELS &&
-               "Glyph cell exceeds GFX_GLYPH_BUFFER_PIXELS - increase the buffer");
+    uint32_t px_count = (uint32_t)advance * font->height;
+    if (cell_exceeds_buffer(px_count)) {
         draw_glyph_overflow_marker(x, y, advance, font->height, fg);
-        return advance; /* курсор всё равно сдвигаем на advance */
+        return advance;
     }
 
-    for (uint32_t i = 0; i < pixel_count; i++) {
-        s_glyph_buffer[i] = bg; /* фон по всей ячейке — стираем всё, что было в ячейке */
-    }
+    fill_glyph_buffer(bg, px_count);
+    blit_cell(x, y, advance, font->height, px_count);
+    return advance;
+}
 
-    /* Окно отрисовки/стирания по Y ФИКСИРОВАНО на y..y+height-1 для ЛЮБОГО
-     * символа шрифта — не должно зависеть от yoffset конкретного глифа.
-     * yoff — это позиция битмапа символа ВНУТРИ этого фиксированного окна
-     * (строка буфера = r, битмап-строка = r - yoff), а не сдвиг самого окна.
-     * Если бы окно сдвигалось вместе с yoff, то при смене
-     * символа с меньшим yoff (у "4" среди цифр он на 1 меньше, чем у
-     * остальных) на символ с большим yoff верхние строки старого глифа
-     * остаются вне нового окна стирания — "призрак" сверху. */
-    uint16_t glyph_col0 = (uint16_t)(xoff - cell_left);
+/**
+ * @brief Нарисовать пиксели переднего плана битмапа глифа в буфер ячейки (фон уже залит).
+ *
+ * Окно отрисовки/стирания по Y ФИКСИРОВАНО на y..y+height-1 для ЛЮБОГО
+ * символа шрифта — не должно зависеть от yoffset конкретного глифа.
+ * yoff — это позиция битмапа символа ВНУТРИ этого фиксированного окна
+ * (строка буфера = r, битмап-строка = r - yoff), а не сдвиг самого окна.
+ * Если бы окно сдвигалось вместе с yoff, то при смене символа с меньшим
+ * yoff (у "4" среди цифр он на 1 меньше, чем у остальных) на символ с
+ * большим yoff верхние строки старого глифа остаются вне нового окна
+ * стирания — "призрак" сверху.
+ */
+static void draw_glyph_bitmap(const font_t *font, int idx, uint16_t cell_width, uint16_t glyph_col0, display_color_t fg)
+{
+    uint8_t  width         = font->widths[idx];
+    int8_t   yoff           = font->yoffset[idx];
+    uint16_t offset          = font->offsets[idx];
+    uint8_t  bytes_per_col = (font->height + 7) / 8;
+
     for (uint16_t r = 0; r < font->height; r++) {
         int16_t bmp_row = (int16_t)r - yoff;
         if (bmp_row < 0 || bmp_row >= font->height) {
@@ -266,17 +276,54 @@ static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx
             }
         }
     }
+}
+
+/**
+ * @brief Глиф с битмапом: ячейка перерисовки = объединение bbox символа
+ *        (xoff..xoff+width) и шага курсора (0..advance).
+ *
+ * Пиксели предыдущего символа на этой позиции могли выходить за bbox нового
+ * (например широкая "0", затем узкая "1" с другим xoff) — если стирать
+ * только bbox нового символа, часть старых пикселей остаётся ("призрак").
+ * Стирая всю ячейку целиком, гарантируем перекрытие независимо от формы
+ * предыдущего символа.
+ */
+static uint16_t submit_inked_glyph(uint16_t x, uint16_t y, const font_t *font, int idx,
+                                   display_color_t fg, display_color_t bg)
+{
+    uint8_t  width   = font->widths[idx];
+    int8_t   xoff    = font->xoffset[idx];
+    uint8_t  advance = font->dwidth[idx];
+
+    int16_t  cell_left  = (xoff < 0) ? xoff : 0;
+    int16_t  cell_right = ((int16_t)xoff + width > advance) ? ((int16_t)xoff + width) : advance;
+    uint16_t cell_width = (uint16_t)(cell_right - cell_left);
+
+    if (!glyph_fits_on_screen((int32_t)x + cell_left, cell_width)) {
+        return advance; /* за краем экрана — тихо пропускаем, курсор двигаем */
+    }
+
+    uint32_t pixel_count = (uint32_t)cell_width * font->height;
+    if (cell_exceeds_buffer(pixel_count)) {
+        draw_glyph_overflow_marker(x, y, advance, font->height, fg);
+        return advance; /* курсор всё равно сдвигаем на advance */
+    }
+
+    fill_glyph_buffer(bg, pixel_count); /* фон по всей ячейке — стираем всё, что было в ячейке */
+    draw_glyph_bitmap(font, idx, cell_width, (uint16_t)(xoff - cell_left), fg);
 
     uint16_t draw_x = x + cell_left;
-    uint16_t draw_y = y;
-
-    if (Display_SetWindow(draw_x, draw_y, draw_x + cell_width - 1, draw_y + font->height - 1) != DISPLAY_OK) {
-        s_job.state = GFX_JOB_ERROR_RETRY;
-        return advance; /* курсор всё равно двигаем; Gfx_Process() проверит состояние сразу после возврата */
-    }
-    write_pixels_or_fail(s_glyph_buffer, pixel_count); /* асинхронно, не ждём; отказ запуска — см. write_pixels_or_fail() */
-
+    blit_cell(draw_x, y, cell_width, font->height, pixel_count);
     return advance;
+}
+
+static uint16_t submit_glyph(uint16_t x, uint16_t y, const font_t *font, int idx,
+                              display_color_t fg, display_color_t bg)
+{
+    if (font->widths[idx] == 0) {
+        return submit_blank_cell(x, y, font, font->dwidth[idx], fg, bg);
+    }
+    return submit_inked_glyph(x, y, font, idx, fg, bg);
 }
 
 /* ---- Публичный интерфейс ---- */
