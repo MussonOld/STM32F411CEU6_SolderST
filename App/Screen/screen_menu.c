@@ -26,9 +26,9 @@ void ScreenMenu_Init(void)
                                  (uint16_t)(SCREEN_MENU_ITEM_Y0 + i * SCREEN_MENU_ITEM_STEP),
                                  &AntiquaB_18_uni, COLOR_MENU_NORMAL, COLOR_BG);
     }
-    /* Живая температура на пунктах калибровки — крупно в правой половине экрана (x — центр) */
+    /* Живая температура на пунктах настройки PID и калибровки — в правой половине экрана, шрифт 24 (x — центр) */
     TextField_ConfigureLine(LINE_MENU_TEMP, SCREEN_MENU_TEMP_CENTER_X, SCREEN_MENU_TEMP_Y,
-                             &Comic_60_dig, COLOR_ACTIVE_CURRENT, COLOR_BG);
+                             &AntiquaB_24_uni, COLOR_ACTIVE_CURRENT, COLOR_BG);
 }
 
 typedef const char *(*menu_text_line_fn)(uint8_t line_index);
@@ -88,7 +88,7 @@ static void render_menu_items(void)
 /**
  * @brief Отрисовать экран сервисного меню целиком (заменяет главный экран)
  */
-/* ---- Живая температура на пунктах калибровки (Slope/Bias) ---- */
+/* ---- Живая температура на пунктах настройки PID и калибровки (Kp/Ki/Kd/Наклон/Смещение) ---- */
 
 #define SCREEN_MENU_TEMP_HYST_C FIXED_FROM_FLOAT(0.3f) /* как на главном экране: целое не дребезжит на границе */
 
@@ -111,14 +111,14 @@ static int32_t menu_temp_for_display(channel_id_t ch, fixed_t cur)
 }
 
 /**
- * @brief Живая температура активного канала на пунктах калибровки.
+ * @brief Живая температура активного канала на пунктах настройки PID и калибровки.
  *
  * Берётся ПРЯМО из АЦП (ADS1220_GetTemperatureC(), формула применяет Slope/Bias
  * из Settings на каждом чтении): значение State_GetCurrentTemp() обновляет
  * только Control, и то лишь пока нагрев разрешён — в SLEEP и у выключенного
  * канала оно замирает, а при калибровке показание должно быть живым всегда
  * (подставил новый Slope/Bias — через отсчёт АЦП видно новое число).
- * Не показывается (пустое поле), если пункт не калибровочный, канал
+ * Не показывается (пустое поле), если пункт не из этого списка, канал
  * заблокирован (не подключен/авария/БП) или отсчёт АЦП невалиден.
  */
 static void render_live_temp(void)

@@ -122,7 +122,7 @@ const char *Menu_GetItemLabel(uint8_t index);
 void Menu_GetItemValueText(uint8_t index, char *buf, uint8_t buf_size);
 
 /** @brief Индекс выбранного сейчас пункта текущего уровня */
-bool Menu_ShowsLiveTemp(void); /* Slope/Bias уровня Expert: экран показывает живую температуру активного канала (калибровка); не на экранах-сообщениях */
+bool Menu_ShowsLiveTemp(void); /* Kp/Ki/Kd/Наклон/Смещение уровня Expert: экран показывает живую температуру активного канала (настройка PID и калибровка); не на экранах-сообщениях */
 uint8_t Menu_GetCursor(void);
 
 /** @brief true — значение выбранного пункта сейчас редактируется (UP/DN меняют его, а не курсор) */

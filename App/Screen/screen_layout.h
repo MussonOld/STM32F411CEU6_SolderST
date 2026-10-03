@@ -50,8 +50,8 @@ enum {
     LINE_MENU_ITEM_5,
     LINE_MENU_ITEM_6,
     LINE_MENU_ITEM_7,
-    LINE_MENU_TEMP,           /* сервисное меню — живая температура активного канала на пунктах калибровки
-                                 (Slope/Bias), крупно в правой половине экрана, см. ScreenMenu_Render() */
+    LINE_MENU_TEMP,           /* сервисное меню — живая температура активного канала на пунктах настройки PID и
+                                 калибровки (Kp/Ki/Kd/Наклон/Смещение), в правой половине экрана, см. ScreenMenu_Render() */
 };
 
 /* ---- Геометрия ---- */
@@ -230,7 +230,7 @@ _Static_assert(SCREEN_PRESLEEP_ICON_Y + PRESLEEP_ICON_BITMAP_H <= SCREEN_SLEEP_T
 #define SCREEN_MENU_ITEM_Y0   (40U)
 #define SCREEN_MENU_ITEM_STEP (25U)
 #define SCREEN_MENU_TEMP_CENTER_X (SCREEN_HALF_CENTER_RIGHT_X) /* правая половина экрана в меню свободна: пункты списка (шрифт 18) там не заходят */
-#define SCREEN_MENU_TEMP_Y        ((SCREEN_HEIGHT - 60U) / 2U)  /* по вертикали по центру, шрифт Comic_60_dig (высота 60) */
+#define SCREEN_MENU_TEMP_Y        ((SCREEN_HEIGHT - 24U) / 2U)  /* по вертикали по центру, шрифт AntiquaB_24_uni (высота 24) */
 #define SCREEN_MENU_ITEM_ROWS (8U) /* максимум пунктов — уровень User (8: с "Заставкой"); Expert — 7 */
 _Static_assert(SCREEN_MENU_ITEM_Y0 + (SCREEN_MENU_ITEM_ROWS - 1U) * SCREEN_MENU_ITEM_STEP + 18U <= SCREEN_HEIGHT,
                "последняя строка меню (шрифт 18) должна помещаться на экране");

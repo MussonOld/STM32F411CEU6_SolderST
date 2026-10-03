@@ -112,11 +112,11 @@ static const item_desc_t s_user_items[USER_MENU_ITEM_COUNT] = {
 
 static const item_desc_t s_expert_items[EXPERT_MENU_ITEM_COUNT] = {
     [EXPERT_ITEM_EXIT]  = { "Выход", ROLE_EXIT,   NULL,               NULL },
-    [EXPERT_ITEM_KP]    = { "Kp",    ROLE_NUMBER, Settings_GetKp,    Settings_SetKp },
-    [EXPERT_ITEM_KI]    = { "Ki",    ROLE_NUMBER, Settings_GetKi,    Settings_SetKi },
-    [EXPERT_ITEM_KD]    = { "Kd",    ROLE_NUMBER, Settings_GetKd,    Settings_SetKd },
-    [EXPERT_ITEM_SLOPE] = { "Slope", ROLE_NUMBER, Settings_GetSlope, Settings_SetSlope, true },
-    [EXPERT_ITEM_BIAS]  = { "Bias",  ROLE_NUMBER, Settings_GetBias,  Settings_SetBias,  true },
+    [EXPERT_ITEM_KP]    = { "Kp",       ROLE_NUMBER, Settings_GetKp,    Settings_SetKp,    true },
+    [EXPERT_ITEM_KI]    = { "Ki",       ROLE_NUMBER, Settings_GetKi,    Settings_SetKi,    true },
+    [EXPERT_ITEM_KD]    = { "Kd",       ROLE_NUMBER, Settings_GetKd,    Settings_SetKd,    true },
+    [EXPERT_ITEM_SLOPE] = { "Наклон",   ROLE_NUMBER, Settings_GetSlope, Settings_SetSlope, true }, /* Slope */
+    [EXPERT_ITEM_BIAS]  = { "Смещение", ROLE_NUMBER, Settings_GetBias,  Settings_SetBias,  true }, /* Bias */
     [EXPERT_ITEM_RESET] = { "Сброс", ROLE_RESET,  NULL,               NULL },
 };
 

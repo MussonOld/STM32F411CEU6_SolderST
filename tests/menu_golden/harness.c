@@ -28,6 +28,7 @@
 
 static uint64_t g_hash = 1469598103934665603ULL;
 static uint64_t g_events;
+static bool g_equiv; /* EQUIV=1: имена Наклон/Смещение в трассе печатаются как Slope/Bias — сверка с эталоном до переименования */
 static long g_step;
 static long g_dump_step = -2;
 
@@ -135,7 +136,8 @@ static void observe(menu_action_t act)
     {
         const char *lbl = Menu_GetItemLabel(Menu_GetCursor());
         bool expect = !Menu_IsShowingExpertWarning() && !Menu_IsShowingResetConfirm() && !Menu_IsShowingResetDone()
-                      && (strcmp(lbl, "Slope") == 0 || strcmp(lbl, "Bias") == 0);
+                      && (strcmp(lbl, "Kp") == 0 || strcmp(lbl, "Ki") == 0 || strcmp(lbl, "Kd") == 0
+                          || strcmp(lbl, "Наклон") == 0 || strcmp(lbl, "Смещение") == 0);
         if (Menu_ShowsLiveTemp() != expect) {
             printf("INVARIANT VIOLATED step %ld: Menu_ShowsLiveTemp()=%d, expected %d (item '%s')\n", g_step, (int)Menu_ShowsLiveTemp(), (int)expect, lbl);
             exit(2);
@@ -147,7 +149,12 @@ static void observe(menu_action_t act)
     uint8_t n = Menu_GetItemCount();
     for (uint8_t i = 0; i < n + 1U; i++) { /* +1: индекс за концом списка */
         Menu_GetItemValueText(i, buf, sizeof buf);
-        ev("item", "%u,'%s','%s'", i, Menu_GetItemLabel(i), buf);
+        const char *label = Menu_GetItemLabel(i);
+        if (g_equiv) {
+            if (strcmp(label, "Наклон") == 0)   label = "Slope";
+            if (strcmp(label, "Смещение") == 0) label = "Bias";
+        }
+        ev("item", "%u,'%s','%s'", i, label, buf);
     }
     for (uint8_t i = 0; i < 5; i++) {
         ev("lines", "%u,'%s','%s','%s'", i, Menu_GetExpertWarningLine(i), Menu_GetResetConfirmLine(i), Menu_GetResetDoneLine(i));
@@ -178,6 +185,7 @@ int main(int argc, char **argv)
     long steps = (argc > 1) ? atol(argv[1]) : 200000;
     uint64_t seed = (argc > 2) ? strtoull(argv[2], NULL, 10) : 1;
     if (getenv("DUMP")) g_dump_step = atol(getenv("DUMP"));
+    g_equiv = getenv("EQUIV") != NULL;
     g_rng ^= seed * 0x9E3779B97F4A7C15ULL;
     for (int i = 0; i < 8; i++) (void)rnd();
 
