@@ -7,6 +7,11 @@
 #include "text_field.h"
 #include "fonts.h"
 #include "menu.h"
+#include "fsm.h"       /* InputFSM_GetActiveChannel() */
+#include "error.h"     /* Error_IsChannelBlocked() */
+#include "ads1220.h"    /* ADS1220_IsDataValid()/GetTemperatureC() — живое измерение, см. render_live_temp() */
+#include "fixed_point.h"
+#include "channel.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -21,6 +26,9 @@ void ScreenMenu_Init(void)
                                  (uint16_t)(SCREEN_MENU_ITEM_Y0 + i * SCREEN_MENU_ITEM_STEP),
                                  &AntiquaB_18_uni, COLOR_MENU_NORMAL, COLOR_BG);
     }
+    /* Живая температура на пунктах калибровки — крупно в правой половине экрана (x — центр) */
+    TextField_ConfigureLine(LINE_MENU_TEMP, SCREEN_MENU_TEMP_CENTER_X, SCREEN_MENU_TEMP_Y,
+                             &Comic_60_dig, COLOR_ACTIVE_CURRENT, COLOR_BG);
 }
 
 typedef const char *(*menu_text_line_fn)(uint8_t line_index);
@@ -80,6 +88,52 @@ static void render_menu_items(void)
 /**
  * @brief Отрисовать экран сервисного меню целиком (заменяет главный экран)
  */
+/* ---- Живая температура на пунктах калибровки (Slope/Bias) ---- */
+
+#define SCREEN_MENU_TEMP_HYST_C FIXED_FROM_FLOAT(0.3f) /* как на главном экране: целое не дребезжит на границе */
+
+static int32_t s_temp_shown[CHANNEL_COUNT];
+static bool    s_temp_shown_valid[CHANNEL_COUNT];
+
+/** @brief Целое для показа с гистерезисом (то же правило, что temp_for_display() на главном экране; состояние своё). */
+static int32_t menu_temp_for_display(channel_id_t ch, fixed_t cur)
+{
+    if (s_temp_shown_valid[ch]) {
+        fixed_t lo = FIXED_FROM_INT(s_temp_shown[ch]) - SCREEN_MENU_TEMP_HYST_C;
+        fixed_t hi = FIXED_FROM_INT(s_temp_shown[ch] + 1) + SCREEN_MENU_TEMP_HYST_C;
+        if (cur >= lo && cur < hi) {
+            return s_temp_shown[ch];
+        }
+    }
+    s_temp_shown[ch] = FIXED_TO_INT(cur);
+    s_temp_shown_valid[ch] = true;
+    return s_temp_shown[ch];
+}
+
+/**
+ * @brief Живая температура активного канала на пунктах калибровки.
+ *
+ * Берётся ПРЯМО из АЦП (ADS1220_GetTemperatureC(), формула применяет Slope/Bias
+ * из Settings на каждом чтении): значение State_GetCurrentTemp() обновляет
+ * только Control, и то лишь пока нагрев разрешён — в SLEEP и у выключенного
+ * канала оно замирает, а при калибровке показание должно быть живым всегда
+ * (подставил новый Slope/Bias — через отсчёт АЦП видно новое число).
+ * Не показывается (пустое поле), если пункт не калибровочный, канал
+ * заблокирован (не подключен/авария/БП) или отсчёт АЦП невалиден.
+ */
+static void render_live_temp(void)
+{
+    channel_id_t ch = InputFSM_GetActiveChannel();
+
+    if (Menu_ShowsLiveTemp() && !Error_IsChannelBlocked(ch) && ADS1220_IsDataValid(ch)) {
+        TextField_PrintfCentered(LINE_MENU_TEMP, SCREEN_MENU_TEMP_CENTER_X, "%ld",
+                                 (long)menu_temp_for_display(ch, ADS1220_GetTemperatureC(ch)));
+    } else {
+        s_temp_shown_valid[ch] = false; /* вернёмся на пункт — гистерезис начнём заново */
+        TextField_PrintfCentered(LINE_MENU_TEMP, SCREEN_MENU_TEMP_CENTER_X, "");
+    }
+}
+
 void ScreenMenu_Render(void)
 {
     TextField_Printf(LINE_MENU_TITLE, "%s", Menu_GetTitle());
@@ -93,4 +147,6 @@ void ScreenMenu_Render(void)
     } else {
         render_menu_items();
     }
+
+    render_live_temp();
 }

@@ -131,6 +131,16 @@ static void observe(menu_action_t act)
 {
     char buf[32];
     ev("action", "%d", (int)act);
+    /* Инвариант (в хеш не входит): живая температура — ровно на Slope/Bias в списке/редактировании, не на экранах-сообщениях */
+    {
+        const char *lbl = Menu_GetItemLabel(Menu_GetCursor());
+        bool expect = !Menu_IsShowingExpertWarning() && !Menu_IsShowingResetConfirm() && !Menu_IsShowingResetDone()
+                      && (strcmp(lbl, "Slope") == 0 || strcmp(lbl, "Bias") == 0);
+        if (Menu_ShowsLiveTemp() != expect) {
+            printf("INVARIANT VIOLATED step %ld: Menu_ShowsLiveTemp()=%d, expected %d (item '%s')\n", g_step, (int)Menu_ShowsLiveTemp(), (int)expect, lbl);
+            exit(2);
+        }
+    }
     ev("cursor", "%u,%u", Menu_GetCursor(), Menu_GetItemCount());
     ev("flags", "%d%d%d%d", Menu_IsEditing(), Menu_IsShowingExpertWarning(), Menu_IsShowingResetConfirm(), Menu_IsShowingResetDone());
     ev("title", "%s", Menu_GetTitle());

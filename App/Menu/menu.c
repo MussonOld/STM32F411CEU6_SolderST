@@ -89,6 +89,7 @@ typedef struct {
     item_role_t role;
     uint16_t  (*get)(channel_id_t ch); /* NULL — у пункта нет числового значения (Выход/Сброс/Expert/Bzzz) */
     void      (*set)(channel_id_t ch, uint16_t value); /* только ROLE_NUMBER; клампинг — внутри Settings_Set*() */
+    bool        live_temp; /* на этом пункте экран показывает живую температуру канала (калибровка Slope/Bias), см. Menu_ShowsLiveTemp() */
 } item_desc_t;
 
 /** @brief "Заставка" — глобальная (не по каналам), поэтому канал игнорируется */
@@ -114,8 +115,8 @@ static const item_desc_t s_expert_items[EXPERT_MENU_ITEM_COUNT] = {
     [EXPERT_ITEM_KP]    = { "Kp",    ROLE_NUMBER, Settings_GetKp,    Settings_SetKp },
     [EXPERT_ITEM_KI]    = { "Ki",    ROLE_NUMBER, Settings_GetKi,    Settings_SetKi },
     [EXPERT_ITEM_KD]    = { "Kd",    ROLE_NUMBER, Settings_GetKd,    Settings_SetKd },
-    [EXPERT_ITEM_SLOPE] = { "Slope", ROLE_NUMBER, Settings_GetSlope, Settings_SetSlope },
-    [EXPERT_ITEM_BIAS]  = { "Bias",  ROLE_NUMBER, Settings_GetBias,  Settings_SetBias },
+    [EXPERT_ITEM_SLOPE] = { "Slope", ROLE_NUMBER, Settings_GetSlope, Settings_SetSlope, true },
+    [EXPERT_ITEM_BIAS]  = { "Bias",  ROLE_NUMBER, Settings_GetBias,  Settings_SetBias,  true },
     [EXPERT_ITEM_RESET] = { "Сброс", ROLE_RESET,  NULL,               NULL },
 };
 
@@ -428,6 +429,14 @@ void Menu_GetItemValueText(uint8_t index, char *buf, uint8_t buf_size)
     } else if (it->get != NULL) {
         snprintf(buf, buf_size, "%u", (unsigned)it->get(InputFSM_GetActiveChannel()));
     } /* иначе (Выход/Сброс/Expert) — без значения */
+}
+
+bool Menu_ShowsLiveTemp(void)
+{
+    /* Только в списке/редактировании: на экранах-сообщениях (предупреждение Expert,
+     * подтверждение/итог сброса) курсор стоит на другом пункте, а правая половина
+     * экрана к тому же занята смыслом сообщения. */
+    return (s_state == MENU_STATE_LIST || s_state == MENU_STATE_EDITING) && current_item()->live_temp;
 }
 
 uint8_t Menu_GetCursor(void)

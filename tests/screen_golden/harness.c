@@ -29,6 +29,7 @@
 #include "fsm.h"
 #include "settings.h"
 #include "text_field.h"
+#include "ads1220.h"
 #include "screen_layout.h" /* LINE_INFO_SLEEP_*: инвариант "у заблокированного канала нет таймера сна" */
 
 /* ------------------------------------------------------------------ трасса */
@@ -36,6 +37,7 @@ static uint64_t g_hash = 1469598103934665603ULL;
 static uint64_t g_events;
 static long g_frame;
 static long g_dump_frame = -2;
+static bool g_nolive;  /* NOLIVE=1: меню никогда не просит живую температуру + строка живой температуры не попадает в трассу — режим сверки со старым экраном */
 static bool g_nofault; /* NOFAULT=1: аварий/блокировок нет вовсе (ГСЧ тот же) — режим сверки со старым поведением */
 
 static void mix_u64(uint64_t v)
@@ -91,6 +93,9 @@ static struct {
     bool editing, expert_warn, reset_confirm, reset_done;
     uint32_t settled_mask;
     bool dma_fail, win_fail;
+    bool live;                       /* Menu_ShowsLiveTemp() */
+    bool ads_valid[CHANNEL_COUNT];
+    fixed_t ads_temp[CHANNEL_COUNT];
     uint16_t width_seed;
 } W;
 
@@ -147,6 +152,11 @@ static void world_step(void)
     W.dma_fail = chance(3);
     W.win_fail = chance(3);
     if (chance(5)) W.width_seed = (uint16_t)rnd();
+    if (chance(6)) W.live = chance(45);
+    for (int c = 0; c < CHANNEL_COUNT; c++) {
+        if (chance(5)) W.ads_valid[c] = chance(85);
+        if (chance(40)) W.ads_temp[c] = (fixed_t)((int32_t)(rnd() % (650U << 16)) - (50 << 16)) + (fixed_t)(chance(40) ? (FIXED_ONE * 3 / 10 + (int32_t)(rnd() % 5U) - 2) : 0);
+    }
 }
 
 /* ------------------------------------------------- заглушки: чистые геттеры */
@@ -163,6 +173,10 @@ screen_mode_t InputFSM_GetScreenMode(void) { return W.mode; }
 uint8_t Menu_GetCursor(void) { return W.cursor % W.item_count; }
 uint8_t Menu_GetItemCount(void) { return W.item_count; }
 bool Menu_IsEditing(void) { return W.editing; }
+bool Menu_ShowsLiveTemp(void) { return !g_nolive && W.live && !W.expert_warn && !W.reset_confirm && !W.reset_done; }
+bool ADS1220_IsDataValid(channel_id_t ch) { return W.ads_valid[ch]; }
+fixed_t ADS1220_GetTemperatureC(channel_id_t ch) { return W.ads_temp[ch]; }
+#define HARNESS_MENU_TEMP_LINE ((uint8_t)(LINE_MENU_ITEM_7 + 1)) /* LINE_MENU_TEMP (в старом экране такой строки нет) */
 bool Menu_IsShowingExpertWarning(void) { return W.expert_warn; }
 bool Menu_IsShowingResetConfirm(void) { return W.reset_confirm; }
 bool Menu_IsShowingResetDone(void) { return W.reset_done; }
@@ -199,7 +213,7 @@ static int font_id(const font_t *f)
     return -1;
 }
 void TextField_ConfigureLine(uint8_t line, uint16_t x, uint16_t y, const font_t *font, display_color_t fg, display_color_t bg)
-{ ev("Cfg", "%u,%u,%u,f%d,%04x,%04x", line, x, y, font_id(font), fg, bg); }
+{ if (g_nolive && line == HARNESS_MENU_TEMP_LINE) return; ev("Cfg", "%u,%u,%u,f%d,%04x,%04x", line, x, y, font_id(font), fg, bg); }
 void TextField_SetColors(uint8_t line, display_color_t fg, display_color_t bg)
 { ev("Col", "%u,%04x,%04x", line, fg, bg); }
 void TextField_InvalidateAll(void) { ev("InvAll", ""); }
@@ -208,7 +222,18 @@ void TextField_InvalidateAll(void) { ev("InvAll", ""); }
 void TextField_Printf(uint8_t line, const char *fmt, ...)
 { FMT_BODY(s) ev("Print", "%u,'%s'", line, s); }
 void TextField_PrintfCentered(uint8_t line, uint16_t cx, const char *fmt, ...)
-{ FMT_BODY(s) ev("PrintC", "%u,%u,'%s'", line, cx, s); }
+{
+    FMT_BODY(s)
+    if (line == HARNESS_MENU_TEMP_LINE) {
+        /* Инвариант: живая температура в меню — только в режиме меню, на калибровочном пункте, при исправном канале и валидном АЦП */
+        if (s[0] != '\0' && !(W.mode == SCREEN_MODE_SERVICE && Menu_ShowsLiveTemp() && !Error_IsChannelBlocked(W.active) && W.ads_valid[W.active])) {
+            printf("INVARIANT VIOLATED frame %ld: live temp '%s' shown out of place\n", g_frame, s);
+            exit(2);
+        }
+        if (g_nolive) return;
+    }
+    ev("PrintC", "%u,%u,'%s'", line, cx, s);
+}
 void TextField_PrintfRightAligned(uint8_t line, uint16_t rx, const char *fmt, ...)
 {
     FMT_BODY(s)
@@ -242,6 +267,7 @@ int main(int argc, char **argv)
     uint64_t seed = (argc > 2) ? strtoull(argv[2], NULL, 10) : 1;
     bool trace = getenv("TRACE") != NULL;
     g_nofault = getenv("NOFAULT") != NULL;
+    g_nolive = getenv("NOLIVE") != NULL;
     if (getenv("DUMP")) g_dump_frame = atol(getenv("DUMP"));
     g_rng ^= seed * 0x9E3779B97F4A7C15ULL;
     for (int i = 0; i < 8; i++) (void)rnd();
