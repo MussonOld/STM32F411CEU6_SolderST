@@ -30,6 +30,9 @@ static uint64_t g_hash = 1469598103934665603ULL;
 static uint64_t g_events;
 static long g_step;
 static long g_dump_step = -2;
+static bool g_equiv;     /* EQUIV=1: не писать в трассу публикацию температуры у НЕ греющего канала (выключен/SLEEP) — режим сверки со старым поведением */
+static bool g_noinv;     /* NOINV=1: не проверять инвариант публикации (старый код его нарушает — это и был баг) */
+static bool g_pub[CHANNEL_COUNT]; /* State_SetCurrentTemp() вызван в этом Control_Poll() */
 
 static void mix_bytes(const void *p, size_t n)
 {
@@ -81,7 +84,16 @@ void State_SetHeaterActive(channel_id_t ch, bool a) { W[ch].heater = a; ev("heat
 bool State_IsHeaterActive(channel_id_t ch) { return W[ch].heater; }
 bool State_IsEnabled(channel_id_t ch) { return W[ch].enabled; }
 fixed_t State_GetSetpointTemp(channel_id_t ch) { return W[ch].setpoint; }
-void State_SetCurrentTemp(channel_id_t ch, fixed_t t) { ev("curtemp", "%d,%d", (int)ch, (int)t); }
+void State_SetCurrentTemp(channel_id_t ch, fixed_t t)
+{
+    g_pub[ch] = true;
+    if (!g_noinv && t != W[ch].meas_temp) {
+        printf("INVARIANT VIOLATED step %ld: ch%d published %d, measured %d\n", g_step, (int)ch, (int)t, (int)W[ch].meas_temp);
+        exit(2);
+    }
+    if (g_equiv && (!W[ch].enabled || W[ch].sleep == SLEEP_MODE_SLEEP)) return; /* новое поведение: публикуем и у не греющего канала */
+    ev("curtemp", "%d,%d", (int)ch, (int)t);
+}
 sleep_mode_t Sleep_GetMode(channel_id_t ch) { return W[ch].sleep; }
 bool Error_IsChannelBlocked(channel_id_t ch) { return W[ch].blocked; }
 bool Diag_IsSampleEvaluated(channel_id_t ch) { return W[ch].evaluated; }
@@ -174,6 +186,8 @@ int main(int argc, char **argv)
     long steps = (argc > 1) ? atol(argv[1]) : 200000;
     uint64_t seed = (argc > 2) ? strtoull(argv[2], NULL, 10) : 1;
     if (getenv("DUMP")) g_dump_step = atol(getenv("DUMP"));
+    g_equiv = getenv("EQUIV") != NULL;
+    g_noinv = getenv("NOINV") != NULL;
     g_rng ^= seed * 0x9E3779B97F4A7C15ULL;
     for (int i = 0; i < 8; i++) (void)rnd();
     g_tick = chance(30) ? 0xFFFFFFFFU - rnd() % 20000U : rnd() % 100000U;
@@ -188,7 +202,19 @@ int main(int argc, char **argv)
         g_tick += dt;
         world_step(dt);
         if (chance(1) && g_step % 500 == 0) { Control_Init(); ev("init", ""); }
+        memset(g_pub, 0, sizeof g_pub);
         Control_Poll();
+        if (!g_noinv) {
+            /* Инвариант: пока отсчёт пригоден (валиден, оценён Diag, нет блокировки), температура публикуется на КАЖДОМ опросе —
+             * и у выключенного канала, и в SLEEP; при непригодном отсчёте — не публикуется. */
+            for (int c = 0; c < CHANNEL_COUNT; c++) {
+                bool usable = W[c].data_valid && W[c].evaluated && !W[c].blocked;
+                if (usable != g_pub[c]) {
+                    printf("INVARIANT VIOLATED step %ld: ch%d usable=%d published=%d (enabled=%d sleep=%d)\n", g_step, c, (int)usable, (int)g_pub[c], (int)W[c].enabled, (int)W[c].sleep);
+                    exit(2);
+                }
+            }
+        }
         observe();
     }
     printf("RESULT steps=%ld seed=%llu hash=%016llx events=%llu\n", steps, (unsigned long long)seed,

@@ -287,9 +287,9 @@ static void process_new_sample(channel_id_t ch, fixed_t setpoint, fixed_t temp, 
     s_last_update_tick[ch] = update_tick;
 }
 
-/* Можно ли греть канал сейчас; если да — эффективная уставка в *setpoint.
- * Порядок проверок и короткое замыкание сохранены. */
-static bool heating_allowed(channel_id_t ch, fixed_t *setpoint)
+/* Пригоден ли отсчёт АЦП: тогда температуре можно верить (показывать, считать
+ * по ней PID), а если нет — канал fail-safe off. */
+static bool measurement_usable(channel_id_t ch)
 {
     /* Нет валидного отсчёта АЦП — греть вслепую нельзя, fail-safe off. Тот же
      * отказ, если Diag ещё не оценил ПОСЛЕДНИЙ отсчёт (иначе Error относился бы
@@ -301,23 +301,29 @@ static bool heating_allowed(channel_id_t ch, fixed_t *setpoint)
 
     /* Авария (КЗ/обрыв RTD, обрыв нагревателя, БП, EEPROM и т.п.) —
      * см. error.h. Блокирует канал независимо от прочих условий. */
-    if (Error_IsChannelBlocked(ch)) {
-        return false;
-    }
-
-    return effective_setpoint(ch, setpoint);
+    return !Error_IsChannelBlocked(ch);
 }
 
 static void poll_channel(channel_id_t ch)
 {
-    fixed_t setpoint;
-    if (!heating_allowed(ch, &setpoint)) {
+    if (!measurement_usable(ch)) {
         force_off(ch);
         return;
     }
 
+    /* Измеренная температура публикуется в State, пока отсчёт пригоден, — и
+     * когда канал не греет (выключен аккордом UP+DN, SLEEP): экран показывает её
+     * под иконкой сна, и она должна остывать вместе с жалом, а не замереть на
+     * значении момента засыпания. Раньше запись стояла после проверки уставки
+     * и в этих состояниях не выполнялась. */
     fixed_t temp = ADS1220_GetTemperatureC(ch);
     State_SetCurrentTemp(ch, temp); /* Control пишет current_temp, см. state.h */
+
+    fixed_t setpoint;
+    if (!effective_setpoint(ch, &setpoint)) {
+        force_off(ch);
+        return;
+    }
 
     uint32_t update_tick = ADS1220_GetLastUpdateTick(ch);
     if (update_tick != s_last_update_tick[ch]) {
