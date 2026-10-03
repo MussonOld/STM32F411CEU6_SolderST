@@ -5,6 +5,7 @@
  */
 
 #include <stdbool.h>
+#include <stddef.h>
 #include "settings.h"
 #include "eeprom.h"
 #include "stm32f4xx_hal.h" /* HAL_GetTick() — для таймера отложенной записи */
@@ -131,29 +132,43 @@ static inline uint16_t clamp_u16(uint16_t value, uint16_t lo, uint16_t hi)
  *
  * @return true, если хоть одно поле реально изменилось (было вне диапазона)
  */
+/** Правило клампинга одного поля channel_settings_t: смещение поля и допустимый диапазон. */
+typedef struct {
+    uint16_t offset;
+    uint16_t lo;
+    uint16_t hi;
+} clamp_rule_t;
+
+#define CLAMP_RULE(field, lo, hi) { (uint16_t)offsetof(channel_settings_t, field), (lo), (hi) }
+
+static const clamp_rule_t s_clamp_rules[] = {
+    CLAMP_RULE(preset[PRESET_1],  SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX),
+    CLAMP_RULE(preset[PRESET_2],  SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX),
+    CLAMP_RULE(preset[PRESET_3],  SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX),
+    CLAMP_RULE(target,            SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX),
+    CLAMP_RULE(presleep_temp,     SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX),
+    CLAMP_RULE(slope,             SETTINGS_SLOPE_MIN, SETTINGS_SLOPE_MAX),
+    CLAMP_RULE(bias,              SETTINGS_BIAS_MIN, SETTINGS_BIAS_MAX),
+    CLAMP_RULE(pre_sleep_timeout, SETTINGS_SLEEP_TIMEOUT_MIN_MINUTES, SETTINGS_SLEEP_TIMEOUT_MAX_MINUTES),
+    CLAMP_RULE(sleep_timeout,     SETTINGS_SLEEP_TIMEOUT_MIN_MINUTES, SETTINGS_SLEEP_TIMEOUT_MAX_MINUTES),
+    CLAMP_RULE(kp,                SETTINGS_PID_MIN, SETTINGS_PID_MAX),
+    CLAMP_RULE(ki,                SETTINGS_PID_MIN, SETTINGS_PID_MAX),
+    CLAMP_RULE(kd,                SETTINGS_PID_MIN, SETTINGS_PID_MAX),
+};
+
 static bool clamp_channel(channel_settings_t *c)
 {
     bool changed = false;
-#define CLAMP_FIELD(field, lo, hi)                              \
-    do {                                                        \
-        uint16_t clamped_ = clamp_u16((c)->field, (lo), (hi));  \
-        if (clamped_ != (c)->field) { (c)->field = clamped_; changed = true; } \
-    } while (0)
 
-    CLAMP_FIELD(preset[PRESET_1],  SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX);
-    CLAMP_FIELD(preset[PRESET_2],  SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX);
-    CLAMP_FIELD(preset[PRESET_3],  SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX);
-    CLAMP_FIELD(target,            SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX);
-    CLAMP_FIELD(presleep_temp,     SETTINGS_TEMP_MIN, SETTINGS_TEMP_MAX);
-    CLAMP_FIELD(slope,             SETTINGS_SLOPE_MIN, SETTINGS_SLOPE_MAX);
-    CLAMP_FIELD(bias,              SETTINGS_BIAS_MIN, SETTINGS_BIAS_MAX);
-    CLAMP_FIELD(pre_sleep_timeout, SETTINGS_SLEEP_TIMEOUT_MIN_MINUTES, SETTINGS_SLEEP_TIMEOUT_MAX_MINUTES);
-    CLAMP_FIELD(sleep_timeout,     SETTINGS_SLEEP_TIMEOUT_MIN_MINUTES, SETTINGS_SLEEP_TIMEOUT_MAX_MINUTES);
-    CLAMP_FIELD(kp,                SETTINGS_PID_MIN, SETTINGS_PID_MAX);
-    CLAMP_FIELD(ki,                SETTINGS_PID_MIN, SETTINGS_PID_MAX);
-    CLAMP_FIELD(kd,                SETTINGS_PID_MIN, SETTINGS_PID_MAX);
-
-#undef CLAMP_FIELD
+    for (size_t i = 0; i < sizeof(s_clamp_rules) / sizeof(s_clamp_rules[0]); i++) {
+        const clamp_rule_t *r = &s_clamp_rules[i];
+        uint16_t *field = (uint16_t *)((uint8_t *)c + r->offset);
+        uint16_t clamped = clamp_u16(*field, r->lo, r->hi);
+        if (clamped != *field) {
+            *field = clamped;
+            changed = true;
+        }
+    }
     return changed;
 }
 
@@ -570,46 +585,81 @@ static bool erase_eeprom(void)
     return true;
 }
 
-SettingsLoadStatus_t Settings_Load(void)
+/** @brief Взвести отложенную запись "прямо сейчас" (следующий Settings_Poll() запишет RAM поверх EEPROM после SETTINGS_SAVE_DELAY_MS). */
+static void mark_dirty_now(void)
+{
+    s_dirty = true;
+    s_last_change_tick = HAL_GetTick();
+}
+
+typedef enum {
+    BLOCK_IO_ERROR, /* нет связи с чипом (не удалось прочитать magic) */
+    BLOCK_VALID,    /* magic и checksum сошлись, данные распакованы в RAM */
+    BLOCK_INVALID,  /* связь есть, но блока нет/он повреждён (чужой чип, обрыв записи) */
+} stored_block_t;
+
+/**
+ * @brief Прочитать блок настроек из EEPROM и, если он целый, распаковать в RAM.
+ *        Порядок обращений: magic -> (при совпадении) checksum -> данные.
+ */
+static stored_block_t read_stored_block(void)
 {
     uint8_t magic_bytes[2];
     if (EEPROM_Read(SETTINGS_EEPROM_ADDR_MAGIC, magic_bytes, 2) != EEPROM_OK) {
+        return BLOCK_IO_ERROR;
+    }
+
+    uint16_t magic = (uint16_t)(magic_bytes[0] | ((uint16_t)magic_bytes[1] << 8));
+    if (magic != SETTINGS_EEPROM_MAGIC) {
+        return BLOCK_INVALID;
+    }
+
+    uint8_t stored_checksum;
+    uint8_t data[SETTINGS_EEPROM_DATA_LEN];
+    if (EEPROM_ReadByte(SETTINGS_EEPROM_ADDR_CHECKSUM, &stored_checksum) == EEPROM_OK &&
+        EEPROM_Read(SETTINGS_EEPROM_ADDR_DATA, data, SETTINGS_EEPROM_DATA_LEN) == EEPROM_OK &&
+        checksum8(data, SETTINGS_EEPROM_DATA_LEN) == stored_checksum) {
+        unpack_data(data);
+        return BLOCK_VALID;
+    }
+    return BLOCK_INVALID;
+}
+
+/**
+ * @brief Прогнать только что распакованные значения через допустимые диапазоны.
+ * @return true, если хоть что-то пришлось исправить (поле канала вне диапазона либо режим заставки = 3)
+ */
+static bool sanitize_loaded_values(void)
+{
+    bool any_clamped = false;
+    for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
+        if (clamp_channel(&s_channels[ch])) {
+            any_clamped = true;
+        }
+    }
+    if (((s_flags >> SETTINGS_FLAG_SPLASH_SHIFT) & SETTINGS_FLAG_SPLASH_MASK) > SETTINGS_SPLASH_MODE_MAX) {
+        /* Режим заставки = 3 — то же, что поле канала вне диапазона: приводим к
+         * дефолту и считаем данные невалидными (см. Settings_Load()). */
+        s_flags = (uint8_t)((s_flags & ~(SETTINGS_FLAG_SPLASH_MASK << SETTINGS_FLAG_SPLASH_SHIFT))
+                            | (uint8_t)((uint8_t)SETTINGS_DEFAULT_SPLASH_MODE << SETTINGS_FLAG_SPLASH_SHIFT));
+        any_clamped = true;
+    }
+    return any_clamped;
+}
+
+SettingsLoadStatus_t Settings_Load(void)
+{
+    stored_block_t block = read_stored_block();
+
+    if (block == BLOCK_IO_ERROR) {
         /* Ошибка связи по I2C — просто работаем с дефолтами в RAM, ничего
          * не пишем обратно (бессмысленно/рискованно при нерабочей шине) */
         Settings_Init();
         return SETTINGS_LOAD_IO_ERROR;
     }
 
-    uint16_t magic = (uint16_t)(magic_bytes[0] | ((uint16_t)magic_bytes[1] << 8));
-
-    bool data_valid = false;
-    if (magic == SETTINGS_EEPROM_MAGIC) {
-        uint8_t stored_checksum;
-        uint8_t data[SETTINGS_EEPROM_DATA_LEN];
-
-        if (EEPROM_ReadByte(SETTINGS_EEPROM_ADDR_CHECKSUM, &stored_checksum) == EEPROM_OK &&
-            EEPROM_Read(SETTINGS_EEPROM_ADDR_DATA, data, SETTINGS_EEPROM_DATA_LEN) == EEPROM_OK &&
-            checksum8(data, SETTINGS_EEPROM_DATA_LEN) == stored_checksum) {
-            unpack_data(data);
-            data_valid = true;
-        }
-    }
-
-    if (data_valid) {
-        bool any_clamped = false;
-        for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
-            if (clamp_channel(&s_channels[ch])) {
-                any_clamped = true;
-            }
-        }
-        if (((s_flags >> SETTINGS_FLAG_SPLASH_SHIFT) & SETTINGS_FLAG_SPLASH_MASK) > SETTINGS_SPLASH_MODE_MAX) {
-            /* Режим заставки = 3 — то же, что поле канала вне диапазона: приводим к
-             * дефолту и считаем данные невалидными (см. any_clamped ниже). */
-            s_flags = (uint8_t)((s_flags & ~(SETTINGS_FLAG_SPLASH_MASK << SETTINGS_FLAG_SPLASH_SHIFT))
-                                | (uint8_t)((uint8_t)SETTINGS_DEFAULT_SPLASH_MODE << SETTINGS_FLAG_SPLASH_SHIFT));
-            any_clamped = true;
-        }
-        if (any_clamped) {
+    if (block == BLOCK_VALID) {
+        if (sanitize_loaded_values()) {
             /* Checksum сошёлся, но хотя бы одно поле оказалось вне
              * допустимого диапазона (редкое, но реальное совпадение
              * повреждённых байт с верной контрольной суммой) — молча
@@ -618,8 +668,7 @@ SettingsLoadStatus_t Settings_Load(void)
              * безопасные значения, а не остались сырые. Данные всё
              * равно считаются невалидными — сам факт клампинга не
              * "гасится" последующим исправлением. */
-            s_dirty = true;
-            s_last_change_tick = HAL_GetTick();
+            mark_dirty_now();
             return SETTINGS_LOAD_INVALID;
         }
         s_dirty = false;
@@ -640,9 +689,8 @@ SettingsLoadStatus_t Settings_Load(void)
          * Settings_Save() не трогает s_dirty при ошибке — значит, без
          * этого явного взвода Settings_Poll() никогда не повторит
          * попытку, и устройство застрянет в SETTINGS_LOAD_INVALID
-         * навсегда. Взводим вручную, как и в ветке any_clamped выше. */
-        s_dirty = true;
-        s_last_change_tick = HAL_GetTick();
+         * навсегда. Взводим вручную, как и в ветке с клампингом выше. */
+        mark_dirty_now();
     }
     return SETTINGS_LOAD_INVALID;
 }

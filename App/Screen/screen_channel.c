@@ -518,6 +518,38 @@ static void format_sleep_timer(char *buf, size_t size, uint32_t remaining)
     snprintf(buf, size, "%lu:%02lu", (unsigned long)(remaining / 60U), (unsigned long)(remaining % 60U));
 }
 
+/** @brief AWAKE: таймер идёт только когда простой уже начат (remaining > 0). */
+static void sleep_view_awake(channel_id_t ch, uint32_t remaining, sleep_status_view_t *v)
+{
+    if (remaining == 0) {
+        v->timer_visible = false; /* нечего показывать — таймер не идёт; цвет не важен */
+        return;
+    }
+    format_sleep_timer(v->text, sizeof(v->text), remaining);
+    /* Если PreSleepTimeout включён, это отсчёт ДО НЕГО (жёлтый,
+     * "первый" таймер); если выключен, Sleep_GetRemainingSeconds() в
+     * AWAKE уже считает от простоя напрямую до SLEEP (см. sleep.c) —
+     * фактически "второй" таймер, красный, стартует сразу по простою
+     * вместо первого. */
+    v->color = (Settings_GetPreSleepTimeout(ch) > 0) ? COLOR_SLEEP_PRESLEEP : COLOR_SLEEP_SLEEP;
+}
+
+/** @brief PRESLEEP: "Предсон" (бессрочно) либо отсчёт "второго" таймера. */
+static void sleep_view_presleep(uint32_t remaining, sleep_status_view_t *v)
+{
+    /* remaining==0 -> SleepTimeout выключен, PRESLEEP бессрочно, "второго"
+     * таймера нет — жёлтый статичный "Предсон". remaining>0 -> первый
+     * (PreSleep) уже сработал, это отсчёт "второго" (Sleep) таймера —
+     * красный, а не жёлтая "Предсон". */
+    if (remaining == 0) {
+        snprintf(v->text, sizeof(v->text), "Предсон");
+        v->color = COLOR_SLEEP_PRESLEEP;
+        return;
+    }
+    format_sleep_timer(v->text, sizeof(v->text), remaining);
+    v->color = COLOR_SLEEP_SLEEP;
+}
+
 /**
  * @brief Посчитать вид таймера сна канала (см. таблицу состояний в докстринге
  *        update_sleep_status()). Цвет зависит не от mode напрямую, а от того,
@@ -544,30 +576,10 @@ static void sleep_status_view(channel_id_t ch, sleep_status_view_t *v)
 
     switch (mode) {
         case SLEEP_MODE_AWAKE:
-            if (remaining == 0) {
-                v->timer_visible = false; /* нечего показывать — таймер не идёт; цвет не важен */
-            } else {
-                format_sleep_timer(v->text, sizeof(v->text), remaining);
-                /* Если PreSleepTimeout включён, это отсчёт ДО НЕГО (жёлтый,
-                 * "первый" таймер); если выключен, Sleep_GetRemainingSeconds() в
-                 * AWAKE уже считает от простоя напрямую до SLEEP (см. sleep.c) —
-                 * фактически "второй" таймер, красный, стартует сразу по простою
-                 * вместо первого. */
-                v->color = (Settings_GetPreSleepTimeout(ch) > 0) ? COLOR_SLEEP_PRESLEEP : COLOR_SLEEP_SLEEP;
-            }
+            sleep_view_awake(ch, remaining, v);
             break;
         case SLEEP_MODE_PRESLEEP:
-            /* remaining==0 -> SleepTimeout выключен, PRESLEEP бессрочно, "второго"
-             * таймера нет — жёлтый статичный "Предсон". remaining>0 -> первый
-             * (PreSleep) уже сработал, это отсчёт "второго" (Sleep) таймера —
-             * красный, а не жёлтая "Предсон". */
-            if (remaining == 0) {
-                snprintf(v->text, sizeof(v->text), "Предсон");
-                v->color = COLOR_SLEEP_PRESLEEP;
-            } else {
-                format_sleep_timer(v->text, sizeof(v->text), remaining);
-                v->color = COLOR_SLEEP_SLEEP;
-            }
+            sleep_view_presleep(remaining, v);
             break;
         case SLEEP_MODE_SLEEP:
             /* SLEEP показывает иконка на месте температуры (CHANNEL_CONTENT_ASLEEP,
