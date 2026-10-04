@@ -246,6 +246,15 @@ _Static_assert(SCREEN_MENU_ITEM_Y0 + (SCREEN_MENU_ITEM_ROWS - 1U) * SCREEN_MENU_
  * гасит только дрожь на границе целых, но не быстрый нагрев/остывание). */
 #define SCREEN_TEMP_UPDATE_PERIOD_MS (500U)
 
+/* Цвет числа текущей температуры (CURRENT) по температуре: SCREEN_TEMP_COLOR_MIN_C
+ * — зелёный, середина — жёлтый, SCREEN_TEMP_COLOR_MAX_C — красный (линейно по
+ * показанному целому, вне диапазона зажимается). У неактивного канала тот же
+ * цвет, притушенный до SCREEN_INACTIVE_DIM_PCT %. Правка уставки (голубой) и
+ * авария (красный COLOR_FAULT) этот цвет перекрывают. */
+#define SCREEN_TEMP_COLOR_MIN_C  (50)
+#define SCREEN_TEMP_COLOR_MAX_C  (450)
+#define SCREEN_INACTIVE_DIM_PCT  (35)
+
 /* Мигание текущей температуры при остывании (1 Гц: полпериода SCREEN_BLINK_HALF_PERIOD_MS
  * число видно, полпериода скрыто): когда показанная температура выше применяемой
  * уставки (выбрали уставку ниже текущей, либо наступил PRESLEEP со сниженной

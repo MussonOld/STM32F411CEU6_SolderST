@@ -83,6 +83,33 @@ static bool     s_target_edit[CHANNEL_COUNT];
 /* Мигание текущей при остывании (см. SCREEN_COOL_BLINK_START_C): гистерезисное состояние. */
 static bool     s_cooling[CHANNEL_COUNT];
 
+/** @brief Цвет числа температуры: зелёный (MIN) -> жёлтый -> красный (MAX), active==false — притушен. */
+static display_color_t temp_gradient_color(int32_t t, bool active)
+{
+    if (t < SCREEN_TEMP_COLOR_MIN_C) t = SCREEN_TEMP_COLOR_MIN_C;
+    if (t > SCREEN_TEMP_COLOR_MAX_C) t = SCREEN_TEMP_COLOR_MAX_C;
+    int32_t x = (t - SCREEN_TEMP_COLOR_MIN_C) * 510 / (SCREEN_TEMP_COLOR_MAX_C - SCREEN_TEMP_COLOR_MIN_C); /* 0..510 */
+    int32_t r = (x <= 255) ? x : 255;
+    int32_t g = (x <= 255) ? 255 : (510 - x);
+    if (!active) {
+        r = r * SCREEN_INACTIVE_DIM_PCT / 100;
+        g = g * SCREEN_INACTIVE_DIM_PCT / 100;
+    }
+    return DISPLAY_RGB565(r, g, 0);
+}
+
+/** @brief Цвет CURRENT-строки канала (без аварии): правка уставки — голубой, число — по температуре, иначе белый/серый. */
+static display_color_t current_text_color(channel_id_t ch, bool active)
+{
+    if (s_target_edit[ch]) {
+        return active ? COLOR_ACTIVE_EDIT_TARGET : COLOR_INACTIVE_EDIT_TARGET;
+    }
+    if (s_temp_shown_valid[ch]) {
+        return temp_gradient_color(s_temp_shown[ch], active);
+    }
+    return active ? COLOR_ACTIVE_CURRENT : COLOR_INACTIVE_CURRENT;
+}
+
 /**
  * @brief Применить цвета title/current канала. Приоритет: неисправность
  *        (красный) > активный/неактивный. Target сюда не входит — он
@@ -114,10 +141,7 @@ static void apply_channel_colors(channel_id_t ch)
     } else {
         TextField_SetColors(line_title,   active ? COLOR_ACTIVE_TITLE   : COLOR_INACTIVE_TITLE,   COLOR_BG); /* тот же no-op, что и выше */
         /* Уставка на месте текущей (правка, ещё не записана в EEPROM) — голубая. */
-        TextField_SetColors(line_current,
-                            s_target_edit[ch] ? (active ? COLOR_ACTIVE_EDIT_TARGET : COLOR_INACTIVE_EDIT_TARGET)
-                                              : (active ? COLOR_ACTIVE_CURRENT : COLOR_INACTIVE_CURRENT),
-                            COLOR_BG);
+        TextField_SetColors(line_current, current_text_color(ch, active), COLOR_BG);
         /* CHANNEL_CONTENT_DISABLED ("ВЫКЛ") — та же активная/неактивная
          * пара, что и у CURRENT (авария и disabled взаимоисключающие, см.
          * update_channel_content(), так что faulted-ветку сюда заводить не нужно). */
@@ -420,16 +444,26 @@ static bool cooling_down(channel_id_t ch, int32_t shown)
     return s_cooling[ch];
 }
 
-/** @brief Число текущей температуры в line; при остывании (allow_blink) мигает 1 Гц. */
-static void print_temp_line(channel_id_t ch, uint8_t line, uint16_t center_x, bool allow_blink)
+/**
+ * @brief Число текущей температуры в line; при остывании (allow_blink) мигает 1 Гц.
+ *
+ * Пока число видно в мигании, показание не меняется (s_temp_shown заморожен) —
+ * обновляется только в погашенную фазу, чтобы цифры не сменялись на глазах.
+ * recolor — раскрасить по температуре (только CURRENT; у числа под иконкой сна свой серый).
+ */
+static void print_temp_line(channel_id_t ch, uint8_t line, uint16_t center_x, bool allow_blink, bool recolor)
 {
-    int32_t shown = temp_for_display(ch, State_GetCurrentTemp(ch));
+    bool visible_phase = (((HAL_GetTick() / SCREEN_BLINK_HALF_PERIOD_MS) & 1U) == 0U);
+    bool hold = allow_blink && s_cooling[ch] && visible_phase && s_temp_shown_valid[ch];
+    int32_t shown = hold ? s_temp_shown[ch] : temp_for_display(ch, State_GetCurrentTemp(ch));
     bool blinking = allow_blink && cooling_down(ch, shown);
     if (!allow_blink) {
         s_cooling[ch] = false;
     }
-    bool visible = !blinking || (((HAL_GetTick() / SCREEN_BLINK_HALF_PERIOD_MS) & 1U) == 0U);
-    if (visible) {
+    if (recolor) {
+        TextField_SetColors(line, current_text_color(ch, ch == InputFSM_GetActiveChannel()), COLOR_BG);
+    }
+    if (!blinking || visible_phase) {
         TextField_PrintfCentered(line, center_x, "%ld", (long)shown);
     } else {
         TextField_PrintfCentered(line, center_x, "");
@@ -439,7 +473,7 @@ static void print_temp_line(channel_id_t ch, uint8_t line, uint16_t center_x, bo
 /** @brief Текущая температура под иконкой сна/предсна (LINE_x_SLEEP_TEMP), с тем же гистерезисом, что и у CURRENT. */
 static void print_sleep_temp(channel_id_t ch, const channel_lines_t *ln, uint16_t center_x, bool allow_blink)
 {
-    print_temp_line(ch, ln->sleep_temp, center_x, allow_blink);
+    print_temp_line(ch, ln->sleep_temp, center_x, allow_blink, false);
 }
 
 /** @brief Нарисовать содержимое канала для УЖЕ установившегося состояния (после фазы гашения). */
@@ -496,7 +530,7 @@ static void draw_channel_content(channel_id_t ch, channel_content_t content,
                 (void)temp_for_display(ch, State_GetCurrentTemp(ch)); /* показанная текущая остаётся свежей — её читает Screen_GetShownTemp() для записи пресета */
                 TextField_PrintfCentered(ln->current, center_x, "%u", (unsigned)Settings_GetTarget(ch));
             } else {
-                print_temp_line(ch, ln->current, center_x, true);
+                print_temp_line(ch, ln->current, center_x, true, true);
             }
             break;
     }
