@@ -47,6 +47,10 @@ static uint8_t  s_duty_pct[CHANNEL_COUNT];
  * Q16.16, 0..100. */
 static fixed_t  s_duty_smoothed[CHANNEL_COUNT];
 
+/* Температура сейчас у настоящей уставки (|ошибка| <= CONTROL_POWER_DISPLAY_STEADY_BAND_C) —
+ * переключает фильтр гейджа на медленный. Только для индикации. */
+static bool     s_near_setpoint[CHANNEL_COUNT];
+
 static void heater_write(channel_id_t ch, bool on)
 {
     /* Нагреватель включается НИЗКИМ уровнем (см. diag.c). */
@@ -84,6 +88,7 @@ static void force_off(channel_id_t ch)
     s_integral[ch] = 0;
     s_prev_temp_valid[ch] = false;
     s_dTdt_valid[ch] = false;
+    s_near_setpoint[ch] = false;
 }
 
 void Control_Init(void)
@@ -106,8 +111,10 @@ void Control_Init(void)
 static void update_power_smoothing(channel_id_t ch)
 {
     fixed_t raw = FIXED_FROM_INT((int32_t)s_duty_pct[ch]);
+    uint32_t tau_ms = s_near_setpoint[ch] ? CONTROL_POWER_DISPLAY_FILTER_STEADY_MS
+                                          : CONTROL_POWER_DISPLAY_FILTER_MS;
     fixed_t alpha = fixed_div(FIXED_FROM_INT((int32_t)CONTROL_POLL_MS),
-                              FIXED_FROM_INT((int32_t)(CONTROL_POWER_DISPLAY_FILTER_MS + CONTROL_POLL_MS)));
+                              FIXED_FROM_INT((int32_t)(tau_ms + CONTROL_POLL_MS)));
     s_duty_smoothed[ch] += fixed_mul(alpha, raw - s_duty_smoothed[ch]);
 }
 
@@ -248,6 +255,9 @@ static void pid_step(channel_id_t ch, fixed_t setpoint, fixed_t true_setpoint, f
     fixed_t kp = pid_gain(Settings_GetKp(ch));
     fixed_t ki = pid_gain(Settings_GetKi(ch));
     fixed_t kd = pid_gain(Settings_GetKd(ch));
+
+    fixed_t steady_band = FIXED_FROM_INT(CONTROL_POWER_DISPLAY_STEADY_BAND_C);
+    s_near_setpoint[ch] = (true_error <= steady_band && true_error >= -steady_band);
 
     update_integral(ch, error, true_error, ki, dt_s);
     s_duty_pct[ch] = pid_output_pct(kp, ki, kd, error, s_integral[ch], s_dTdt[ch],
