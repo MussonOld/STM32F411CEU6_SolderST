@@ -172,6 +172,16 @@ static void update_power_gauge(channel_id_t ch, uint16_t bar_x0)
     }
 }
 
+/** @brief Число мощности канала, % (сглаженное, то же значение, что рисует гейдж), справа от полосы. */
+static void update_power_number(uint8_t line, uint16_t right_edge_x, channel_id_t ch)
+{
+    fixed_t pct = Control_GetSmoothedPowerPct(ch);
+    int32_t v = FIXED_TO_INT(pct + (FIXED_ONE >> 1)); /* округление */
+    if (v < 0) v = 0;
+    if (v > 100) v = 100;
+    TextField_PrintfRightAligned(line, right_edge_x, "%ld", (long)v);
+}
+
 /**
  * @brief Аварийное сообщение всегда в 2 строки — 2 слова в одну строку не
  *        помещаются. Делит msg по первому пробелу: "Обрыв
@@ -665,6 +675,12 @@ void ScreenChannel_Init(void)
     s_power_bar_fill_px[CHANNEL_SOLDER] = 0xFFFFU;
     s_power_bar_fill_px[CHANNEL_DESOLDER] = 0xFFFFU;
 
+    /* Число мощности — x здесь начальное, реальный x считает TextField_PrintfRightAligned()
+     * в update_power_number() (правый край фиксирован, цифры не прыгают). */
+    TextField_ConfigureLine(LINE_SOLDER_POWER, SCREEN_SOLDER_POWER_NUM_RIGHT_X - SCREEN_POWER_NUM_WIDTH, SCREEN_POWER_NUM_Y,
+                             &AntiquaB_18_uni, COLOR_POWER_NUM, COLOR_BG);
+    TextField_ConfigureLine(LINE_DESOLDER_POWER, SCREEN_DESOLDER_POWER_NUM_RIGHT_X - SCREEN_POWER_NUM_WIDTH, SCREEN_POWER_NUM_Y,
+                             &AntiquaB_18_uni, COLOR_POWER_NUM, COLOR_BG);
     TextField_ConfigureLine(LINE_INFO_SLEEP_SOLDER, SCREEN_INFO_SLEEP_SOLDER_TEXT_RIGHT_EDGE_X, SCREEN_INFO_Y,
                              &AntiquaB_18_uni, COLOR_SLEEP_AWAKE, COLOR_BG);
     TextField_ConfigureLine(LINE_INFO_SLEEP_DESOLDER, SCREEN_INFO_SLEEP_DESOLDER_TEXT_RIGHT_EDGE_X, SCREEN_INFO_Y,
@@ -748,6 +764,8 @@ void ScreenChannel_UpdateContent(void)
 
     update_power_gauge(CHANNEL_SOLDER, SCREEN_SOLDER_POWER_BAR_X0);
     update_power_gauge(CHANNEL_DESOLDER, SCREEN_DESOLDER_POWER_BAR_X0);
+    update_power_number(LINE_SOLDER_POWER, SCREEN_SOLDER_POWER_NUM_RIGHT_X, CHANNEL_SOLDER);
+    update_power_number(LINE_DESOLDER_POWER, SCREEN_DESOLDER_POWER_NUM_RIGHT_X, CHANNEL_DESOLDER);
 }
 
 void ScreenChannel_UpdateActiveColors(channel_id_t active)

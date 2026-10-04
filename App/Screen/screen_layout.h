@@ -52,6 +52,8 @@ enum {
     LINE_MENU_ITEM_7,
     LINE_MENU_TEMP,           /* сервисное меню — живая температура активного канала на пунктах настройки PID и
                                  калибровки (Kp/Ki/Kd/Наклон/Смещение), в правой половине экрана, см. ScreenMenu_Render() */
+    LINE_SOLDER_POWER,        /* число мощности паяльника, % (AntiquaB_18_uni), справа от гейджа */
+    LINE_DESOLDER_POWER,      /* то же для отсоса */
 };
 
 /* ---- Геометрия ---- */
@@ -97,20 +99,31 @@ enum {
 #define SCREEN_DIVIDER_Y1   (SCREEN_PRESETS_Y - 6U)
 
 /* Гейдж мощности — горизонтальная полоса над строкой пресетов, у нижнего края
- * разделителя, в своей половине экрана (по центру, той же ширины, что и иконки
- * заголовков): заполняется СЛЕВА НАПРАВО на долю
- * Control_GetSmoothedPowerPct(ch)/100 от своей длины, остаток справа —
- * тусклый "трек" (видна вся шкала целиком даже при 0%, не только пустое
- * место). По Y — в зазоре между низом SLEEP_TEMP-поля и концом разделителя
- * (SCREEN_DIVIDER_Y1), проверяется assert-ом ниже. */
-#define SCREEN_POWER_BAR_LENGTH    (120U)
+ * разделителя, в своей половине экрана, + справа от неё число мощности в %
+ * (самый мелкий шрифт AntiquaB_18_uni, выравнивание по правому краю, до 3 цифр).
+ * Полоса заполняется СЛЕВА НАПРАВО на долю Control_GetSmoothedPowerPct(ch)/100
+ * от своей длины, остаток справа — тусклый "трек" (видна вся шкала целиком даже
+ * при 0%, не только пустое место). Группа "полоса + зазор + число" прижата к ЛЕВОМУ краю своей
+ * половины экрана с одинаковым отступом SCREEN_POWER_LEFT_MARGIN у обоих каналов. По Y полоса — в зазоре между низом SLEEP_TEMP-поля и
+ * концом разделителя (SCREEN_DIVIDER_Y1), число — в строке с полосой, низом до
+ * строки пресетов (по X оно правее группы выше SLEEP_TEMP-поля, не пересекается). */
+#define SCREEN_POWER_BAR_LENGTH    (96U)
 #define SCREEN_POWER_BAR_THICKNESS (6U)
 #define SCREEN_POWER_BAR_Y1     (SCREEN_DIVIDER_Y1)
 #define SCREEN_POWER_BAR_Y0     ((uint16_t)(SCREEN_POWER_BAR_Y1 - SCREEN_POWER_BAR_THICKNESS + 1U))
-#define SCREEN_SOLDER_POWER_BAR_X0   ((uint16_t)(SCREEN_HALF_CENTER_LEFT_X  - SCREEN_POWER_BAR_LENGTH / 2U))
-#define SCREEN_DESOLDER_POWER_BAR_X0 ((uint16_t)(SCREEN_HALF_CENTER_RIGHT_X - SCREEN_POWER_BAR_LENGTH / 2U))
+#define SCREEN_POWER_NUM_GAP    (4U)
+#define SCREEN_POWER_NUM_WIDTH  (27U)   /* "100": 3 цифры AntiquaB_18_uni по 9 px */
+#define SCREEN_POWER_NUM_HEIGHT (18U)   /* высота рамки AntiquaB_18_uni */
+#define SCREEN_POWER_NUM_Y      ((uint16_t)(SCREEN_PRESETS_Y - SCREEN_POWER_NUM_HEIGHT))
+#define SCREEN_POWER_GROUP_WIDTH ((uint16_t)(SCREEN_POWER_BAR_LENGTH + SCREEN_POWER_NUM_GAP + SCREEN_POWER_NUM_WIDTH))
+#define SCREEN_POWER_LEFT_MARGIN (10U)  /* как у preset1 (SCREEN_PRESET1_X) */
+#define SCREEN_SOLDER_POWER_BAR_X0   ((uint16_t)(SCREEN_POWER_LEFT_MARGIN))
+#define SCREEN_DESOLDER_POWER_BAR_X0 ((uint16_t)(SCREEN_DIVIDER_X1 + 1U + SCREEN_POWER_LEFT_MARGIN))
+#define SCREEN_SOLDER_POWER_NUM_RIGHT_X   ((uint16_t)(SCREEN_SOLDER_POWER_BAR_X0   + SCREEN_POWER_GROUP_WIDTH))
+#define SCREEN_DESOLDER_POWER_NUM_RIGHT_X ((uint16_t)(SCREEN_DESOLDER_POWER_BAR_X0 + SCREEN_POWER_GROUP_WIDTH))
 #define COLOR_POWER_FILL  DISPLAY_RGB565(255, 90, 0)  /* тёплый оранжевый — "греет" */
 #define COLOR_POWER_TRACK DISPLAY_RGB565(40, 40, 40)  /* тусклый трек — видна вся шкала, а не голый фон */
+#define COLOR_POWER_NUM   DISPLAY_RGB565(170, 170, 170) /* число мощности — нейтральный серый, не спорит с температурой */
 
 /* Текущая+целевая температура центрируются по вертикали в промежутке между
  * низом заголовка и верхом строки пресетов (тот же отступ 6px, что и у

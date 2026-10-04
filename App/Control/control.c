@@ -187,13 +187,29 @@ static void update_integral(channel_id_t ch, fixed_t error, fixed_t true_error, 
     s_integral[ch] = limit_integral_on_overshoot(i, i_max, true_error);
 }
 
+/* Прямая подача на удержание (см. CONTROL_FF_PCT_PER_100C): только в полосе
+ * CONTROL_INTEGRAL_BAND_C вокруг настоящей уставки, вне неё 0. Q16.16, %. */
+static fixed_t feed_forward_pct(fixed_t true_setpoint, fixed_t true_error)
+{
+    fixed_t band = FIXED_FROM_INT(CONTROL_INTEGRAL_BAND_C);
+    if (true_error > band || true_error < -band) {
+        return 0;
+    }
+    fixed_t rise = true_setpoint - FIXED_FROM_INT(CONTROL_AMBIENT_C);
+    if (rise <= 0) {
+        return 0;
+    }
+    return fixed_div(fixed_mul(FIXED_FROM_INT(CONTROL_FF_PCT_PER_100C), rise), FIXED_FROM_INT(100));
+}
+
 /* Выход PID в процентах 0..100 (с округлением). Вычисления — в int64: Kp до
  * 100 %/°C при ошибке до сотен градусов в Q16.16 не помещается в int32. */
-static uint8_t pid_output_pct(fixed_t kp, fixed_t ki, fixed_t kd, fixed_t error, fixed_t integral, fixed_t dTdt)
+static uint8_t pid_output_pct(fixed_t kp, fixed_t ki, fixed_t kd, fixed_t error, fixed_t integral, fixed_t dTdt, fixed_t ff)
 {
     int64_t out = (((int64_t)kp * error) >> FIXED_SHIFT)
                 + (((int64_t)ki * integral) >> FIXED_SHIFT)
-                - (((int64_t)kd * dTdt) >> FIXED_SHIFT);
+                - (((int64_t)kd * dTdt) >> FIXED_SHIFT)
+                + (int64_t)ff;
 
     int64_t max = (int64_t)FIXED_FROM_INT(100);
     if (out < 0)   out = 0;
@@ -223,7 +239,8 @@ static void pid_step(channel_id_t ch, fixed_t setpoint, fixed_t true_setpoint, f
     fixed_t kd = pid_gain(Settings_GetKd(ch));
 
     update_integral(ch, error, true_error, ki, dt_s);
-    s_duty_pct[ch] = pid_output_pct(kp, ki, kd, error, s_integral[ch], s_dTdt[ch]);
+    s_duty_pct[ch] = pid_output_pct(kp, ki, kd, error, s_integral[ch], s_dTdt[ch],
+                                    feed_forward_pct(true_setpoint, true_error));
 }
 
 /* Сглаженная dT/dt: первый отсчёт после сброса берётся как есть, дальше —
