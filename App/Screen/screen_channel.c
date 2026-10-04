@@ -61,6 +61,7 @@ static uint16_t s_sleep_icon_x[CHANNEL_COUNT]; /* x, по которому ик�
 static bool s_sleep_icon_shown[CHANNEL_COUNT]; /* сейчас ли иконка реально нарисована на экране (скрыта, когда таймер не отображается) */
 static int32_t s_temp_shown[CHANNEL_COUNT];      /* целое, которое сейчас показывает CURRENT (актуально только при s_temp_shown_valid) */
 static bool    s_temp_shown_valid[CHANNEL_COUNT]; /* false, пока CURRENT показывает не число (авария/крестик/"ВЫКЛ"/иконка сна) — следующее число берётся без гистерезиса */
+static uint32_t s_temp_shown_tick[CHANNEL_COUNT]; /* HAL_GetTick() последней смены s_temp_shown — обновление не чаще SCREEN_TEMP_UPDATE_PERIOD_MS */
 
 /**
  * @brief Гистерезис вывода текущей температуры, °C.
@@ -72,6 +73,15 @@ static bool    s_temp_shown_valid[CHANNEL_COUNT]; /* false, пока CURRENT п�
  * нефильтрованной температурой из State.
  */
 #define SCREEN_TEMP_HYST_C  FIXED_FROM_FLOAT(0.3f)
+
+/* Показ уставки на месте CURRENT: пока изменённая кнопками/пресетом уставка не
+ * записана в EEPROM (Settings_HasPendingChanges()), вместо текущей температуры
+ * выводится уставка (тот же шрифт, то же место); после записи — снова текущая. */
+static uint16_t s_last_target[CHANNEL_COUNT];
+static bool     s_target_seen[CHANNEL_COUNT];   /* s_last_target уже инициализирован (первый вызов не считается правкой) */
+static bool     s_target_edit[CHANNEL_COUNT];
+/* Мигание текущей при остывании (см. SCREEN_COOL_BLINK_START_C): гистерезисное состояние. */
+static bool     s_cooling[CHANNEL_COUNT];
 
 /**
  * @brief Применить цвета title/current канала. Приоритет: неисправность
@@ -103,7 +113,11 @@ static void apply_channel_colors(channel_id_t ch)
         TextField_SetColors(line_sleep_temp, COLOR_FAULT, COLOR_BG); /* при аварии не показывается (фазы сна ниже приоритетом), цвет — для порядка */
     } else {
         TextField_SetColors(line_title,   active ? COLOR_ACTIVE_TITLE   : COLOR_INACTIVE_TITLE,   COLOR_BG); /* тот же no-op, что и выше */
-        TextField_SetColors(line_current, active ? COLOR_ACTIVE_CURRENT : COLOR_INACTIVE_CURRENT, COLOR_BG);
+        /* Уставка на месте текущей (правка, ещё не записана в EEPROM) — голубая. */
+        TextField_SetColors(line_current,
+                            s_target_edit[ch] ? (active ? COLOR_ACTIVE_EDIT_TARGET : COLOR_INACTIVE_EDIT_TARGET)
+                                              : (active ? COLOR_ACTIVE_CURRENT : COLOR_INACTIVE_CURRENT),
+                            COLOR_BG);
         /* CHANNEL_CONTENT_DISABLED ("ВЫКЛ") — та же активная/неактивная
          * пара, что и у CURRENT (авария и disabled взаимоисключающие, см.
          * update_channel_content(), так что faulted-ветку сюда заводить не нужно). */
@@ -200,7 +214,11 @@ static void print_fault_message_2line(uint8_t line1, uint8_t line2, uint16_t cen
  */
 static int32_t temp_for_display(channel_id_t ch, fixed_t cur)
 {
+    uint32_t now = HAL_GetTick();
     if (s_temp_shown_valid[ch]) {
+        if ((uint32_t)(now - s_temp_shown_tick[ch]) < SCREEN_TEMP_UPDATE_PERIOD_MS) {
+            return s_temp_shown[ch]; /* не чаще SCREEN_TEMP_UPDATE_PERIOD_MS — число не мельтешит */
+        }
         fixed_t lo = FIXED_FROM_INT(s_temp_shown[ch]) - SCREEN_TEMP_HYST_C;
         fixed_t hi = FIXED_FROM_INT(s_temp_shown[ch] + 1) + SCREEN_TEMP_HYST_C;
         if (cur >= lo && cur < hi) {
@@ -208,6 +226,7 @@ static int32_t temp_for_display(channel_id_t ch, fixed_t cur)
         }
     }
     s_temp_shown[ch] = FIXED_TO_INT(cur);
+    s_temp_shown_tick[ch] = now;
     s_temp_shown_valid[ch] = true;
     return s_temp_shown[ch];
 }
@@ -361,15 +380,6 @@ static bool content_swap_settled(channel_id_t ch, channel_content_t content,
     return !s_content_clearing[ch];
 }
 
-/* Показ уставки на месте CURRENT: пока изменённая кнопками/пресетом уставка не
- * записана в EEPROM (Settings_HasPendingChanges()), вместо текущей температуры
- * выводится уставка (тот же шрифт, то же место); после записи — снова текущая. */
-static uint16_t s_last_target[CHANNEL_COUNT];
-static bool     s_target_seen[CHANNEL_COUNT];   /* s_last_target уже инициализирован (первый вызов не считается правкой) */
-static bool     s_target_edit[CHANNEL_COUNT];
-/* Мигание текущей при остывании (см. SCREEN_COOL_BLINK_START_C): гистерезисное состояние. */
-static bool     s_cooling[CHANNEL_COUNT];
-
 /** @brief Уставка, реально применяемая сейчас: в PRESLEEP — min(уставка, PresleepTemp), иначе заданная. */
 static int32_t applied_target(channel_id_t ch)
 {
@@ -383,6 +393,7 @@ static int32_t applied_target(channel_id_t ch)
 /** @brief Следить за правкой уставки: взвести/сбросить s_target_edit[ch]. */
 static void track_target_edit(channel_id_t ch)
 {
+    bool was_edit = s_target_edit[ch];
     uint16_t target = Settings_GetTarget(ch);
     if (s_target_seen[ch] && target != s_last_target[ch]) {
         s_target_edit[ch] = true;
@@ -391,6 +402,9 @@ static void track_target_edit(channel_id_t ch)
     s_target_seen[ch] = true;
     if (s_target_edit[ch] && !Settings_HasPendingChanges()) {
         s_target_edit[ch] = false; /* записано в EEPROM — обратно к текущей температуре */
+    }
+    if (s_target_edit[ch] != was_edit) {
+        apply_channel_colors(ch); /* голубой цвет на время правки */
     }
 }
 
@@ -479,6 +493,7 @@ static void draw_channel_content(channel_id_t ch, channel_content_t content,
             if (s_target_edit[ch]) {
                 /* Уставку правили и она ещё не записана в EEPROM — вместо текущей
                  * температуры показываем её (тот же шрифт и место). */
+                (void)temp_for_display(ch, State_GetCurrentTemp(ch)); /* показанная текущая остаётся свежей — её читает Screen_GetShownTemp() для записи пресета */
                 TextField_PrintfCentered(ln->current, center_x, "%u", (unsigned)Settings_GetTarget(ch));
             } else {
                 print_temp_line(ch, ln->current, center_x, true);

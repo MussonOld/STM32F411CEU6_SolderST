@@ -241,6 +241,11 @@ _Static_assert(SCREEN_PRESLEEP_ICON_Y + PRESLEEP_ICON_BITMAP_H <= SCREEN_SLEEP_T
 _Static_assert(SCREEN_MENU_ITEM_Y0 + (SCREEN_MENU_ITEM_ROWS - 1U) * SCREEN_MENU_ITEM_STEP + 18U <= SCREEN_HEIGHT,
                "последняя строка меню (шрифт 18) должна помещаться на экране");
 
+/* Показанная текущая температура (CURRENT и под иконкой сна) обновляется не чаще
+ * 2 раз в секунду — чтобы число не мельтешило (гистерезис SCREEN_TEMP_HYST_C
+ * гасит только дрожь на границе целых, но не быстрый нагрев/остывание). */
+#define SCREEN_TEMP_UPDATE_PERIOD_MS (500U)
+
 /* Мигание текущей температуры при остывании (1 Гц: полпериода SCREEN_BLINK_HALF_PERIOD_MS
  * число видно, полпериода скрыто): когда показанная температура выше применяемой
  * уставки (выбрали уставку ниже текущей, либо наступил PRESLEEP со сниженной
@@ -256,6 +261,10 @@ _Static_assert(SCREEN_MENU_ITEM_Y0 + (SCREEN_MENU_ITEM_ROWS - 1U) * SCREEN_MENU_
 #define COLOR_BG               DISPLAY_RGB565(0, 0, 0)
 #define COLOR_ACTIVE_CURRENT   DISPLAY_RGB565(255, 255, 255)
 #define COLOR_INACTIVE_CURRENT DISPLAY_RGB565(90, 90, 90)
+/* Уставка на месте текущей температуры (пока не записана в EEPROM) — голубая,
+ * чтобы не путать её с текущей температурой. */
+#define COLOR_ACTIVE_EDIT_TARGET   DISPLAY_RGB565(90, 180, 255)
+#define COLOR_INACTIVE_EDIT_TARGET DISPLAY_RGB565(30, 60, 85)
 /* Текущая температура в фазах сна (LINE_x_SLEEP_TEMP) — серая, тусклее
  * обычного белого числа: канал не работает, число вторично к иконке.
  * Активный/неактивный канал различаются яркостью, как и везде. */
