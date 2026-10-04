@@ -44,7 +44,8 @@ _Min_Stack_Size = 0x400; /* required amount of stack */
 /* Memories definition */
 MEMORY
 {
-  RAM    (xrw)    : ORIGIN = 0x20000000,   LENGTH = 128K
+  RAM    (xrw)    : ORIGIN = 0x20000000,   LENGTH = 104K
+  LOG    (xrw)    : ORIGIN = 0x2001A000,   LENGTH = 24K   /* лог нагрева, см. control.h CONTROL_LOG_ENABLE */
   FLASH    (rx)    : ORIGIN = 0x8000000,   LENGTH = 512K
 }
 
@@ -175,6 +176,13 @@ SECTIONS
     . = . + _Min_Stack_Size;
     . = ALIGN(8);
   } >RAM
+
+  /* Лог нагрева (control.c): фиксированный адрес 0x2001A000, не инициализируется стартапом */
+  .control_log (NOLOAD) :
+  {
+    . = ALIGN(4);
+    KEEP(*(.control_log))
+  } >LOG
 
   /* Remove information from the compiler libraries */
   /DISCARD/ :

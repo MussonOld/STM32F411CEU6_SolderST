@@ -165,6 +165,19 @@ extern "C" {
  *  dT/dt около 0, там FF работает полностью. */
 #define CONTROL_FF_FADE_DTDT_C_PER_S 2
 
+/** Лог процесса нагрева в RAM для разбора по внешним данным (см. Control.md,
+ *  "Лог нагрева"). 1 — включён, 0 — выключен (в этом случае буфер не занимает
+ *  RAM, код не собирается). Пишется один канал (CONTROL_LOG_CHANNEL): запись на
+ *  каждый новый отсчёт АЦП (≈50 мс), CONTROL_LOG_CAPACITY записей (≈60 с),
+ *  потом остановка до следующего старта. Старт лога — смена уставки или
+ *  пауза в отсчётах > CONTROL_LOG_GAP_MS (нагрев включили заново). Буфер лежит
+ *  по фиксированному адресу 0x2001A000 (регион LOG в линкере, 24 КБ) — читать
+ *  STM32CubeProgrammer-ом без остановки МК, разбор tools/control_log_decode.py. */
+#define CONTROL_LOG_ENABLE      1
+#define CONTROL_LOG_CHANNEL     CHANNEL_SOLDER
+#define CONTROL_LOG_CAPACITY    1200U
+#define CONTROL_LOG_GAP_MS      500U
+
 /** Комнатная температура, °C, от которой считается теплопотеря в feed-forward. */
 #define CONTROL_AMBIENT_C 25
 

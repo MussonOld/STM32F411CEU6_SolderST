@@ -91,6 +91,99 @@ static void force_off(channel_id_t ch)
     s_near_setpoint[ch] = false;
 }
 
+#if CONTROL_LOG_ENABLE
+/* Формат лога — менять только вместе с tools/control_log_decode.py.
+ * Заголовок 32 байта + CONTROL_LOG_CAPACITY записей по 20 байт, little-endian.
+ * Единицы: температуры — °C*16 (int16, >>12 от Q16.16), слагаемые PID и dT/dt —
+ * значение*10 (%, °C/с), duty — целые %. */
+typedef struct __attribute__((packed)) {
+    uint16_t t_ms;        /* мс от начала лога */
+    int16_t  temp_q4;     /* измеренная температура, °C*16 */
+    int16_t  work_sp_q4;  /* рабочая уставка PID (с учётом стадии подхода), °C*16 */
+    int16_t  true_sp_q4;  /* настоящая уставка, °C*16 */
+    int16_t  p_x10;       /* Kp*error, %*10 */
+    int16_t  i_x10;       /* Ki*integral, %*10 */
+    int16_t  d_x10;       /* -Kd*dT/dt, %*10 */
+    int16_t  ff_x10;      /* feed-forward, %*10 */
+    int16_t  dtdt_x10;    /* dT/dt после фильтра, °C/с*10 */
+    uint8_t  duty;        /* выход, % */
+    uint8_t  flags;       /* bit0: стадия подхода (рабочая уставка < настоящей) */
+} control_log_rec_t;
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;       /* 0x474F4C53 "SLOG" */
+    uint16_t version;     /* 1 */
+    uint16_t rec_size;    /* sizeof(control_log_rec_t) */
+    uint32_t capacity;
+    uint32_t count;       /* сколько записей валидно */
+    uint32_t start_tick;  /* HAL_GetTick() в начале лога */
+    uint32_t reserved[3];
+} control_log_hdr_t;
+
+typedef struct __attribute__((packed)) {
+    control_log_hdr_t   hdr;
+    control_log_rec_t   rec[CONTROL_LOG_CAPACITY];
+} control_log_t;
+
+_Static_assert(sizeof(control_log_rec_t) == 20, "log record layout");
+_Static_assert(sizeof(control_log_hdr_t) == 32, "log header layout");
+_Static_assert(sizeof(control_log_t) <= 24576U, "log must fit the 24 KB LOG region in the linker script");
+
+__attribute__((section(".control_log"), used)) control_log_t s_log;
+static fixed_t  s_log_setpoint;
+static uint32_t s_log_last_tick;
+static bool     s_log_started;
+
+static int16_t log_clamp16(int64_t v)
+{
+    if (v > 32767)  return 32767;
+    if (v < -32768) return -32768;
+    return (int16_t)v;
+}
+static int16_t log_x10(int64_t q16)  { return log_clamp16((q16 * 10) >> FIXED_SHIFT); }
+static int16_t log_q4(fixed_t q16)   { return log_clamp16((int64_t)q16 >> 12); }
+
+static void log_reset(void)
+{
+    s_log.hdr.magic      = 0x474F4C53UL;
+    s_log.hdr.version    = 1U;
+    s_log.hdr.rec_size   = (uint16_t)sizeof(control_log_rec_t);
+    s_log.hdr.capacity   = CONTROL_LOG_CAPACITY;
+    s_log.hdr.count      = 0U;
+    s_log.hdr.start_tick = HAL_GetTick();
+}
+
+/* Одна запись на новый отсчёт; старт нового лога — смена уставки или пауза. */
+static void log_sample(channel_id_t ch, fixed_t work_sp, fixed_t true_sp, fixed_t temp,
+                       fixed_t p, fixed_t i, fixed_t d, fixed_t ff, uint8_t duty)
+{
+    if (ch != CONTROL_LOG_CHANNEL) return;
+    uint32_t now = HAL_GetTick();
+    if (!s_log_started || true_sp != s_log_setpoint
+        || (uint32_t)(now - s_log_last_tick) > CONTROL_LOG_GAP_MS) {
+        log_reset();
+        s_log_started  = true;
+        s_log_setpoint = true_sp;
+    }
+    s_log_last_tick = now;
+    uint32_t n = s_log.hdr.count;
+    if (n >= CONTROL_LOG_CAPACITY) return;
+    control_log_rec_t *r = &s_log.rec[n];
+    r->t_ms       = (uint16_t)(now - s_log.hdr.start_tick);
+    r->temp_q4    = log_q4(temp);
+    r->work_sp_q4 = log_q4(work_sp);
+    r->true_sp_q4 = log_q4(true_sp);
+    r->p_x10      = log_x10(p);
+    r->i_x10      = log_x10(i);
+    r->d_x10      = log_x10(d);
+    r->ff_x10     = log_x10(ff);
+    r->dtdt_x10   = log_x10(s_dTdt[ch]);
+    r->duty       = duty;
+    r->flags      = (work_sp < true_sp) ? 1U : 0U;
+    s_log.hdr.count = n + 1U; /* последним: читатель видит только готовые записи */
+}
+#endif /* CONTROL_LOG_ENABLE */
+
 void Control_Init(void)
 {
     for (int i = 0; i < CHANNEL_COUNT; i++) {
@@ -99,6 +192,9 @@ void Control_Init(void)
         s_duty_smoothed[ch] = 0;
         force_off(ch);
     }
+#if CONTROL_LOG_ENABLE
+    log_reset(); /* валидный заголовок с count=0 сразу после старта МК */
+#endif
 }
 
 /* Экспоненциальный фильтр s_duty_pct -> s_duty_smoothed для гейджа на
@@ -260,8 +356,15 @@ static void pid_step(channel_id_t ch, fixed_t setpoint, fixed_t true_setpoint, f
     s_near_setpoint[ch] = (true_error <= steady_band && true_error >= -steady_band);
 
     update_integral(ch, error, true_error, ki, dt_s);
-    s_duty_pct[ch] = pid_output_pct(kp, ki, kd, error, s_integral[ch], s_dTdt[ch],
-                                    feed_forward_pct(true_setpoint, true_error, s_dTdt[ch]));
+    fixed_t ff = feed_forward_pct(true_setpoint, true_error, s_dTdt[ch]);
+    s_duty_pct[ch] = pid_output_pct(kp, ki, kd, error, s_integral[ch], s_dTdt[ch], ff);
+#if CONTROL_LOG_ENABLE
+    log_sample(ch, setpoint, true_setpoint, temp,
+               (fixed_t)(((int64_t)kp * error) >> FIXED_SHIFT),
+               (fixed_t)(((int64_t)ki * s_integral[ch]) >> FIXED_SHIFT),
+               (fixed_t)(-(((int64_t)kd * s_dTdt[ch]) >> FIXED_SHIFT)),
+               ff, s_duty_pct[ch]);
+#endif
 }
 
 /* Сглаженная dT/dt: первый отсчёт после сброса берётся как есть, дальше —
