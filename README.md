@@ -45,6 +45,7 @@ App/
 tests/              — хост-тесты на обычном gcc (см. `Buttons.md`), в прошивку и в проект CubeIDE не входят
 tools/ci-build.sh   — сборка прошивки обычным arm-none-eabi-gcc для CI (не замена CubeIDE), см. .github/workflows/ci.yml
 tools/gen_splash.py — генерация App/Screen/splash.c из Icons/Designer.png, запускается руками при смене картинки заставки
+tools/control_log_decode.py — раскодировщик RAM-лога нагрева для подбора PID (включается CONTROL_LOG_ENABLE, см. Control.md, «Лог нагрева»)
 ```
 
 ## Важные особенности реализации

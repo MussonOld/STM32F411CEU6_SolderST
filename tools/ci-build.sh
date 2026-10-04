@@ -14,10 +14,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# EXTRA_CFLAGS — доп. флаги компиляции, напр. EXTRA_CFLAGS=-DCONTROL_LOG_ENABLE=1 ./tools/ci-build.sh
 CC=arm-none-eabi-gcc
 
 MCU_FLAGS="-mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard"
-CFLAGS="$MCU_FLAGS -std=gnu11 -DUSE_HAL_DRIVER -DSTM32F411xE -DDEBUG -Os -g3 \
+CFLAGS="${EXTRA_CFLAGS:-} $MCU_FLAGS -std=gnu11 -DUSE_HAL_DRIVER -DSTM32F411xE -DDEBUG -Os -g3 \
         -ffunction-sections -fdata-sections -Wall"
 
 INCLUDES=""

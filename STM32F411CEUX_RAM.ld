@@ -44,7 +44,11 @@ _Min_Stack_Size = 0x400; /* required amount of stack */
 /* Memories definition */
 MEMORY
 {
-  RAM    (xrw)    : ORIGIN = 0x20000000,   LENGTH = 128K
+  /* Верхние 24K RAM отданы под лог нагрева (App/Control/control_log.h) — фиксированный
+     адрес, чтобы вычитывать буфер по SWD без map-файла. Стек/куча от этого уезжают вниз:
+     _estack считается от конца RAM, а не от 0x20020000. RAM используется на ~17K из 104K. */
+  RAM    (xrw)    : ORIGIN = 0x20000000,   LENGTH = 104K
+  LOG    (rw)     : ORIGIN = 0x2001A000,   LENGTH = 24K
   FLASH    (rx)    : ORIGIN = 0x8000000,   LENGTH = 512K
 }
 
@@ -175,6 +179,13 @@ SECTIONS
     . = . + _Min_Stack_Size;
     . = ALIGN(8);
   } >RAM
+
+  /* Лог нагрева: пустой, если CONTROL_LOG_ENABLE=0. NOLOAD — в образ не попадает и
+     стартапом не обнуляется (заголовок пишет Control_Init). */
+  .control_log (NOLOAD) :
+  {
+    KEEP(*(.control_log))
+  } >LOG
 
   /* Remove information from the compiler libraries */
   /DISCARD/ :

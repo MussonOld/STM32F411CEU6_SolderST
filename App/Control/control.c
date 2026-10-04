@@ -14,6 +14,10 @@
 #include "ads1220.h"
 #include "main.h"          /* Solder_On/Desolder_On — GPIO порт/пин */
 #include "stm32f4xx_hal.h"
+#if CONTROL_LOG_ENABLE
+#include "control_log.h"
+#include <string.h>
+#endif
 
 typedef struct {
     GPIO_TypeDef *on_port;
@@ -50,6 +54,17 @@ static fixed_t  s_duty_smoothed[CHANNEL_COUNT];
 /* Температура сейчас у настоящей уставки (|ошибка| <= CONTROL_POWER_DISPLAY_STEADY_BAND_C) —
  * переключает фильтр гейджа на медленный. Только для индикации. */
 static bool     s_near_setpoint[CHANNEL_COUNT];
+
+#if CONTROL_LOG_ENABLE
+/* RAM-лог нагрева (см. control_log.h/Control.md). Глобальный (внешняя линковка) и в
+ * собственной секции — чтобы адрес был фиксирован линкером (регион LOG), а запись не
+ * выбросил оптимизатор как мёртвую. Секция NOLOAD: стартап её не обнуляет, заголовок
+ * инициализирует log_init(). Читается снаружи по SWD, из C не читается. */
+control_log_t g_control_log __attribute__((section(".control_log"), used, aligned(4)));
+static bool     s_log_session;      /* идёт непрерывный нагрев канала CONTROL_LOG_CHANNEL (сбрасывает force_off) */
+static fixed_t  s_log_prev_sp;      /* уставка на предыдущем шаге — для детекта скачка */
+static void log_init(void);         /* реализация — ниже, рядом с log_commit() */
+#endif
 
 static void heater_write(channel_id_t ch, bool on)
 {
@@ -89,6 +104,11 @@ static void force_off(channel_id_t ch)
     s_prev_temp_valid[ch] = false;
     s_dTdt_valid[ch] = false;
     s_near_setpoint[ch] = false;
+#if CONTROL_LOG_ENABLE
+    if (ch == CONTROL_LOG_CHANNEL) {
+        s_log_session = false; /* следующий шаг PID — новый старт нагрева */
+    }
+#endif
 }
 
 void Control_Init(void)
@@ -99,6 +119,9 @@ void Control_Init(void)
         s_duty_smoothed[ch] = 0;
         force_off(ch);
     }
+#if CONTROL_LOG_ENABLE
+    log_init();
+#endif
 }
 
 /* Экспоненциальный фильтр s_duty_pct -> s_duty_smoothed для гейджа на
@@ -307,6 +330,140 @@ static fixed_t working_setpoint_for(fixed_t setpoint, fixed_t temp)
     return (temp < approach) ? approach : setpoint;
 }
 
+#if CONTROL_LOG_ENABLE
+/* ---- RAM-лог нагрева (формат — control_log.h). Только читает состояние регулятора,
+ * на PID, ШИМ и State не влияет (проверяется golden-тестом с -DCONTROL_LOG_ENABLE=1). ---- */
+
+#define LOG_BARRIER() __asm__ volatile ("" ::: "memory")
+
+static int16_t log_sat16(int64_t v)
+{
+    if (v > 32767)  return 32767;
+    if (v < -32768) return -32768;
+    return (int16_t)v;
+}
+
+/* Q16.16 (°C или %) -> int16 в десятых долях, с округлением и насыщением. */
+static int16_t log_x10(int64_t q16)
+{
+    return log_sat16((q16 * 10 + (1 << (FIXED_SHIFT - 1))) >> FIXED_SHIFT);
+}
+
+static void log_init(void)
+{
+    control_log_header_t *h = &g_control_log.hdr;
+    memset(h, 0, sizeof *h);
+    h->magic    = CONTROL_LOG_MAGIC;
+    h->version  = CONTROL_LOG_VERSION;
+    h->rec_size = (uint16_t)sizeof(control_log_rec_t);
+    h->capacity = CONTROL_LOG_CAPACITY;
+    h->channel  = (uint8_t)CONTROL_LOG_CHANNEL;
+    h->state    = CONTROL_LOG_ARMED;
+    LOG_BARRIER();
+}
+
+/* (Пере)старт записи: счётчик в 0, снимок коэффициентов и констант регулятора. */
+static void log_restart(channel_id_t ch, uint32_t tick)
+{
+    control_log_header_t *h = &g_control_log.hdr;
+    if (h->state == CONTROL_LOG_RECORDING) {
+        h->restarts++;
+    }
+    h->count   = 0;
+    h->channel = (uint8_t)ch;
+    h->kp = Settings_GetKp(ch);
+    h->ki = Settings_GetKi(ch);
+    h->kd = Settings_GetKd(ch);
+    h->pid_scale          = CONTROL_PID_SCALE;
+    h->t0_ms              = tick;
+    h->ff_pct_per_100c    = CONTROL_FF_PCT_PER_100C;
+    h->ambient_c          = CONTROL_AMBIENT_C;
+    h->integral_band_c    = CONTROL_INTEGRAL_BAND_C;
+    h->approach_offset_c  = CONTROL_APPROACH_OFFSET_C;
+    h->overshoot_gain     = CONTROL_OVERSHOOT_GAIN;
+    h->ff_fade_dtdt       = CONTROL_FF_FADE_DTDT_C_PER_S;
+    h->dtdt_filter_ms     = CONTROL_DTDT_FILTER_MS;
+    h->steady_band_c      = CONTROL_POWER_DISPLAY_STEADY_BAND_C;
+    h->poll_ms            = CONTROL_POLL_MS;
+    h->pwm_period_ms      = CONTROL_PWM_PERIOD_MS;
+    LOG_BARRIER();
+    h->state = CONTROL_LOG_RECORDING;
+}
+
+/* Вызывается из process_new_sample() сразу после pid_step(): s_integral/s_dTdt/s_duty_pct
+ * уже обновлены, слагаемые пересчитываются теми же формулами, что в pid_output_pct(). */
+static void log_commit(channel_id_t ch, fixed_t true_setpoint, fixed_t working,
+                       fixed_t temp, uint32_t update_tick)
+{
+    if (ch != CONTROL_LOG_CHANNEL) {
+        return;
+    }
+    control_log_header_t *h = &g_control_log.hdr;
+
+    bool new_session = !s_log_session;
+    s_log_session = true;
+    bool step_up = !new_session && (CONTROL_LOG_RESTART_STEP_C > 0) &&
+                   (true_setpoint - s_log_prev_sp >= FIXED_FROM_INT(CONTROL_LOG_RESTART_STEP_C));
+    s_log_prev_sp = true_setpoint;
+
+    if (h->state == CONTROL_LOG_FULL) {
+        return;
+    }
+    bool first = false;
+    if (h->state == CONTROL_LOG_ARMED || new_session || step_up) {
+        log_restart(ch, update_tick);
+        first = true;
+    }
+    if (h->count >= CONTROL_LOG_CAPACITY) {
+        return; /* защита от испорченного count (запись по SWD) */
+    }
+
+    fixed_t kp = pid_gain(Settings_GetKp(ch));
+    fixed_t ki = pid_gain(Settings_GetKi(ch));
+    fixed_t kd = pid_gain(Settings_GetKd(ch));
+    fixed_t error      = working - temp;
+    fixed_t true_error = true_setpoint - temp;
+    fixed_t band       = FIXED_FROM_INT(CONTROL_INTEGRAL_BAND_C);
+    fixed_t ff         = feed_forward_pct(true_setpoint, true_error, s_dTdt[ch]);
+
+    int64_t p = ((int64_t)kp * error) >> FIXED_SHIFT;
+    int64_t i = ((int64_t)ki * s_integral[ch]) >> FIXED_SHIFT;
+    int64_t d = -(((int64_t)kd * s_dTdt[ch]) >> FIXED_SHIFT);
+    int64_t sum = p + i + d + (int64_t)ff;
+
+    bool in_band = (true_error <= band && true_error >= -band);
+    uint16_t f = 0;
+    if (working < true_setpoint)                                   f |= CLOG_F_STAGE1;
+    if (in_band)                                                   f |= CLOG_F_IN_BAND;
+    if (s_near_setpoint[ch])                                       f |= CLOG_F_NEAR;
+    if (in_band && s_dTdt[ch] > 0)                                 f |= CLOG_F_FF_FADED;
+    if (sum < 0)                                                   f |= CLOG_F_SAT_LO;
+    if (sum > (int64_t)FIXED_FROM_INT(100))                        f |= CLOG_F_SAT_HI;
+    if (ki > 0 && s_integral[ch] >= fixed_div(FIXED_FROM_INT(100), ki)) f |= CLOG_F_I_CLAMP;
+    if (true_error < 0)                                            f |= CLOG_F_OVERSHOOT;
+    if (Sleep_GetMode(ch) == SLEEP_MODE_PRESLEEP)                  f |= CLOG_F_PRESLEEP;
+    if (first)                                                     f |= CLOG_F_FIRST;
+
+    control_log_rec_t *r = &g_control_log.rec[h->count];
+    r->t_ms    = (uint16_t)update_tick;
+    r->temp    = log_x10(temp);
+    r->sp      = log_x10(true_setpoint);
+    r->sp_work = log_x10(working);
+    r->power   = (int16_t)((int16_t)s_duty_pct[ch] * 10);
+    r->p       = log_x10(p);
+    r->i       = log_x10(i);
+    r->d       = log_x10(d);
+    r->ff      = log_x10(ff);
+    r->flags   = f;
+    LOG_BARRIER();                 /* запись целиком — потом счётчик: SWD-читатель не увидит недописанную */
+    h->count++;
+    if (h->count >= CONTROL_LOG_CAPACITY) {
+        LOG_BARRIER();
+        h->state = CONTROL_LOG_FULL;
+    }
+}
+#endif /* CONTROL_LOG_ENABLE */
+
 /* Пересчёт только на реально новый отсчёт АЦП (иначе dT=0 исказит dT/dt).
  * Первому отсчёту после сброса базы нет — ждём. */
 static void process_new_sample(channel_id_t ch, fixed_t setpoint, fixed_t temp, uint32_t update_tick)
@@ -317,6 +474,9 @@ static void process_new_sample(channel_id_t ch, fixed_t setpoint, fixed_t temp, 
             fixed_t dt_s = fixed_div(FIXED_FROM_INT((int32_t)dt_ms), FIXED_FROM_INT(1000));
             update_dTdt(ch, temp, dt_ms, dt_s);
             pid_step(ch, working_setpoint_for(setpoint, temp), setpoint, temp, dt_s);
+#if CONTROL_LOG_ENABLE
+            log_commit(ch, setpoint, working_setpoint_for(setpoint, temp), temp, update_tick);
+#endif
         }
     }
 

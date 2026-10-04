@@ -7,7 +7,9 @@
 #   buttons-golden — не изменилась ли классификация нажатий драйвера кнопок (tests/buttons_golden);
 #   settings-golden — не изменилась ли загрузка/запись настроек (tests/settings_golden);
 #   gfx-golden     — не изменился ли вывод текстового рендера (tests/gfx_golden);
-#   control-golden — не изменился ли регулятор нагрева (tests/control_golden).
+#   control-golden — не изменился ли регулятор нагрева (tests/control_golden; прогоняется и с
+#                    -DCONTROL_LOG_ENABLE=1: лог не должен влиять на регулятор);
+#   control-log    — работает ли сквозной путь RAM-лога нагрева: прошивка -> дамп -> декодер (tests/control_log).
 # Обе — быстрая проверка «не сломано ли», не замена ручной проверки на
 # железе перед прошивкой.
 name: CI
@@ -31,6 +33,9 @@ jobs:
 
       - name: Build
         run: ./tools/ci-build.sh
+
+      - name: Build with heating log enabled
+        run: EXTRA_CFLAGS=-DCONTROL_LOG_ENABLE=1 ./tools/ci-build.sh
 
   buttons-tests:
     name: Buttons host tests
@@ -103,3 +108,15 @@ jobs:
 
       - name: Run golden test
         run: make -C tests/control_golden check
+
+      - name: Run golden test with heating log enabled (must not change the trace)
+        run: make -C tests/control_golden check CC="gcc -DCONTROL_LOG_ENABLE=1"
+
+  control-log:
+    name: Control heating-log test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run end-to-end log test
+        run: make -C tests/control_log check
