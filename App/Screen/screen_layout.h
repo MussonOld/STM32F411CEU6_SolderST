@@ -25,14 +25,12 @@ enum {
     LINE_SOLDER_FAULT_MSG,    /* 1-я строка "Обрыв"/"КЗ"/"ERR", шрифт AntiquaB_18_uni — непусто только в CHANNEL_CONTENT_FAULT */
     LINE_SOLDER_FAULT_MSG2,   /* 2-я строка ("RTD"/"нагревателя"/"ADS1220") — см. print_fault_message_2line() */
     LINE_SOLDER_DISABLED_MSG, /* "ВЫКЛ", шрифт AntiquaB_32_uni — непусто только в CHANNEL_CONTENT_DISABLED */
-    LINE_SOLDER_TARGET,       /* уставка (ВРЕМЕННОЕ отладочное поле), опущена на SCREEN_TARGET_SHIFT_Y — в строку пресетов */
     LINE_SOLDER_SLEEP_TEMP,   /* текущая температура в PRESLEEP/SLEEP (AntiquaB_32_uni) — на прежнем месте уставки, под иконкой сна */
     LINE_DESOLDER_TITLE,
     LINE_DESOLDER_CURRENT,
     LINE_DESOLDER_FAULT_MSG,
     LINE_DESOLDER_FAULT_MSG2,
     LINE_DESOLDER_DISABLED_MSG,
-    LINE_DESOLDER_TARGET,
     LINE_DESOLDER_SLEEP_TEMP,
     LINE_PRESET_1,
     LINE_PRESET_2,
@@ -77,7 +75,7 @@ enum {
 
 /* Иконки заголовков каналов (растры SolderIcon_Bitmap/DesolderIcon_Bitmap, см.
  * solder_icon.h/desolder_icon.h) центрируются по X тем же center_x, что и
- * CURRENT/TARGET своей половины, и по Y — внутри общей титульной полосы
+ * CURRENT своей половины, и по Y — внутри общей титульной полосы
  * (SCREEN_TITLE_HEIGHT), а не по общему верхнему краю: иконки разной высоты
  * (17 и 31px при ширине 120px) иначе не совпадали бы по центру. */
 #define SCREEN_SOLDER_ICON_X   ((uint16_t)(SCREEN_HALF_CENTER_LEFT_X  - SOLDER_ICON_BITMAP_W   / 2U))
@@ -125,34 +123,28 @@ enum {
 #define COLOR_POWER_TRACK DISPLAY_RGB565(40, 40, 40)  /* тусклый трек — видна вся шкала, а не голый фон */
 #define COLOR_POWER_NUM   DISPLAY_RGB565(170, 170, 170) /* число мощности — нейтральный серый, не спорит с температурой */
 
-/* Текущая+целевая температура центрируются по вертикали в промежутке между
+/* Блок температуры (CURRENT + зазор + нижняя строка) центрируется по вертикали в промежутке между
  * низом заголовка и верхом строки пресетов (тот же отступ 6px, что и у
- * разделителя). CURRENT_HEIGHT/TARGET_HEIGHT — высоты шрифтов, GAP — зазор. */
+ * разделителя). CURRENT_HEIGHT/TAIL_HEIGHT — высоты, GAP — зазор. */
 #define SCREEN_CURRENT_HEIGHT (67U)
-#define SCREEN_TARGET_HEIGHT  (18U)
+/* Высота нижней строки блока (раньше — поле уставки AntiquaB_18_uni); вошла в
+ * SCREEN_TEMP_BLOCK_HEIGHT, оставлена, чтобы полоса CURRENT не сдвинулась. */
+#define SCREEN_TEMP_BLOCK_TAIL_HEIGHT (18U)
 #define SCREEN_TEMP_GAP       (10U)
 #define SCREEN_TEMP_BAND_TOP    (SCREEN_TITLE_Y + SCREEN_TITLE_HEIGHT + 2U)
 #define SCREEN_TEMP_BAND_BOTTOM (SCREEN_DIVIDER_Y1)
-#define SCREEN_TEMP_BLOCK_HEIGHT (SCREEN_CURRENT_HEIGHT + SCREEN_TEMP_GAP + SCREEN_TARGET_HEIGHT)
+#define SCREEN_TEMP_BLOCK_HEIGHT (SCREEN_CURRENT_HEIGHT + SCREEN_TEMP_GAP + SCREEN_TEMP_BLOCK_TAIL_HEIGHT)
 #define SCREEN_CURRENT_Y ((uint16_t)(SCREEN_TEMP_BAND_TOP + \
     ((SCREEN_TEMP_BAND_BOTTOM - SCREEN_TEMP_BAND_TOP) - SCREEN_TEMP_BLOCK_HEIGHT) / 2U))
 /* Прежнее место уставки (сразу под CURRENT-полосой) теперь занимает текущая
  * температура в фазах сна (PRESLEEP и SLEEP): иконка сна стоит на месте
  * большого числа, а сама температура — под ней (LINE_x_SLEEP_TEMP).
- * Уставка (ВРЕМЕННОЕ отладочное поле) опущена на SCREEN_TARGET_SHIFT_Y вниз, в
- * строку пресетов: по X она между пресетами (центр половины 79/240 против
- * пресетов слева 10.., по оси 160 и справа до 310), по Y низ шрифта 18
- * совпадает с низом пресетов (шрифт 24 на SCREEN_PRESETS_Y).
  * Блок CURRENT для центрирования (SCREEN_TEMP_BLOCK_HEIGHT) НЕ меняется —
  * положение полосы CURRENT (SCREEN_CURRENT_Y) остаётся прежним. */
-#define SCREEN_TARGET_SHIFT_Y     (50U)
 #define SCREEN_SLEEP_TEMP_HEIGHT  (32U) /* высота AntiquaB_32_uni */
 #define SCREEN_SLEEP_TEMP_Y ((uint16_t)(SCREEN_CURRENT_Y + SCREEN_CURRENT_HEIGHT + SCREEN_TEMP_GAP))
-#define SCREEN_TARGET_Y     ((uint16_t)(SCREEN_SLEEP_TEMP_Y + SCREEN_TARGET_SHIFT_Y))
 _Static_assert(SCREEN_SLEEP_TEMP_Y + SCREEN_SLEEP_TEMP_HEIGHT <= SCREEN_DIVIDER_Y1,
                "sleep temperature must end above the bottom of the divider/presets gap");
-_Static_assert(SCREEN_TARGET_Y + SCREEN_TARGET_HEIGHT <= SCREEN_HEIGHT,
-               "target field must fit on the screen");
 _Static_assert(SCREEN_POWER_BAR_Y0 >= SCREEN_SLEEP_TEMP_Y + SCREEN_SLEEP_TEMP_HEIGHT,
                "power gauge must not overlap the sleep temperature field");
 
@@ -170,7 +162,7 @@ _Static_assert(SCREEN_POWER_BAR_Y0 >= SCREEN_SLEEP_TEMP_Y + SCREEN_SLEEP_TEMP_HE
  * FAULT_MSG стоит на позиции SCREEN_CURRENT_Y,
  * FAULT_MSG2 — сразу под ней. SCREEN_TITLE_HEIGHT — высота шрифта
  * AntiquaB_18_uni (тем же шрифтом выводятся обе строки), небольшой зазор
- * между ними. До SCREEN_TARGET_Y ещё много места (CURRENT-блок посчитан
+ * между ними. До строки пресетов ещё много места (CURRENT-блок посчитан
  * под 67px строку Comic_60_dig, а тут всего 2×18px) — не пересекается. */
 #define SCREEN_FAULT_MSG2_GAP (2U)
 #define SCREEN_FAULT_MSG2_Y ((uint16_t)(SCREEN_CURRENT_Y + SCREEN_TITLE_HEIGHT + SCREEN_FAULT_MSG2_GAP))
@@ -249,12 +241,21 @@ _Static_assert(SCREEN_PRESLEEP_ICON_Y + PRESLEEP_ICON_BITMAP_H <= SCREEN_SLEEP_T
 _Static_assert(SCREEN_MENU_ITEM_Y0 + (SCREEN_MENU_ITEM_ROWS - 1U) * SCREEN_MENU_ITEM_STEP + 18U <= SCREEN_HEIGHT,
                "последняя строка меню (шрифт 18) должна помещаться на экране");
 
+/* Мигание текущей температуры при остывании (1 Гц: полпериода SCREEN_BLINK_HALF_PERIOD_MS
+ * число видно, полпериода скрыто): когда показанная температура выше применяемой
+ * уставки (выбрали уставку ниже текущей, либо наступил PRESLEEP со сниженной
+ * уставкой) больше чем на SCREEN_COOL_BLINK_START_C; мигание прекращается, когда
+ * разница упала до SCREEN_COOL_BLINK_STOP_C и меньше (гистерезис — число не
+ * дёргает мигание на границе, а небольшой перелёт после разгона (до пары
+ * градусов) не считается остыванием). */
+#define SCREEN_BLINK_HALF_PERIOD_MS (500U)
+#define SCREEN_COOL_BLINK_START_C   (5)
+#define SCREEN_COOL_BLINK_STOP_C    (3)
+
 /* ---- Цвета ---- */
 #define COLOR_BG               DISPLAY_RGB565(0, 0, 0)
 #define COLOR_ACTIVE_CURRENT   DISPLAY_RGB565(255, 255, 255)
 #define COLOR_INACTIVE_CURRENT DISPLAY_RGB565(90, 90, 90)
-#define COLOR_ACTIVE_TARGET    DISPLAY_RGB565(180, 180, 180)
-#define COLOR_INACTIVE_TARGET  DISPLAY_RGB565(60, 60, 60)
 /* Текущая температура в фазах сна (LINE_x_SLEEP_TEMP) — серая, тусклее
  * обычного белого числа: канал не работает, число вторично к иконке.
  * Активный/неактивный канал различаются яркостью, как и везде. */

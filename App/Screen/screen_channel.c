@@ -17,6 +17,7 @@
 #include "sleep.h"
 #include "control.h"
 #include "fixed_point.h"
+#include "stm32f4xx_hal.h" /* HAL_GetTick() — фаза мигания остывающей температуры */
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -109,13 +110,6 @@ static void apply_channel_colors(channel_id_t ch)
         TextField_SetColors(line_disabled_msg, active ? COLOR_ACTIVE_CURRENT : COLOR_INACTIVE_CURRENT, COLOR_BG);
         TextField_SetColors(line_sleep_temp, active ? COLOR_ACTIVE_SLEEP_TEMP : COLOR_INACTIVE_SLEEP_TEMP, COLOR_BG); /* температура в фазах сна — серая пара (см. COLOR_ACTIVE_SLEEP_TEMP) */
     }
-}
-
-static void apply_target_colors(channel_id_t ch)
-{
-    uint8_t line_target = (ch == CHANNEL_SOLDER) ? LINE_SOLDER_TARGET : LINE_DESOLDER_TARGET;
-    bool active = (ch == InputFSM_GetActiveChannel());
-    TextField_SetColors(line_target, active ? COLOR_ACTIVE_TARGET : COLOR_INACTIVE_TARGET, COLOR_BG);
 }
 
 /* Последнее нарисованное заполнение гейджа мощности, в пикселях — чтобы не
@@ -235,18 +229,17 @@ typedef struct {
     uint8_t fault_msg;    /* 1-я строка сообщения аварии */
     uint8_t fault_msg2;   /* 2-я строка сообщения аварии */
     uint8_t disabled_msg; /* "ВЫКЛ" */
-    uint8_t target;       /* уставка (временное отладочное поле) */
     uint8_t sleep_temp;   /* текущая температура в PRESLEEP/SLEEP */
 } channel_lines_t;
 
 static const channel_lines_t s_channel_lines[CHANNEL_COUNT] = {
     [CHANNEL_SOLDER] = {
         LINE_SOLDER_CURRENT, LINE_SOLDER_FAULT_MSG, LINE_SOLDER_FAULT_MSG2,
-        LINE_SOLDER_DISABLED_MSG, LINE_SOLDER_TARGET, LINE_SOLDER_SLEEP_TEMP,
+        LINE_SOLDER_DISABLED_MSG, LINE_SOLDER_SLEEP_TEMP,
     },
     [CHANNEL_DESOLDER] = {
         LINE_DESOLDER_CURRENT, LINE_DESOLDER_FAULT_MSG, LINE_DESOLDER_FAULT_MSG2,
-        LINE_DESOLDER_DISABLED_MSG, LINE_DESOLDER_TARGET, LINE_DESOLDER_SLEEP_TEMP,
+        LINE_DESOLDER_DISABLED_MSG, LINE_DESOLDER_SLEEP_TEMP,
     },
 };
 
@@ -368,11 +361,71 @@ static bool content_swap_settled(channel_id_t ch, channel_content_t content,
     return !s_content_clearing[ch];
 }
 
-/** @brief Текущая температура под иконкой сна/предсна (LINE_x_SLEEP_TEMP), с тем же гистерезисом, что и у CURRENT. */
-static void print_sleep_temp(channel_id_t ch, const channel_lines_t *ln, uint16_t center_x)
+/* Показ уставки на месте CURRENT: пока изменённая кнопками/пресетом уставка не
+ * записана в EEPROM (Settings_HasPendingChanges()), вместо текущей температуры
+ * выводится уставка (тот же шрифт, то же место); после записи — снова текущая. */
+static uint16_t s_last_target[CHANNEL_COUNT];
+static bool     s_target_seen[CHANNEL_COUNT];   /* s_last_target уже инициализирован (первый вызов не считается правкой) */
+static bool     s_target_edit[CHANNEL_COUNT];
+/* Мигание текущей при остывании (см. SCREEN_COOL_BLINK_START_C): гистерезисное состояние. */
+static bool     s_cooling[CHANNEL_COUNT];
+
+/** @brief Уставка, реально применяемая сейчас: в PRESLEEP — min(уставка, PresleepTemp), иначе заданная. */
+static int32_t applied_target(channel_id_t ch)
 {
-    TextField_PrintfCentered(ln->sleep_temp, center_x, "%ld",
-                             (long)temp_for_display(ch, State_GetCurrentTemp(ch)));
+    int32_t target = (int32_t)Settings_GetTarget(ch);
+    if (Sleep_GetMode(ch) == SLEEP_MODE_PRESLEEP) {
+        target = FIXED_TO_INT(Control_PresleepSetpoint(ch, FIXED_FROM_INT(target)));
+    }
+    return target;
+}
+
+/** @brief Следить за правкой уставки: взвести/сбросить s_target_edit[ch]. */
+static void track_target_edit(channel_id_t ch)
+{
+    uint16_t target = Settings_GetTarget(ch);
+    if (s_target_seen[ch] && target != s_last_target[ch]) {
+        s_target_edit[ch] = true;
+    }
+    s_last_target[ch] = target;
+    s_target_seen[ch] = true;
+    if (s_target_edit[ch] && !Settings_HasPendingChanges()) {
+        s_target_edit[ch] = false; /* записано в EEPROM — обратно к текущей температуре */
+    }
+}
+
+/** @brief Остывает ли канал сейчас (гистерезис START/STOP), по показанному целому. */
+static bool cooling_down(channel_id_t ch, int32_t shown)
+{
+    int32_t over = shown - applied_target(ch);
+    if (s_cooling[ch]) {
+        if (over <= SCREEN_COOL_BLINK_STOP_C) s_cooling[ch] = false;
+    } else if (over > SCREEN_COOL_BLINK_START_C) {
+        s_cooling[ch] = true;
+    }
+    return s_cooling[ch];
+}
+
+/** @brief Число текущей температуры в line; при остывании (allow_blink) мигает 1 Гц. */
+static void print_temp_line(channel_id_t ch, uint8_t line, uint16_t center_x, bool allow_blink)
+{
+    int32_t shown = temp_for_display(ch, State_GetCurrentTemp(ch));
+    bool blinking = allow_blink && cooling_down(ch, shown);
+    if (!allow_blink) {
+        s_cooling[ch] = false;
+    }
+    bool visible = !blinking || (((HAL_GetTick() / SCREEN_BLINK_HALF_PERIOD_MS) & 1U) == 0U);
+    if (visible) {
+        TextField_PrintfCentered(line, center_x, "%ld", (long)shown);
+    } else {
+        TextField_PrintfCentered(line, center_x, "");
+    }
+}
+
+/** @brief Текущая температура под иконкой сна/предсна (LINE_x_SLEEP_TEMP), с тем же гистерезисом, что и у CURRENT. */
+static void print_sleep_temp(channel_id_t ch, const channel_lines_t *ln, uint16_t center_x, bool allow_blink)
+{
+    print_temp_line(ch, ln->sleep_temp, center_x, allow_blink);
 }
 
 /** @brief Нарисовать содержимое канала для УЖЕ установившегося состояния (после фазы гашения). */
@@ -384,6 +437,7 @@ static void draw_channel_content(channel_id_t ch, channel_content_t content,
      * сохраняется, чтобы число не «прыгало» на границе фаз. */
     if (!content_shows_temp(content)) {
         s_temp_shown_valid[ch] = false; /* число не показываем — при возврате начинаем без гистерезиса */
+        s_cooling[ch] = false;
     }
     switch (content) {
         case CHANNEL_CONTENT_FAULT:
@@ -409,7 +463,7 @@ static void draw_channel_content(channel_id_t ch, channel_content_t content,
              * тот же паттерн, что и у крестика IDLE. Нагрев в SLEEP
              * отключает Control — иконка только индицирует состояние. */
             show_raster_once(&s_asleep_icon_shown[ch], ScreenIcons_DrawAsleep, asleep_icon_x(center_x), SCREEN_ASLEEP_ICON_Y);
-            print_sleep_temp(ch, ln, center_x);
+            print_sleep_temp(ch, ln, center_x, false); /* в SLEEP уставки нет — не мигает */
             break;
         case CHANNEL_CONTENT_PRESLEEP:
             /* SLEEP_MODE_PRESLEEP — растровая иконка (зевающий смайлик, см.
@@ -418,46 +472,34 @@ static void draw_channel_content(channel_id_t ch, channel_content_t content,
              * Control_PresleepSetpoint()), поэтому текущая температура
              * остаётся видна — под иконкой, как и в SLEEP. */
             show_raster_once(&s_presleep_icon_shown[ch], ScreenIcons_DrawPresleep, presleep_icon_x(center_x), SCREEN_PRESLEEP_ICON_Y);
-            print_sleep_temp(ch, ln, center_x);
+            print_sleep_temp(ch, ln, center_x, true); /* остывание до сниженной уставки — мигает */
             break;
         case CHANNEL_CONTENT_NORMAL:
         default:
-            TextField_PrintfCentered(ln->current, center_x, "%ld",
-                                     (long)temp_for_display(ch, State_GetCurrentTemp(ch)));
+            if (s_target_edit[ch]) {
+                /* Уставку правили и она ещё не записана в EEPROM — вместо текущей
+                 * температуры показываем её (тот же шрифт и место). */
+                TextField_PrintfCentered(ln->current, center_x, "%u", (unsigned)Settings_GetTarget(ch));
+            } else {
+                print_temp_line(ch, ln->current, center_x, true);
+            }
             break;
     }
-}
-
-/**
- * @brief Уставка для показа: в PRESLEEP реально применяется min(уставка,
- *        PresleepTemp), см. Control_PresleepSetpoint() — для визуального
- *        контроля показываем именно её. Из PRESLEEP канал выходит только по
- *        активности на входах Sleep — инструмент снят с подставки (Dock) или
- *        нажата кнопка помпы (Btn_Pump), а также при включении канала
- *        (Sleep_ForceAwake()); тогда снова показывается уставка.
- */
-static uint16_t target_for_display(channel_id_t ch, bool enabled)
-{
-    uint16_t target = Settings_GetTarget(ch);
-    if (enabled && !Error_IsChannelBlocked(ch) && Sleep_GetMode(ch) == SLEEP_MODE_PRESLEEP) {
-        target = (uint16_t)FIXED_TO_INT(Control_PresleepSetpoint(ch, FIXED_FROM_INT(target)));
-    }
-    return target;
 }
 
 /**
  * @brief Обновить содержимое канала: title-цвет, current/fault_msg (ровно
- *        одно из двух непусто), target (всегда число)
+ *        одно из двух непусто)
  * @param center_x Центр половины экрана этого канала
  */
 static void update_channel_content(channel_id_t ch, uint16_t center_x)
 {
     const channel_lines_t *ln = &s_channel_lines[ch];
     const char *fault_msg = Error_GetChannelFaultMessage(ch); /* не NULL только для аварий: RTD_SHORT/RTD_OPEN/HEATER_OPEN/ERR ADS1220 */
-    bool enabled = State_IsEnabled(ch);
     bool faulted = Error_IsChannelFaulted(ch); /* нужно для перекраски title/current в конце функции, см. apply_channel_colors() */
     channel_content_t content = classify_channel_content(ch, fault_msg);
 
+    track_target_edit(ch);
     erase_icons_on_exit(ch, content, center_x);
 
     if (content_swap_settled(ch, content, ln, center_x)) {
@@ -471,11 +513,6 @@ static void update_channel_content(channel_id_t ch, uint16_t center_x)
     if (content != CHANNEL_CONTENT_PRESLEEP && content != CHANNEL_CONTENT_ASLEEP) {
         TextField_PrintfCentered(ln->sleep_temp, center_x, "");
     }
-
-    /* Целевая — всегда числом, независимо от неисправности (см. шапку
-     * файла); физически не пересекается с CURRENT/FAULT_MSG/DISABLED_MSG
-     * областью (см. SCREEN_TARGET_Y) — стадию гашения выше не ждёт. */
-    TextField_PrintfCentered(ln->target, center_x, "%u", (unsigned)target_for_display(ch, enabled));
 
     if (faulted != (s_last_content[ch] == CHANNEL_CONTENT_FAULT)) {
         apply_channel_colors(ch);
@@ -687,7 +724,7 @@ void ScreenChannel_Init(void)
                              &AntiquaB_18_uni, COLOR_SLEEP_AWAKE, COLOR_BG);
     /* x, переданный здесь для этих двух строк, — просто начальное значение,
      * реальная позиция пересчитывается по факту при первом же
-     * TextField_PrintfRightAligned() в Screen_Update(), как и у CURRENT/TARGET/пресетов. */
+     * TextField_PrintfRightAligned() в Screen_Update(), как и у CURRENT/пресетов. */
 
     /* s_sleep_icon_x[]/s_sleep_icon_shown[] инициализировать здесь не нужно —
      * обе статические (нули по умолчанию), а x всё равно пересчитывается
@@ -715,8 +752,6 @@ void ScreenChannel_Init(void)
                              &AntiquaB_18_uni, COLOR_FAULT, COLOR_BG);
     TextField_ConfigureLine(LINE_SOLDER_DISABLED_MSG, SCREEN_HALF_CENTER_LEFT_X, SCREEN_DISABLED_MSG_Y,
                              &AntiquaB_32_uni, COLOR_ACTIVE_CURRENT, COLOR_BG);
-    TextField_ConfigureLine(LINE_SOLDER_TARGET, SCREEN_HALF_CENTER_LEFT_X, SCREEN_TARGET_Y,
-                             &AntiquaB_18_uni, COLOR_ACTIVE_TARGET, COLOR_BG);
     TextField_ConfigureLine(LINE_SOLDER_SLEEP_TEMP, SCREEN_HALF_CENTER_LEFT_X, SCREEN_SLEEP_TEMP_Y,
                              &AntiquaB_32_uni, COLOR_ACTIVE_SLEEP_TEMP, COLOR_BG);
 
@@ -731,8 +766,6 @@ void ScreenChannel_Init(void)
                              &AntiquaB_18_uni, COLOR_FAULT, COLOR_BG);
     TextField_ConfigureLine(LINE_DESOLDER_DISABLED_MSG, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_DISABLED_MSG_Y,
                              &AntiquaB_32_uni, COLOR_INACTIVE_CURRENT, COLOR_BG);
-    TextField_ConfigureLine(LINE_DESOLDER_TARGET, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_TARGET_Y,
-                             &AntiquaB_18_uni, COLOR_INACTIVE_TARGET, COLOR_BG);
     TextField_ConfigureLine(LINE_DESOLDER_SLEEP_TEMP, SCREEN_HALF_CENTER_RIGHT_X, SCREEN_SLEEP_TEMP_Y,
                              &AntiquaB_32_uni, COLOR_INACTIVE_SLEEP_TEMP, COLOR_BG);
 
@@ -772,9 +805,7 @@ void ScreenChannel_UpdateActiveColors(channel_id_t active)
 {
     if (active != s_last_active_channel) {
         apply_channel_colors(s_last_active_channel);
-        apply_target_colors(s_last_active_channel);
         apply_channel_colors(active);
-        apply_target_colors(active);
         s_last_active_channel = active;
     }
 }

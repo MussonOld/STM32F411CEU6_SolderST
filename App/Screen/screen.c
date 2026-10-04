@@ -38,10 +38,10 @@
  *      - в PRESLEEP/SLEEP на месте большого числа — иконка (зевающий/
  *        спящий смайлик, растр), а сама текущая температура — под ней
  *        (LINE_x_SLEEP_TEMP, AntiquaB_32_uni, SCREEN_SLEEP_TEMP_Y)
- *      - целевая температура (шрифт AntiquaB_18_uni) — числом независимо
- *        от неисправности, в строке пресетов между ними (SCREEN_TARGET_Y =
- *        SCREEN_SLEEP_TEMP_Y + SCREEN_TARGET_SHIFT_Y). ВРЕМЕННО: отладочное
- *        поле на период опытной эксплуатации, будет убрано
+ *      - пока уставка, изменённая UP/DN или пресетом, не записана в EEPROM —
+ *        вместо текущей выводится она (тот же шрифт и место); текущая мигает
+ *        1 Гц при остывании (см. screen_channel.c: track_target_edit(),
+ *        cooling_down())
  *  - строка пресетов внизу, шрифт AntiquaB_24_uni, ТРИ отдельных поля
  *    (не одна строка) — пресеты активного канала:
  *      - preset1: TextField_Printf(), фиксированный x=10 от левого края
@@ -179,7 +179,7 @@ void Screen_Init(void)
                              &AntiquaB_24_uni, COLOR_ACTIVE_PRESETS, COLOR_BG);
     TextField_ConfigureLine(LINE_PRESET_3, SCREEN_PRESET3_RIGHT_EDGE_X, SCREEN_PRESETS_Y,
                              &AntiquaB_24_uni, COLOR_ACTIVE_PRESETS, COLOR_BG);
-    /* x, переданный здесь для CURRENT/TARGET/PRESET_2/PRESET_3, — просто
+    /* x, переданный здесь для CURRENT/PRESET_2/PRESET_3, — просто
      * начальное значение, реальная позиция пересчитывается по факту при
      * первом же TextField_PrintfCentered()/PrintfRightAligned() в
      * Screen_Update(), до первой отрисовки на экран. */

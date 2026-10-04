@@ -175,7 +175,7 @@ extern "C" {
  *  по фиксированному адресу 0x2001A000 (регион LOG в линкере, 24 КБ) — читать
  *  STM32CubeProgrammer-ом без остановки МК, разбор tools/control_log_decode.py. */
 #define CONTROL_LOG_ENABLE      1
-#define CONTROL_LOG_CHANNEL     CHANNEL_SOLDER
+#define CONTROL_LOG_CHANNEL     CHANNEL_DESOLDER
 #define CONTROL_LOG_CAPACITY    1200U
 #define CONTROL_LOG_GAP_MS      500U
 

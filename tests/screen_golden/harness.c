@@ -97,6 +97,7 @@ static struct {
     bool ads_valid[CHANNEL_COUNT];
     fixed_t ads_temp[CHANNEL_COUNT];
     uint16_t width_seed;
+    uint32_t tick;   /* HAL_GetTick() — фаза мигания остывающей температуры */
 } W;
 
 static const char *const k_fault_msgs[] = { NULL, NULL, NULL, "Обрыв нагревателя", "КЗ RTD", "ERR ADS1220", "Однослово" };
@@ -138,6 +139,7 @@ static void world_step(void)
         if (chance(3)) for (int p = 0; p < PRESET_COUNT; p++) W.preset[c][p] = (uint16_t)(rnd() % 500U);
         if (chance(3)) W.presleep_timeout[c] = chance(25) ? 0 : (uint16_t)(rnd() % 600U);
     }
+    W.tick += 1U + (rnd() % 700U);
     if (chance(2)) W.splash_mode = (uint8_t)(rnd() % 3U);
     if (chance(8)) W.pending = chance(40);
     if (chance(4)) W.info_msg = (int)(rnd() % (sizeof k_info_msgs / sizeof k_info_msgs[0]));
@@ -195,6 +197,7 @@ uint16_t Settings_GetPreSleepTimeout(channel_id_t ch) { return W.presleep_timeou
 uint16_t Settings_GetPreset(channel_id_t ch, preset_id_t p) { return W.preset[ch][p]; }
 uint8_t Settings_GetSplashMode(void) { return W.splash_mode; }
 uint16_t Settings_GetTarget(channel_id_t ch) { return W.target[ch]; }
+uint32_t HAL_GetTick(void) { return W.tick; }
 bool Settings_HasPendingChanges(void) { return W.pending; }
 sleep_mode_t Sleep_GetMode(channel_id_t ch) { return W.sleep[ch]; }
 uint32_t Sleep_GetRemainingSeconds(channel_id_t ch) { return W.remaining[ch]; }
