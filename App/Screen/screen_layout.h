@@ -96,20 +96,19 @@ enum {
  * на экран). Останавливаем линию с небольшим отступом сверху от SCREEN_PRESETS_Y. */
 #define SCREEN_DIVIDER_Y1   (SCREEN_PRESETS_Y - 6U)
 
-/* Гейдж мощности — узкая вертикальная колонка у разделителя,
- * "как у спиртового термометра": заполняется СНИЗУ ВВЕРХ на долю
- * Control_GetSmoothedPowerPct(ch)/100 от своей высоты, остаток сверху —
+/* Гейдж мощности — горизонтальная полоса над строкой пресетов, у нижнего края
+ * разделителя, в своей половине экрана (по центру, той же ширины, что и иконки
+ * заголовков): заполняется СЛЕВА НАПРАВО на долю
+ * Control_GetSmoothedPowerPct(ch)/100 от своей длины, остаток справа —
  * тусклый "трек" (видна вся шкала целиком даже при 0%, не только пустое
- * место). Та же вертикальная протяжённость, что и у статического
- * разделителя (SCREEN_INFO_HEIGHT..SCREEN_DIVIDER_Y1) — визуально одна
- * группа с ним. */
-#define SCREEN_POWER_BAR_WIDTH  (8U)
-#define SCREEN_POWER_BAR_GAP    (3U)  /* зазор от разделителя */
-#define SCREEN_POWER_BAR_Y0     (SCREEN_INFO_HEIGHT)
+ * место). По Y — в зазоре между низом SLEEP_TEMP-поля и концом разделителя
+ * (SCREEN_DIVIDER_Y1), проверяется assert-ом ниже. */
+#define SCREEN_POWER_BAR_LENGTH    (120U)
+#define SCREEN_POWER_BAR_THICKNESS (6U)
 #define SCREEN_POWER_BAR_Y1     (SCREEN_DIVIDER_Y1)
-#define SCREEN_POWER_BAR_HEIGHT ((uint16_t)(SCREEN_POWER_BAR_Y1 - SCREEN_POWER_BAR_Y0 + 1U))
-#define SCREEN_SOLDER_POWER_BAR_X0   ((uint16_t)(SCREEN_DIVIDER_X0 - SCREEN_POWER_BAR_GAP - SCREEN_POWER_BAR_WIDTH))
-#define SCREEN_DESOLDER_POWER_BAR_X0 ((uint16_t)(SCREEN_DIVIDER_X1 + 1U + SCREEN_POWER_BAR_GAP))
+#define SCREEN_POWER_BAR_Y0     ((uint16_t)(SCREEN_POWER_BAR_Y1 - SCREEN_POWER_BAR_THICKNESS + 1U))
+#define SCREEN_SOLDER_POWER_BAR_X0   ((uint16_t)(SCREEN_HALF_CENTER_LEFT_X  - SCREEN_POWER_BAR_LENGTH / 2U))
+#define SCREEN_DESOLDER_POWER_BAR_X0 ((uint16_t)(SCREEN_HALF_CENTER_RIGHT_X - SCREEN_POWER_BAR_LENGTH / 2U))
 #define COLOR_POWER_FILL  DISPLAY_RGB565(255, 90, 0)  /* тёплый оранжевый — "греет" */
 #define COLOR_POWER_TRACK DISPLAY_RGB565(40, 40, 40)  /* тусклый трек — видна вся шкала, а не голый фон */
 
@@ -141,6 +140,8 @@ _Static_assert(SCREEN_SLEEP_TEMP_Y + SCREEN_SLEEP_TEMP_HEIGHT <= SCREEN_DIVIDER_
                "sleep temperature must end above the bottom of the divider/presets gap");
 _Static_assert(SCREEN_TARGET_Y + SCREEN_TARGET_HEIGHT <= SCREEN_HEIGHT,
                "target field must fit on the screen");
+_Static_assert(SCREEN_POWER_BAR_Y0 >= SCREEN_SLEEP_TEMP_Y + SCREEN_SLEEP_TEMP_HEIGHT,
+               "power gauge must not overlap the sleep temperature field");
 
 /* Реальная высота рамки шрифта Comic_60_dig (Comic_60_dig.height), НЕ равна
  * номинальным 67px полосы CURRENT (SCREEN_CURRENT_HEIGHT): цифры занимают в

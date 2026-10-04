@@ -126,15 +126,15 @@ static void apply_target_colors(channel_id_t ch)
  * возврата из меню (см. clear_screen_for_mode_switch()). */
 static uint16_t s_power_bar_fill_px[CHANNEL_COUNT];
 
-/** @brief Один сплошной сегмент гейджа (ширина фиксирована SCREEN_POWER_BAR_WIDTH), height==0 — no-op. */
-static bool draw_power_bar_segment(uint16_t x0, uint16_t y0, uint16_t height, display_color_t color)
+/** @brief Один сплошной сегмент гейджа (толщина фиксирована SCREEN_POWER_BAR_THICKNESS), length==0 — no-op. */
+static bool draw_power_bar_segment(uint16_t x0, uint16_t length, display_color_t color)
 {
-    if (height == 0U) return true;
-    if (Display_SetWindow(x0, y0, (uint16_t)(x0 + SCREEN_POWER_BAR_WIDTH - 1U),
-                           (uint16_t)(y0 + height - 1U)) != DISPLAY_OK) {
+    if (length == 0U) return true;
+    if (Display_SetWindow(x0, SCREEN_POWER_BAR_Y0, (uint16_t)(x0 + length - 1U),
+                           SCREEN_POWER_BAR_Y1) != DISPLAY_OK) {
         return false;
     }
-    if (Display_FillColorDMA(color, (uint32_t)SCREEN_POWER_BAR_WIDTH * height) != DISPLAY_OK) {
+    if (Display_FillColorDMA(color, (uint32_t)SCREEN_POWER_BAR_THICKNESS * length) != DISPLAY_OK) {
         return false;
     }
     while (Display_IsBusy()) { } /* редкое событие — только когда сглаженный % реально сдвинул пиксель заполнения, см. вызов ниже */
@@ -142,31 +142,31 @@ static bool draw_power_bar_segment(uint16_t x0, uint16_t y0, uint16_t height, di
 }
 
 /**
- * @brief Перерисовать гейдж мощности канала — сегмент "трек" (тусклый,
- *        сверху) + сегмент "заполнение" (снизу, см. геометрию выше), но
- *        только если высота заполнения в пикселях изменилась с прошлого
- *        раза (s_power_bar_fill_px). Redraw целиком, а не только дельту —
- *        колонка узкая (SCREEN_POWER_BAR_WIDTH), а меняется редко благодаря
- *        сглаживанию в Control (секунды, см. CONTROL_POWER_DISPLAY_FILTER_MS) —
+ * @brief Перерисовать гейдж мощности канала — сегмент "заполнение" (слева,
+ *        см. геометрию выше) + сегмент "трек" (тусклый, справа), но только
+ *        если длина заполнения в пикселях изменилась с прошлого раза
+ *        (s_power_bar_fill_px). Redraw целиком, а не только дельту —
+ *        полоса узкая (SCREEN_POWER_BAR_THICKNESS), а меняется редко благодаря
+ *        сглаживанию в Control (см. CONTROL_POWER_DISPLAY_FILTER_MS) —
  *        лишний DMA-трафик от передельки уже закрашенного несущественный.
  */
 static void update_power_gauge(channel_id_t ch, uint16_t bar_x0)
 {
     fixed_t pct = Control_GetSmoothedPowerPct(ch); /* 0..100, Q16.16 */
-    fixed_t fill_fixed = fixed_div(fixed_mul(pct, FIXED_FROM_INT((int32_t)SCREEN_POWER_BAR_HEIGHT)),
+    fixed_t fill_fixed = fixed_div(fixed_mul(pct, FIXED_FROM_INT((int32_t)SCREEN_POWER_BAR_LENGTH)),
                                     FIXED_FROM_INT(100));
     int32_t fill_px_signed = FIXED_TO_INT(fill_fixed + (FIXED_ONE >> 1)); /* округление */
     if (fill_px_signed < 0) fill_px_signed = 0;
-    if (fill_px_signed > (int32_t)SCREEN_POWER_BAR_HEIGHT) fill_px_signed = (int32_t)SCREEN_POWER_BAR_HEIGHT;
+    if (fill_px_signed > (int32_t)SCREEN_POWER_BAR_LENGTH) fill_px_signed = (int32_t)SCREEN_POWER_BAR_LENGTH;
     uint16_t fill_px = (uint16_t)fill_px_signed;
 
     if (fill_px == s_power_bar_fill_px[ch]) {
         return; /* пиксель заполнения не изменился — перерисовывать нечего */
     }
 
-    uint16_t track_height = (uint16_t)(SCREEN_POWER_BAR_HEIGHT - fill_px);
-    bool ok = draw_power_bar_segment(bar_x0, SCREEN_POWER_BAR_Y0, track_height, COLOR_POWER_TRACK);
-    ok = draw_power_bar_segment(bar_x0, (uint16_t)(SCREEN_POWER_BAR_Y0 + track_height), fill_px, COLOR_POWER_FILL) && ok;
+    uint16_t track_length = (uint16_t)(SCREEN_POWER_BAR_LENGTH - fill_px);
+    bool ok = draw_power_bar_segment(bar_x0, fill_px, COLOR_POWER_FILL);
+    ok = draw_power_bar_segment((uint16_t)(bar_x0 + fill_px), track_length, COLOR_POWER_TRACK) && ok;
     if (ok) {
         s_power_bar_fill_px[ch] = fill_px; /* при ошибке не фиксируем — следующий вызов перерисует */
     }
