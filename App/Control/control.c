@@ -159,12 +159,15 @@ static void log_sample(channel_id_t ch, fixed_t work_sp, fixed_t true_sp, fixed_
 {
     if (ch != CONTROL_LOG_CHANNEL) return;
     uint32_t now = HAL_GetTick();
-    if (!s_log_started || true_sp != s_log_setpoint
+    /* Новый лог — только при ПОВЫШЕНИИ уставки (или после паузы): понижение
+     * (остывание) дописывается к текущему логу, иначе оно затирает разгон,
+     * который хотели прочитать. */
+    if (!s_log_started || true_sp > s_log_setpoint
         || (uint32_t)(now - s_log_last_tick) > CONTROL_LOG_GAP_MS) {
         log_reset();
         s_log_started  = true;
-        s_log_setpoint = true_sp;
     }
+    s_log_setpoint = true_sp;
     s_log_last_tick = now;
     uint32_t n = s_log.hdr.count;
     if (n >= CONTROL_LOG_CAPACITY) return;
