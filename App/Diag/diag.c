@@ -158,7 +158,7 @@ void Diag_Poll(void)
                 rtd = RTD_STATE_SHORT;
             } else if (r >= FIXED_FROM_INT(DIAG_RTD_OPEN_MIN_OHM)) {
                 rtd = RTD_STATE_OPEN;
-            } else if (t > FIXED_FROM_INT(SETTINGS_TEMP_MAX)) {
+            } else if (t > FIXED_FROM_INT(SETTINGS_TEMP_MAX + DIAG_OVERTEMP_MARGIN_C)) {
                 rtd = RTD_STATE_OPEN;        /* перегрев по откалиброванной t — страховка, см. diag.h */
             } else {
                 rtd = RTD_STATE_OK;

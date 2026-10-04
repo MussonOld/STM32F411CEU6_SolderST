@@ -61,7 +61,7 @@
  * diag.c/diag.h) — не зависит от калибровки Slope/Bias:
  *  - R <= DIAG_RTD_SHORT_MAX_OHM → RTD_STATE_SHORT (КЗ)
  *  - R >= DIAG_RTD_OPEN_MIN_OHM  → RTD_STATE_OPEN  (обрыв)
- *  - t > SETTINGS_TEMP_MAX       → RTD_STATE_OPEN  (перегрев — страховка по
+ *  - t > SETTINGS_TEMP_MAX + DIAG_OVERTEMP_MARGIN_C → RTD_STATE_OPEN  (перегрев — страховка по
  *                                   откалиброванной температуре, дополняет
  *                                   проверку по R, но не заменяет её)
  *  - иначе                       → RTD_STATE_OK
@@ -159,7 +159,7 @@ typedef enum {
 typedef enum {
     RTD_STATE_OK = 0,
     RTD_STATE_SHORT,          /**< R <= DIAG_RTD_SHORT_MAX_OHM (см. diag.h) */
-    RTD_STATE_OPEN,           /**< R >= DIAG_RTD_OPEN_MIN_OHM, либо t > SETTINGS_TEMP_MAX (см. diag.h) */
+    RTD_STATE_OPEN,           /**< R >= DIAG_RTD_OPEN_MIN_OHM, либо t > SETTINGS_TEMP_MAX + DIAG_OVERTEMP_MARGIN_C (см. diag.h) */
 } rtd_state_t;
 
 void Error_Init(void);
