@@ -18,7 +18,7 @@
 
 ## Инструменты (RTD/нагреватель)
 
-Источник данных — модуль `Diag` (`diag.h`): по сопротивлению RTD с ADS1220 определяет его состояние (диапазон 20–70 Ом — норма, вне него `R <= DIAG_RTD_SHORT_MAX_OHM` — КЗ, `R >= DIAG_RTD_OPEN_MIN_OHM` — обрыв; не зависит от калибровки Slope/Bias), плюс страховка по откалиброванной температуре (`t > SETTINGS_TEMP_MAX` — тоже обрыв), по `Solder_Test`/`Desolder_Test` — целостность нагревателя, и каждый цикл опроса передаёт результат в `Error_SetRtdState()`/`Error_SetHeaterOpen()`/`Error_SetAdcFault()`.
+Источник данных — модуль `Diag` (`diag.h`): по сопротивлению RTD с ADS1220 определяет его состояние (диапазон 20–80 Ом — норма, вне него `R <= DIAG_RTD_SHORT_MAX_OHM` — КЗ, `R >= DIAG_RTD_OPEN_MIN_OHM` — обрыв; не зависит от калибровки Slope/Bias), плюс страховка по откалиброванной температуре (`t > SETTINGS_TEMP_MAX` — тоже обрыв), по `Solder_Test`/`Desolder_Test` — целостность нагревателя, и каждый цикл опроса передаёт результат в `Error_SetRtdState()`/`Error_SetHeaterOpen()`/`Error_SetAdcFault()`.
 
 `Solder_Test`/`Desolder_Test`: высокий уровень = исправно.
 
