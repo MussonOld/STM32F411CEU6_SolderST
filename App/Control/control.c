@@ -189,7 +189,7 @@ static void update_integral(channel_id_t ch, fixed_t error, fixed_t true_error, 
 
 /* Прямая подача на удержание (см. CONTROL_FF_PCT_PER_100C): только в полосе
  * CONTROL_INTEGRAL_BAND_C вокруг настоящей уставки, вне неё 0. Q16.16, %. */
-static fixed_t feed_forward_pct(fixed_t true_setpoint, fixed_t true_error)
+static fixed_t feed_forward_pct(fixed_t true_setpoint, fixed_t true_error, fixed_t dTdt)
 {
     fixed_t band = FIXED_FROM_INT(CONTROL_INTEGRAL_BAND_C);
     if (true_error > band || true_error < -band) {
@@ -199,7 +199,18 @@ static fixed_t feed_forward_pct(fixed_t true_setpoint, fixed_t true_error)
     if (rise <= 0) {
         return 0;
     }
-    return fixed_div(fixed_mul(FIXED_FROM_INT(CONTROL_FF_PCT_PER_100C), rise), FIXED_FROM_INT(100));
+    fixed_t ff = fixed_div(fixed_mul(FIXED_FROM_INT(CONTROL_FF_PCT_PER_100C), rise), FIXED_FROM_INT(100));
+
+    /* Пока температура ещё заметно растёт — FF линейно убирается (см.
+     * CONTROL_FF_FADE_DTDT_C_PER_S): тепло от нагревателя к жалу и так догоняет. */
+    fixed_t fade = FIXED_FROM_INT(CONTROL_FF_FADE_DTDT_C_PER_S);
+    if (dTdt <= 0) {
+        return ff;
+    }
+    if (dTdt >= fade) {
+        return 0;
+    }
+    return fixed_mul(ff, fixed_div(fade - dTdt, fade));
 }
 
 /* Выход PID в процентах 0..100 (с округлением). Вычисления — в int64: Kp до
@@ -240,7 +251,7 @@ static void pid_step(channel_id_t ch, fixed_t setpoint, fixed_t true_setpoint, f
 
     update_integral(ch, error, true_error, ki, dt_s);
     s_duty_pct[ch] = pid_output_pct(kp, ki, kd, error, s_integral[ch], s_dTdt[ch],
-                                    feed_forward_pct(true_setpoint, true_error));
+                                    feed_forward_pct(true_setpoint, true_error, s_dTdt[ch]));
 }
 
 /* Сглаженная dT/dt: первый отсчёт после сброса берётся как есть, дальше —
