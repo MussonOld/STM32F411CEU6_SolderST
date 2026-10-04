@@ -121,7 +121,7 @@ typedef enum {
  * Дефолты: preSet1=300, preSet2=350, preSet3=450 °C (оба инструмента),
  * target=300 (=preSet1), presleepTemp=150 °C, preSleepTimeout=sleepTimeout=10 мин
  * (см. SETTINGS_DEFAULT_PRE_SLEEP_TIMEOUT/SETTINGS_DEFAULT_SLEEP_TIMEOUT в
- * settings.c), Kp/Ki/Kd = 500/90/300 (подобраны на паяльнике, единицы —
+ * settings.c), Kp/Ki/Kd = 900/150/700 (подобраны на паяльнике, единицы —
  * см. control.h), slope/bias = 75 / 208 (откалиброваны по термопаре, номинал
  * по формуле датчика — 72 / 217; см. SETTINGS_SLOPE_SCALE/SETTINGS_BIAS_SCALE),
  * flags: Bzzz выкл, режим заставки SETTINGS_DEFAULT_SPLASH_MODE (см. splash_mode_t).

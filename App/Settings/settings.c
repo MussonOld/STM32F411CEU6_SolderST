@@ -101,9 +101,9 @@ static inline uint16_t settings_default_bias(channel_id_t ch)
 {
     return (ch == CHANNEL_SOLDER) ? SETTINGS_DEFAULT_BIAS_SOLDER : SETTINGS_DEFAULT_BIAS_DESOLDER;
 }
-#define SETTINGS_DEFAULT_KP                 (500U) /* 5 %/°C, подобрано на паяльнике (см. control.h) */
-#define SETTINGS_DEFAULT_KI                 (90U)  /* 0.9 %/(°C*с) */
-#define SETTINGS_DEFAULT_KD                 (300U) /* 3 %/(°C/с) */
+#define SETTINGS_DEFAULT_KP                 (900U) /* 9 %/°C, подобрано на паяльнике по логу нагрева (см. control.h, Control.md) */
+#define SETTINGS_DEFAULT_KI                 (150U) /* 1.5 %/(°C*с) */
+#define SETTINGS_DEFAULT_KD                 (700U) /* 7 %/(°C/с) */
 
 static inline bool preset_valid(preset_id_t preset)
 {
