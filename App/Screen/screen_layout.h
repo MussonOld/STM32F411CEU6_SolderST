@@ -254,6 +254,9 @@ _Static_assert(SCREEN_MENU_ITEM_Y0 + (SCREEN_MENU_ITEM_ROWS - 1U) * SCREEN_MENU_
 #define SCREEN_TEMP_COLOR_MIN_C  (50)
 #define SCREEN_TEMP_COLOR_MAX_C  (450)
 #define SCREEN_INACTIVE_DIM_PCT  (35)
+/* Яркость числа у активного канала, % от полной: 75 — зелёный темнее и не сливается
+ * с жёлтым цветом пресетов (COLOR_ACTIVE_PRESETS 255/210/0), красный остаётся ярким. */
+#define SCREEN_TEMP_COLOR_BRIGHT_PCT (75)
 
 /* Мигание текущей температуры при остывании (1 Гц: полпериода SCREEN_BLINK_HALF_PERIOD_MS
  * число видно, полпериода скрыто): когда показанная температура выше применяемой

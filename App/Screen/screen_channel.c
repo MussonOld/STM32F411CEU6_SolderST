@@ -91,10 +91,9 @@ static display_color_t temp_gradient_color(int32_t t, bool active)
     int32_t x = (t - SCREEN_TEMP_COLOR_MIN_C) * 510 / (SCREEN_TEMP_COLOR_MAX_C - SCREEN_TEMP_COLOR_MIN_C); /* 0..510 */
     int32_t r = (x <= 255) ? x : 255;
     int32_t g = (x <= 255) ? 255 : (510 - x);
-    if (!active) {
-        r = r * SCREEN_INACTIVE_DIM_PCT / 100;
-        g = g * SCREEN_INACTIVE_DIM_PCT / 100;
-    }
+    int32_t pct = active ? SCREEN_TEMP_COLOR_BRIGHT_PCT : SCREEN_INACTIVE_DIM_PCT;
+    r = r * pct / 100;
+    g = g * pct / 100;
     return DISPLAY_RGB565(r, g, 0);
 }
 
