@@ -91,10 +91,16 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : Solder_Test_Pin Desolder_Test_Pin Btn_Pump_Pin Pok_Pin */
-  GPIO_InitStruct.Pin = Solder_Test_Pin|Desolder_Test_Pin|Btn_Pump_Pin|Pok_Pin;
+  /*Configure GPIO pins : Solder_Test_Pin Desolder_Test_Pin Pok_Pin */
+  GPIO_InitStruct.Pin = Solder_Test_Pin|Desolder_Test_Pin|Pok_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : Btn_Pump_Pin */
+  GPIO_InitStruct.Pin = Btn_Pump_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pins : BEEP_Pin Pump_On_Pin Solder_On_Pin Desolder_On_Pin
