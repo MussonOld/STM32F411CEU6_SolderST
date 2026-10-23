@@ -59,7 +59,7 @@ static bool chance(unsigned pct) { return (rnd() % 100U) < pct; }
 
 /* ------------------------------------------------------------ модель мира */
 static uint32_t g_tick;
-static bool g_dock = true, g_pump = true;       /* сырые уровни: 1 = "простой" у обоих входов */
+static bool g_dock = true, g_pump = true;       /* логически: 1 = "простой" у обоих входов; уровень пина: Dock простой = высокий, Btn_Pump простой = НИЗКИЙ (активный высокий) */
 static bool g_absent[CHANNEL_COUNT];           /* Error_IsChannelIdle(): инструмент не подключен (TOOL_FAULT_DISCONNECTED) */
 static bool g_faulted[CHANNEL_COUNT];          /* авария инструмента (любой tool_fault_t кроме NONE и DISCONNECTED) */
 static bool g_psu;                             /* авария БП — блокирует оба канала */
@@ -73,7 +73,7 @@ uint32_t HAL_GetTick(void) { return g_tick; }
 GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *port, uint16_t pin)
 {
     if (port == Dock_GPIO_Port && pin == Dock_Pin)         return g_dock ? GPIO_PIN_SET : GPIO_PIN_RESET;
-    if (port == Btn_Pump_GPIO_Port && pin == Btn_Pump_Pin) return g_pump ? GPIO_PIN_SET : GPIO_PIN_RESET;
+    if (port == Btn_Pump_GPIO_Port && pin == Btn_Pump_Pin) return g_pump ? GPIO_PIN_RESET : GPIO_PIN_SET;   /* Btn_Pump активный высокий: простой = отпущена = RESET */
     ev("BAD_PIN", "%p,%u", (void *)port, pin);
     return GPIO_PIN_RESET;
 }

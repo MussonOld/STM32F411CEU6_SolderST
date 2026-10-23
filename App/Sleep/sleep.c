@@ -49,17 +49,19 @@ static sleep_channel_t s_channels[CHANNEL_COUNT];
  *  таймер простоя. Тот же вход Btn_Pump читает Pump (pump.c) СЫРЫМ уровнем,
  *  без дебаунса — там нужна мгновенная реакция; эти два контракта не
  *  унифицируются (см. pump.h).
- *  Оба входа GPIO_PULLUP, но реальная полярность разная (проверено на
- *  железе — паяльник и отсос физически разные датчики, симметрии нет):
+ *  Входы подтянуты по-разному и полярность у них разная (паяльник и отсос —
+ *  физически разные датчики, симметрии нет):
+ *  Dock (GPIO_PULLUP):
  *  Dock==1        -> паяльник В подставке          -> простой (idle=true)
- *  Btn_Pump==1    -> кнопка ОТПУЩЕНА, помпа не работает -> простой (idle=true)
- *  Btn_Pump==0    -> кнопка НАЖАТА, помпа работает      -> занят (idle=false) */
+ *  Btn_Pump (GPIO_PULLDOWN, активный ВЫСОКИЙ):
+ *  Btn_Pump==0    -> кнопка ОТПУЩЕНА, помпа не работает -> простой (idle=true)
+ *  Btn_Pump==1    -> кнопка НАЖАТА, помпа работает      -> занят (idle=false) */
 static bool read_raw_idle(channel_id_t ch)
 {
     if (ch == CHANNEL_SOLDER) {
         return HAL_GPIO_ReadPin(Dock_GPIO_Port, Dock_Pin) == GPIO_PIN_SET;
     } else {
-        return HAL_GPIO_ReadPin(Btn_Pump_GPIO_Port, Btn_Pump_Pin) == GPIO_PIN_SET;
+        return HAL_GPIO_ReadPin(Btn_Pump_GPIO_Port, Btn_Pump_Pin) == GPIO_PIN_RESET;
     }
 }
 
